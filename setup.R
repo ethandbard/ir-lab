@@ -7,7 +7,8 @@ cran <- "https://cloud.r-project.org"
 needed <- c(
   "dplyr", "readr", "tidyr", "stringr",  # build_data.R
   "htmltools",                            # variable chips in _common.R
-  "openxlsx"                              # data/ir-lab.xlsx
+  "openxlsx",                             # data/ir-lab.xlsx
+  "rpart", "glmnet", "randomForest"       # pre-rendered numbers in ml-predict-rate.qmd
 )
 
 installed <- rownames(installed.packages())

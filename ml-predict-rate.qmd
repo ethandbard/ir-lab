@@ -1,0 +1,950 @@
+---
+title: "Predict a rate"
+subtitle: "Regularized regression and tree models for completion rates, compared on held-out data"
+webr:
+  packages:
+    - dplyr
+    - ggplot2
+    - tidyr
+    - glmnet
+    - rpart
+    - rpart.plot
+    - randomForest
+  resources:
+    - data/institutions.csv
+pyodide:
+  packages:
+    - pandas
+    - matplotlib
+    - scikit-learn
+  resources:
+    - data/institutions.csv
+---
+
+{{< include ./_extensions/r-wasm/live/_knitr.qmd >}}
+
+```{r}
+#| include: false
+source("_common.R")
+suppressPackageStartupMessages({
+  library(rpart)
+  library(glmnet)
+  library(randomForest)
+})
+frame <- institutions |>
+  filter(level == "4-year", bach_cohort >= 30,
+         carnegie %in% c("Doctoral", "Master's", "Baccalaureate", "Special focus")) |>
+  mutate(log_headcount = log10(headcount)) |>
+  select(unitid, name, control, locale, carnegie, hbcu, pct_pell, net_price, stu_fac_ratio,
+         log_headcount, pct_any_grant, pct_women_ug, pct_white_ug, pct_black_ug, pct_hispanic_ug,
+         pct_asian_ug, pct_intl_ug, retention_ft, grad_rate_bach_6yr) |>
+  na.omit() |>
+  mutate(across(c(control, locale, carnegie, hbcu), factor))
+frame$split <- ifelse(frame$unitid %% 10 < 7, "train", "test")
+train <- filter(frame, split == "train")
+test <- filter(frame, split == "test")
+n_train <- nrow(train)
+n_test <- nrow(test)
+tr_last <- n_train + 1
+te_first <- n_train + 2
+last_row <- nrow(frame) + 1
+rmse <- function(actual, predicted) sqrt(mean((actual - predicted)^2))
+predictors <- setdiff(names(frame), c("unitid", "name", "split", "grad_rate_bach_6yr"))
+f_all <- reformulate(predictors, "grad_rate_bach_6yr")
+m_ols <- lm(f_all, data = train)
+n_coef <- length(coef(m_ols)) - 1
+rmse_mean <- round(rmse(test$grad_rate_bach_6yr, mean(train$grad_rate_bach_6yr)), 1)
+rmse_ols <- round(rmse(test$grad_rate_bach_6yr, predict(m_ols, test)), 1)
+rmse_ols_train <- round(rmse(train$grad_rate_bach_6yr, predict(m_ols, train)), 1)
+x_all <- model.matrix(f_all, frame)[, -1]
+y_all <- frame$grad_rate_bach_6yr
+is_train <- frame$split == "train"
+set.seed(1)
+cv_lasso <- cv.glmnet(x_all[is_train, ], y_all[is_train], alpha = 1)
+lasso_coef <- coef(cv_lasso, s = "lambda.1se")
+n_kept <- sum(lasso_coef[-1] != 0)
+rmse_lasso <- round(rmse(y_all[!is_train], predict(cv_lasso, x_all[!is_train, ], s = "lambda.1se")), 1)
+lasso_at_1 <- glmnet(x_all[is_train, ], y_all[is_train], alpha = 1, lambda = 1)
+n_kept_1 <- sum(coef(lasso_at_1)[-1] != 0)
+tree3 <- rpart(f_all, data = train, control = rpart.control(maxdepth = 3, cp = 0))
+rmse_tree3 <- round(rmse(test$grad_rate_bach_6yr, predict(tree3, test)), 1)
+n_leaves3 <- sum(tree3$frame$var == "<leaf>")
+root_split <- labels(tree3)[2]
+set.seed(1)
+rf <- randomForest(f_all, data = train, ntree = 300)
+rmse_rf <- round(rmse(test$grad_rate_bach_6yr, predict(rf, test)), 1)
+rmse_rf_train <- round(rmse(train$grad_rate_bach_6yr, predict(rf, train)), 1)
+rmse_rf_oob <- round(sqrt(rf$mse[300]), 1)
+imp <- importance(rf)
+top_imp <- rownames(imp)[order(-imp[, 1])][1:3]
+```
+
+::: {.lesson-eyebrow}
+Model · Lesson 2 of 6
+:::
+
+`r fmt(nrow(frame))` four-year institutions have a value in every one of `r length(predictors)` columns describing them, from `r v("pct_pell")` and `r v("net_price")` to `r v("retention_ft")` and the sector, locale, and Carnegie group. Fitted to the training rows, a straight line through all of them misses a held-out institution's `r v("grad_rate_bach_6yr")` by `r rmse_ols` points on average, against `r rmse_mean` for guessing the mean. This lesson tries to do better in two directions: by taking things away from the line, and by giving up on lines altogether. Every model is scored the only way that counts, on the `r fmt(n_test)` test institutions it never saw.
+
+**You will be able to:** fit a lasso and read what it kept, grow a regression tree and read its rules, fit a random forest and read its importance ranking, and compare all of them against the straight line on held-out data.
+
+## Watch it move {.beat data-beat="1 · Watch it move"}
+
+Two predictors this time, so the model can be drawn. Pell share runs across, net price runs up, and the color of each region is the completion rate the model predicts there. Each dot is an institution colored by its actual rate: where a dot matches its background, the model is close. A tree carves the plane into rectangles, one question at a time. A straight-line model tilts one smooth plane. Grow the tree and watch which of the two errors follows.
+
+::: {.lab-anim}
+
+```{ojs}
+//| echo: false
+inst = FileAttachment("data/institutions.csv").csv({typed: true})
+ptRows = inst
+  .filter(d => d.level === "4-year" && d.bach_cohort >= 30 && d.pct_pell != null && d.net_price != null && d.grad_rate_bach_6yr != null)
+  .map(d => ({unitid: d.unitid, name: d.name, control: d.control, px: d.pct_pell, py: d.net_price, out: d.grad_rate_bach_6yr,
+              set: d.unitid % 10 < 7 ? "train" : "test"}))
+ptTrain = ptRows.filter(d => d.set === "train")
+ptTest = ptRows.filter(d => d.set === "test")
+ptDomain = ({px: [0, 100], py: [0, 60000]})
+
+fitTree = (rows, maxDepth, minLeaf) => {
+  const build = (idx, depth, box) => {
+    const n = idx.length;
+    let sum = 0, sq = 0;
+    for (const i of idx) { sum += rows[i].out; sq += rows[i].out ** 2; }
+    const node = {n, mean: sum / n, sse: sq - sum * sum / n, box};
+    if (depth >= maxDepth || n < 2 * minLeaf) return node;
+    let best = null;
+    for (const f of ["px", "py"]) {
+      const order = idx.slice().sort((a, b) => rows[a][f] - rows[b][f]);
+      let sumL = 0, sqL = 0;
+      for (let k = 0; k < n - 1; k++) {
+        const v = rows[order[k]].out;
+        sumL += v; sqL += v * v;
+        const nl = k + 1, nr = n - nl;
+        if (nl < minLeaf) continue;
+        if (nr < minLeaf) break;
+        const a = rows[order[k]][f], b = rows[order[k + 1]][f];
+        if (a === b) continue;
+        const sseL = sqL - sumL * sumL / nl;
+        const sumR = sum - sumL, sqR = sq - sqL;
+        const sseR = sqR - sumR * sumR / nr;
+        const total = sseL + sseR;
+        if (!best || total < best.sse) best = {f, thr: (a + b) / 2, sse: total, k, order};
+      }
+    }
+    if (!best || best.sse > node.sse - 1e-9) return node;
+    node.f = best.f;
+    node.thr = best.thr;
+    node.left = build(best.order.slice(0, best.k + 1), depth + 1, {...box, [best.f]: [box[best.f][0], best.thr]});
+    node.right = build(best.order.slice(best.k + 1), depth + 1, {...box, [best.f]: [best.thr, box[best.f][1]]});
+    return node;
+  };
+  return build(d3.range(rows.length), 0, {px: ptDomain.px.slice(), py: ptDomain.py.slice()});
+}
+treeLeaves = root => {
+  const out = [], stack = [root];
+  while (stack.length) {
+    const node = stack.pop();
+    if (node.left) stack.push(node.right, node.left); else out.push(node);
+  }
+  return out;
+}
+treePredict = (node, d) => { while (node.left) node = d[node.f] < node.thr ? node.left : node.right; return node.mean; }
+
+fitPlane = rows => {
+  let n = rows.length, sx = 0, sy = 0, sxx = 0, syy = 0, sxy = 0, so = 0, sxo = 0, syo = 0;
+  for (const d of rows) {
+    sx += d.px; sy += d.py; sxx += d.px * d.px; syy += d.py * d.py; sxy += d.px * d.py;
+    so += d.out; sxo += d.px * d.out; syo += d.py * d.out;
+  }
+  const A = [[n, sx, sy], [sx, sxx, sxy], [sy, sxy, syy]], rhs = [so, sxo, syo];
+  for (let c = 0; c < 3; c++) {
+    let piv = c;
+    for (let r = c + 1; r < 3; r++) if (Math.abs(A[r][c]) > Math.abs(A[piv][c])) piv = r;
+    [A[c], A[piv]] = [A[piv], A[c]];
+    [rhs[c], rhs[piv]] = [rhs[piv], rhs[c]];
+    for (let r = 0; r < 3; r++) {
+      if (r === c) continue;
+      const f = A[r][c] / A[c][c];
+      for (let k = c; k < 3; k++) A[r][k] -= f * A[c][k];
+      rhs[r] -= f * rhs[c];
+    }
+  }
+  const beta = rhs.map((v, i) => v / A[i][i]);
+  return d => beta[0] + beta[1] * d.px + beta[2] * d.py;
+}
+```
+
+::: {.lab-controls}
+```{ojs}
+//| echo: false
+viewof ptModel = Inputs.radio(["Tree", "Straight line"], {label: "Model", value: "Tree"})
+viewof ptDepth = Inputs.range([1, 6], {label: "Tree depth", step: 1, value: 2})
+viewof ptMinLeaf = Inputs.radio(new Map([["10", 10], ["30", 30], ["100", 100]]), {label: "Fewest institutions per leaf", value: 30})
+viewof ptShow = Inputs.radio(["Training", "Test"], {label: "Institutions shown", value: "Training"})
+```
+:::
+
+```{ojs}
+//| echo: false
+ptFit = {
+  if (ptModel === "Tree") {
+    const tree = fitTree(ptTrain, ptDepth, ptMinLeaf);
+    const leaves = treeLeaves(tree);
+    const cells = leaves.map(l => ({x0: l.box.px[0], x1: l.box.px[1], y0: l.box.py[0], y1: l.box.py[1], v: l.mean}));
+    return {kind: "tree", predict: d => treePredict(tree, d), cells, leaves: leaves.length};
+  }
+  const predict = fitPlane(ptTrain);
+  const cells = [];
+  const nx = 40, ny = 24;
+  for (let i = 0; i < nx; i++) for (let j = 0; j < ny; j++) {
+    const x0 = 100 * i / nx, x1 = 100 * (i + 1) / nx, y0 = 60000 * j / ny, y1 = 60000 * (j + 1) / ny;
+    cells.push({x0, x1, y0, y1, v: predict({px: (x0 + x1) / 2, py: (y0 + y1) / 2})});
+  }
+  return {kind: "line", predict, cells, leaves: 3};
+}
+
+ptScores = {
+  const rmse = rows => Math.sqrt(d3.mean(rows, d => (d.out - ptFit.predict(d)) ** 2));
+  const meanTrain = d3.mean(ptTrain, d => d.out);
+  return {train: rmse(ptTrain), test: rmse(ptTest), baseline: Math.sqrt(d3.mean(ptTest, d => (d.out - meanTrain) ** 2))};
+}
+```
+
+```{ojs}
+//| echo: false
+ptNode = d3.create("svg").attr("class", "lab-svg").node()
+
+ptPlot = {
+  const width = 860, height = 480, margin = {top: 16, right: 120, bottom: 48, left: 66};
+  const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const dur = reduce ? 0 : 500;
+  const x = d3.scaleLinear().domain(ptDomain.px).range([margin.left, width - margin.right]);
+  const y = d3.scaleLinear().domain(ptDomain.py).range([height - margin.bottom, margin.top]);
+  const color = d3.scaleSequential(d3.interpolateLab("#eef1f6", "#14213d")).domain([10, 95]).clamp(true);
+  const clampY = v => Math.max(ptDomain.py[0], Math.min(ptDomain.py[1], v));
+  const shown = ptShow === "Training" ? ptTrain : ptTest;
+  const f1 = d3.format(".1f"), money = d3.format("$,.0f");
+
+  const svg = d3.select(ptNode);
+  svg.attr("viewBox", [0, 0, width, height]);
+  const layer = name => { let g = svg.select(`g.${name}`); if (g.empty()) g = svg.append("g").attr("class", name); return g; };
+  const gc = layer("cells"), gx = layer("axis"), gy = layer("axisy"), glab = layer("labels"), gd = layer("dots"), gleg = layer("legend");
+
+  if (gx.selectAll("*").empty()) {
+    gx.attr("transform", `translate(0,${height - margin.bottom})`).call(d3.axisBottom(x).ticks(10).tickSizeOuter(0));
+    gy.attr("transform", `translate(${margin.left},0)`).call(d3.axisLeft(y).ticks(6).tickFormat(d3.format("$~s")).tickSizeOuter(0));
+    glab.append("text").attr("class", "axis-label").attr("x", width - margin.right).attr("y", height - 10).attr("text-anchor", "end")
+      .text("Percent of undergraduates awarded Pell");
+    glab.append("text").attr("class", "axis-label").attr("transform", `translate(14,${margin.top}) rotate(-90)`).attr("text-anchor", "end")
+      .text("Average net price");
+    const grad = svg.append("defs").append("linearGradient").attr("id", "ptGrad").attr("x1", 0).attr("x2", 0).attr("y1", 1).attr("y2", 0);
+    grad.selectAll("stop").data(d3.range(0, 1.01, 0.125)).join("stop")
+      .attr("offset", d => d).attr("stop-color", d => color(10 + 85 * d));
+    const lx = width - margin.right + 34, ly = margin.top + 10, lh = 200;
+    gleg.append("text").attr("x", lx).attr("y", ly - 8).attr("font-size", 12).attr("font-weight", 600).attr("fill", "var(--lab-ink)").text("Completion");
+    gleg.append("rect").attr("x", lx).attr("y", ly).attr("width", 14).attr("height", lh).attr("fill", "url(#ptGrad)").attr("stroke", "var(--lab-rule)");
+    const ls = d3.scaleLinear().domain([10, 95]).range([ly + lh, ly]);
+    gleg.selectAll("text.tick").data([20, 40, 60, 80]).join("text").attr("class", "tick")
+      .attr("x", lx + 20).attr("y", d => ls(d)).attr("dy", "0.35em").attr("font-size", 11).attr("fill", "var(--lab-muted)").text(d => d + "%");
+  }
+
+  const t = svg.transition().duration(dur).ease(d3.easeCubicOut);
+
+  gc.selectAll("rect").data(ptFit.cells)
+    .join(
+      enter => enter.append("rect").attr("opacity", 0)
+        .attr("x", d => x(d.x0)).attr("y", d => y(d.y1))
+        .attr("width", d => x(d.x1) - x(d.x0)).attr("height", d => y(d.y0) - y(d.y1))
+        .attr("fill", d => color(d.v)),
+      update => update,
+      exit => exit.transition(t).attr("opacity", 0).remove()
+    )
+    .attr("stroke", ptFit.kind === "tree" ? "#fff" : "none").attr("stroke-width", 1.2)
+    .transition(t)
+    .attr("opacity", 1)
+    .attr("x", d => x(d.x0)).attr("y", d => y(d.y1))
+    .attr("width", d => x(d.x1) - x(d.x0)).attr("height", d => y(d.y0) - y(d.y1))
+    .attr("fill", d => color(d.v));
+
+  gd.selectAll("circle").data(shown, d => d.unitid)
+    .join(
+      enter => enter.append("circle").attr("r", 0)
+        .attr("cx", d => x(d.px)).attr("cy", d => y(clampY(d.py)))
+        .call(e => e.append("title")),
+      update => update,
+      exit => exit.transition(t).attr("r", 0).remove()
+    )
+    .call(sel => sel.select("title").text(d => `${d.name}\n${d.set === "train" ? "Training" : "Test"} set\nPell ${d.px}%, net price ${money(d.py)}\nActual ${d.out}%, predicted ${f1(ptFit.predict(d))}%`))
+    .attr("fill", d => color(d.out))
+    .attr("stroke", d => d.set === "test" ? "var(--lab-accent)" : "#fff")
+    .attr("stroke-width", d => d.set === "test" ? 1.4 : 0.8)
+    .transition(t)
+    .attr("r", 3.1)
+    .attr("cx", d => x(d.px)).attr("cy", d => y(clampY(d.py)));
+
+  return svg.node();
+}
+```
+
+```{ojs}
+//| echo: false
+ptReadout = {
+  const {train, test, baseline} = ptScores;
+  const f1 = d3.format(".1f");
+  const isTree = ptFit.kind === "tree";
+  let hint;
+  if (!isTree) {
+    hint = "One tilted plane: completion falls with Pell share and rises with price at the same rate everywhere. It cannot say that the corner of low Pell and low price is a different kind of place, and a tree can.";
+  } else if (ptDepth === 1) {
+    hint = `One question, two answers. The tree found the single cut on either axis that reduces the squared error most, and it already beats guessing the mean by ${f1(baseline - test)} points on the test rows.`;
+  } else if (ptDepth >= 5 && ptMinLeaf <= 10) {
+    hint = "Small rectangles fitted to a few institutions each. The training error keeps falling and the test error has stopped following it: from here the tree is learning the sample, not the pattern.";
+  } else {
+    hint = `${ptFit.leaves} rectangles, each predicting the mean of the training institutions inside it. Switch the model to compare this test error with the straight line's.`;
+  }
+  return html`<div class="lab-readout">
+    <div><span class="k">${isTree ? "Leaves" : "Coefficients"}</span><span class="val">${ptFit.leaves}</span></div>
+    <div><span class="k">Training RMSE</span><span class="val primary">${f1(train)}</span></div>
+    <div><span class="k">Test RMSE</span><span class="val accent">${f1(test)}</span></div>
+    <div><span class="k">Gap (test − train)</span><span class="val">${d3.format("+.1f")(test - train)}</span></div>
+    <div><span class="k">Guess the mean, test</span><span class="val">${f1(baseline)}</span></div>
+  </div>
+  <p class="lab-hint">${hint} Fitted on ${d3.format(",")(ptTrain.length)} training institutions and scored on ${d3.format(",")(ptTest.length)} held-out ones, split by the last digit of the IPEDS unit ID. Two predictors only, so both models here are weaker than the ones in the code below.</p>`;
+}
+```
+
+:::
+
+Three things to try:
+
+1. **One question.** Depth 1. The tree asks whether Pell share is above or below about 25% and predicts two numbers. That single cut already removes three points of test error from the guess-the-mean baseline.
+2. **Grow it, then compare.** Depth 3 with 30 per leaf gives eight rectangles and a test error a little under the straight line's; switch the model to see. The tree wins because it can treat low-Pell, low-price institutions as their own region, and a plane cannot bend. Now go to depth 6 with 10 per leaf: the training error keeps dropping and the test error does not. That is the lesson from **Split before you fit**, drawn.
+3. **Show the test rows.** The orange-ringed dots are the institutions no model saw. The ones that clash with their background are the misses, and they are everywhere, because two predictors leave most of the story untold. The models below get `r length(predictors)` columns.
+
+## Do it {.beat data-beat="2 · Do it"}
+
+The frame is four-year institutions with a bachelor's cohort of at least 30, one of the four main Carnegie groups, and a value in every predictor. The split is by the last digit of the IPEDS unit ID, seven in ten to training, so the same institutions land in the same set in every language and in the workbook. The random forest cell takes several seconds.
+
+::: {.panel-tabset group="language"}
+
+### R
+
+```{webr}
+#| autorun: true
+#| caption: Build the frame and split it
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(glmnet)
+library(rpart)
+library(rpart.plot)
+library(randomForest)
+
+inst <- read.csv("data/institutions.csv", na.strings = c("", "NA"))
+
+frame <- inst |>
+  filter(level == "4-year", bach_cohort >= 30,
+         carnegie %in% c("Doctoral", "Master's", "Baccalaureate", "Special focus")) |>
+  mutate(log_headcount = log10(headcount)) |>
+  select(unitid, name, control, locale, carnegie, hbcu, pct_pell, net_price, stu_fac_ratio,
+         log_headcount, pct_any_grant, pct_women_ug, pct_white_ug, pct_black_ug, pct_hispanic_ug,
+         pct_asian_ug, pct_intl_ug, retention_ft, grad_rate_bach_6yr) |>
+  na.omit() |>
+  mutate(across(c(control, locale, carnegie, hbcu), factor))
+
+frame$split <- ifelse(frame$unitid %% 10 < 7, "train", "test")
+train <- filter(frame, split == "train")
+test <- filter(frame, split == "test")
+
+rmse <- function(actual, predicted) sqrt(mean((actual - predicted)^2))
+predictors <- setdiff(names(frame), c("unitid", "name", "split", "grad_rate_bach_6yr"))
+f_all <- reformulate(predictors, "grad_rate_bach_6yr")
+
+c(training = nrow(train), test = nrow(test), predictors = length(predictors))
+```
+
+Two reference points first: the training mean, which every model has to beat, and the straight line with every predictor in it, which is the model to beat.
+
+```{webr}
+#| autorun: true
+#| caption: The baseline and the straight line
+score <- function(pred_train, pred_test, label) {
+  data.frame(model = label,
+             train_rmse = rmse(train$grad_rate_bach_6yr, pred_train),
+             test_rmse = rmse(test$grad_rate_bach_6yr, pred_test))
+}
+
+m_ols <- lm(f_all, data = train)
+results <- bind_rows(
+  score(mean(train$grad_rate_bach_6yr), mean(train$grad_rate_bach_6yr), "Training mean"),
+  score(predict(m_ols, train), predict(m_ols, test), "Straight line, all predictors")
+)
+mutate(results, across(where(is.numeric), ~ round(.x, 2)))
+```
+
+The lasso is the same line with a penalty on the size of the coefficients. As the penalty grows, coefficients shrink, and the least useful ones go to exactly zero, which drops their predictors from the model. `glmnet` needs a numeric matrix, so the factors become 0/1 columns first, and `cv.glmnet` chooses the penalty by ten-fold cross-validation.
+
+```{webr}
+#| autorun: true
+#| caption: Lasso, with the penalty chosen by cross-validation
+x_train <- model.matrix(f_all, train)[, -1]
+x_test <- model.matrix(f_all, test)[, -1]
+y_train <- train$grad_rate_bach_6yr
+
+set.seed(1)
+lasso_cv <- cv.glmnet(x_train, y_train, alpha = 1)
+
+cv_curve <- data.frame(lambda = lasso_cv$lambda, rmse = sqrt(lasso_cv$cvm),
+                       lo = sqrt(lasso_cv$cvlo), hi = sqrt(lasso_cv$cvup), kept = lasso_cv$nzero)
+
+ggplot(cv_curve, aes(lambda, rmse)) +
+  geom_ribbon(aes(ymin = lo, ymax = hi), fill = "#2a78d6", alpha = 0.15) +
+  geom_line(color = "#2a78d6", linewidth = 1) +
+  geom_vline(xintercept = c(lasso_cv$lambda.min, lasso_cv$lambda.1se), linetype = "dashed", color = "#eb6834") +
+  scale_x_log10() +
+  labs(x = "Penalty (log scale)", y = "Cross-validated RMSE",
+       title = "Dashed: the best penalty, and the largest one within a standard error of it") +
+  theme_minimal(base_size = 13)
+```
+
+The curve is flat on the left: small penalties change nothing, because the line was not overfitting. It climbs on the right as useful predictors are forced out. The convention is to take the larger of the two dashed penalties, the simplest model whose error is within one standard error of the best.
+
+```{webr}
+#| autorun: true
+#| caption: What the lasso kept
+kept <- coef(lasso_cv, s = "lambda.1se")
+kept <- data.frame(term = rownames(kept), coef = as.numeric(kept)) |>
+  filter(term != "(Intercept)", coef != 0) |>
+  arrange(desc(abs(coef)))
+kept
+
+results <- bind_rows(results,
+  score(predict(lasso_cv, x_train, s = "lambda.1se")[, 1], predict(lasso_cv, x_test, s = "lambda.1se")[, 1], "Lasso, one-SE penalty"))
+mutate(results, across(where(is.numeric), ~ round(.x, 2)))
+```
+
+The lasso kept `r n_kept` of `r n_coef` coefficients and lands within a few tenths of a point of the full line on the test rows. With over a thousand training institutions and two dozen coefficients, the line was not overfitting much, so there was little for the penalty to fix. What it bought is a shorter model: the same accuracy with half the terms, which matters when someone asks what the prediction is made of. The path below, drawn on standardized predictors so the coefficients are comparable, shows the order in which terms drop out as the penalty grows.
+
+```{webr}
+#| autorun: true
+#| caption: The coefficient path
+path_fit <- glmnet(scale(x_train), y_train, alpha = 1)
+path <- as.data.frame(as.matrix(path_fit$beta)) |>
+  mutate(term = rownames(path_fit$beta)) |>
+  pivot_longer(-term, names_to = "step", values_to = "coef") |>
+  mutate(lambda = path_fit$lambda[as.integer(sub("s", "", step)) + 1])
+ends <- path |> filter(lambda == min(lambda)) |> arrange(desc(abs(coef))) |> slice_head(n = 6)
+
+ggplot(path, aes(lambda, coef, group = term)) +
+  geom_line(color = "#9fb3d1", linewidth = 0.6) +
+  geom_line(data = filter(path, term %in% ends$term), aes(color = term), linewidth = 1) +
+  geom_text(data = ends, aes(label = term, color = term), hjust = 1.05, size = 3) +
+  geom_vline(xintercept = lasso_cv$lambda.1se, linetype = "dashed", color = "#eb6834") +
+  scale_x_log10(expand = expansion(mult = c(0.4, 0.05))) +
+  labs(x = "Penalty (log scale)", y = "Coefficient, per standard deviation of the predictor",
+       title = "Every line reaches zero eventually. The dashed line is the chosen penalty.") +
+  theme_minimal(base_size = 13) +
+  theme(legend.position = "none")
+```
+
+A regression tree makes no line at all. It finds the single split on any predictor that reduces the squared error most, then repeats inside each half. The result is a set of rules, and the prediction for any institution is the mean of the leaf it falls into.
+
+```{webr}
+#| autorun: true
+#| caption: One tree, three levels deep
+tree <- rpart(f_all, data = train, control = rpart.control(maxdepth = 3, cp = 0))
+rpart.plot(tree, type = 2, extra = 101, box.palette = "Blues", shadow.col = NA, cex = 0.7)
+
+results <- bind_rows(results, score(predict(tree, train), predict(tree, test), "One tree, depth 3"))
+mutate(results, across(where(is.numeric), ~ round(.x, 2)))
+```
+
+Read it top down. The first question is `r root_split`, and retention comes up again lower down: the tree found the one predictor that carries most of the signal and used it twice. Eight leaves cannot match a line with `r n_coef` coefficients, and letting the tree grow deeper does not close the gap for long.
+
+```{webr}
+#| autorun: true
+#| caption: Deeper trees, training and test
+depth_curve <- bind_rows(lapply(1:10, function(k) {
+  m <- rpart(f_all, data = train, control = rpart.control(maxdepth = k, cp = 0))
+  data.frame(depth = k,
+             Training = rmse(train$grad_rate_bach_6yr, predict(m, train)),
+             Test = rmse(test$grad_rate_bach_6yr, predict(m, test)))
+})) |>
+  pivot_longer(-depth, names_to = "set", values_to = "rmse")
+
+ggplot(depth_curve, aes(depth, rmse, color = set)) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 2.5) +
+  scale_x_continuous(breaks = 1:10) +
+  scale_color_manual(values = c(Training = "#2a78d6", Test = "#eb6834")) +
+  labs(x = "Maximum depth", y = "RMSE (percentage points)", color = NULL,
+       title = "Test error stops improving around depth 5. Training error never does.") +
+  theme_minimal(base_size = 13) +
+  theme(legend.position = "top")
+```
+
+A random forest grows hundreds of trees, each on a bootstrap resample of the training rows and each allowed to consider only a random subset of predictors at every split, then averages their predictions. Individually the trees are worse than the one above. Together they are the best model in this lesson.
+
+```{webr}
+#| autorun: true
+#| caption: A random forest of 300 trees
+set.seed(1)
+forest <- randomForest(f_all, data = train, ntree = 300)
+
+results <- bind_rows(results, score(predict(forest, train), predict(forest, test), "Random forest, 300 trees"))
+mutate(results, across(where(is.numeric), ~ round(.x, 2)))
+```
+
+The forest's training error is meaningless: every tree has seen most of the training rows, so the forest has nearly memorized them. Its test error is the honest number, and so is the out-of-bag error the forest keeps for itself, `r rmse_rf_oob` here, computed on the rows each tree happened not to draw. The forest also ranks its predictors by how much they reduced the squared error across all the splits they were used in.
+
+```{webr}
+#| autorun: true
+#| caption: What the forest splits on
+imp <- data.frame(term = rownames(importance(forest)), importance = importance(forest)[, 1]) |>
+  arrange(desc(importance)) |>
+  slice_head(n = 12)
+
+ggplot(imp, aes(importance, reorder(term, importance))) +
+  geom_col(fill = "#2a78d6") +
+  labs(x = "Total reduction in squared error across splits", y = NULL,
+       title = "Retention first, then Pell share, by a distance") +
+  theme_minimal(base_size = 13)
+```
+
+### Python
+
+```{pyodide}
+#| autorun: true
+#| caption: Build the frame and split it
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from sklearn.linear_model import LinearRegression, LassoCV, lasso_path
+from sklearn.preprocessing import StandardScaler
+from sklearn.pipeline import make_pipeline
+from sklearn.tree import DecisionTreeRegressor, export_text
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.metrics import mean_squared_error
+
+inst = pd.read_csv("data/institutions.csv")
+num = ["pct_pell", "net_price", "stu_fac_ratio", "log_headcount", "pct_any_grant", "pct_women_ug",
+       "pct_white_ug", "pct_black_ug", "pct_hispanic_ug", "pct_asian_ug", "pct_intl_ug", "retention_ft"]
+cat = ["control", "locale", "carnegie", "hbcu"]
+
+frame = inst[(inst["level"] == "4-year") & (inst["bach_cohort"] >= 30)
+             & inst["carnegie"].isin(["Doctoral", "Master's", "Baccalaureate", "Special focus"])].copy()
+frame["log_headcount"] = np.log10(frame["headcount"])
+frame = frame.dropna(subset=num + cat + ["grad_rate_bach_6yr"])
+
+X = pd.concat([frame[num], pd.get_dummies(frame[cat], drop_first=True, dtype=float)], axis=1)
+y = frame["grad_rate_bach_6yr"]
+is_train = frame["unitid"] % 10 < 7
+X_train, X_test, y_train, y_test = X[is_train], X[~is_train], y[is_train], y[~is_train]
+
+def rmse(actual, predicted):
+    return float(np.sqrt(mean_squared_error(actual, predicted)))
+
+pd.Series({"training": len(X_train), "test": len(X_test), "predictors": X.shape[1]})
+```
+
+```{pyodide}
+#| autorun: true
+#| caption: The baseline and the straight line
+results = [{"model": "Training mean",
+            "train_rmse": rmse(y_train, np.full(len(y_train), y_train.mean())),
+            "test_rmse": rmse(y_test, np.full(len(y_test), y_train.mean()))}]
+
+def score(model, label):
+    results.append({"model": label,
+                    "train_rmse": rmse(y_train, model.predict(X_train)),
+                    "test_rmse": rmse(y_test, model.predict(X_test))})
+    return pd.DataFrame(results).round(2)
+
+ols = LinearRegression().fit(X_train, y_train)
+score(ols, "Straight line, all predictors")
+```
+
+```{pyodide}
+#| autorun: true
+#| caption: Lasso, with the penalty chosen by cross-validation
+lasso = make_pipeline(StandardScaler(), LassoCV(cv=10, random_state=1)).fit(X_train, y_train)
+coefs = pd.Series(lasso[-1].coef_, index=X.columns)
+kept = coefs[coefs != 0].sort_values(key=abs, ascending=False)
+print(f"penalty {lasso[-1].alpha_:.3f}, kept {len(kept)} of {len(coefs)} coefficients")
+print(kept.round(2).to_string())
+score(lasso, "Lasso, cross-validated penalty")
+```
+
+The scaler inside the pipeline standardizes every predictor on the training rows only, so the coefficients are in points of completion per standard deviation. `LassoCV` picks the penalty with the lowest cross-validated error rather than the one-standard-error choice R made, so it keeps a few more terms.
+
+```{pyodide}
+#| autorun: true
+#| caption: The coefficient path
+scaler = StandardScaler().fit(X_train)
+alphas = np.logspace(1, -2, 60)
+alphas, coef_path, _ = lasso_path(scaler.transform(X_train), y_train, alphas=alphas)
+
+fig, ax = plt.subplots(figsize=(8, 4.8))
+for name, row in zip(X.columns, coef_path):
+    big = abs(row[-1]) > 1.5
+    ax.plot(alphas, row, color="#2a78d6" if big else "#c5cbd5", linewidth=1.4 if big else 0.8)
+    if big:
+        ax.text(alphas[-1] * 0.95, row[-1], name, fontsize=8, ha="right", va="center", color="#14213d")
+ax.axvline(lasso[-1].alpha_, linestyle="--", color="#eb6834")
+ax.set_xscale("log")
+ax.set_xlim(alphas[-1] * 0.25, alphas[0])
+ax.set_xlabel("Penalty (log scale)")
+ax.set_ylabel("Coefficient per standard deviation")
+ax.set_title("Every line reaches zero eventually. Dashed: the chosen penalty.", loc="left", fontsize=11)
+ax.spines[["top", "right"]].set_visible(False)
+plt.tight_layout()
+plt.show()
+```
+
+```{pyodide}
+#| autorun: true
+#| caption: One tree, three levels deep
+tree = DecisionTreeRegressor(max_depth=3, min_samples_leaf=7, random_state=1).fit(X_train, y_train)
+print(export_text(tree, feature_names=list(X.columns), decimals=1))
+score(tree, "One tree, depth 3")
+```
+
+```{pyodide}
+#| autorun: true
+#| caption: Deeper trees, training and test
+rows = []
+for k in range(1, 11):
+    m = DecisionTreeRegressor(max_depth=k, min_samples_leaf=7, random_state=1).fit(X_train, y_train)
+    rows.append({"depth": k, "Training": rmse(y_train, m.predict(X_train)), "Test": rmse(y_test, m.predict(X_test))})
+curve = pd.DataFrame(rows).set_index("depth")
+
+fig, ax = plt.subplots(figsize=(8, 4.5))
+ax.plot(curve.index, curve["Training"], marker="o", color="#2a78d6", label="Training")
+ax.plot(curve.index, curve["Test"], marker="o", color="#eb6834", label="Test")
+ax.set_xticks(range(1, 11))
+ax.set_xlabel("Maximum depth")
+ax.set_ylabel("RMSE (percentage points)")
+ax.set_title("Test error stops improving early. Training error never does.", loc="left", fontsize=11)
+ax.legend(frameon=False)
+ax.spines[["top", "right"]].set_visible(False)
+plt.tight_layout()
+plt.show()
+```
+
+```{pyodide}
+#| autorun: true
+#| caption: A random forest of 300 trees
+forest = RandomForestRegressor(n_estimators=300, random_state=1).fit(X_train, y_train)
+score(forest, "Random forest, 300 trees")
+```
+
+```{pyodide}
+#| autorun: true
+#| caption: What the forest splits on
+imp = pd.Series(forest.feature_importances_, index=X.columns).sort_values().tail(12)
+
+fig, ax = plt.subplots(figsize=(8, 4.5))
+ax.barh(imp.index, imp.values, color="#2a78d6")
+ax.set_xlabel("Share of the total reduction in squared error")
+ax.set_title("Retention first, then Pell share, by a distance", loc="left", fontsize=11)
+ax.spines[["top", "right"]].set_visible(False)
+plt.tight_layout()
+plt.show()
+```
+
+:::
+
+Four models, one test set. The forest wins by about a point and a half over the line, the lasso ties the line with half the terms, and the single tree loses by about one. Every one of them agreed on what matters most: `r top_imp[1]`, then `r top_imp[2]`. Before building any model like this, ask whether its strongest predictor will be known at the moment the prediction is needed. A retention rate is known a year after a cohort enrolls. A prediction that needs it is a prediction for the following year.
+
+## Practice {.beat data-beat="3 · Practice"}
+
+Fill in the blanks and press Run. The check reads the value your code returns, so make the last line the answer. The setup builds `frame`, `train`, `test`, and the matrices `x_train` and `y_train` from the R tab.
+
+```{webr}
+#| setup: true
+#| exercise:
+#|   - ml4_tree
+#|   - ml4_lasso
+library(dplyr)
+library(glmnet)
+library(rpart)
+inst <- read.csv("data/institutions.csv", na.strings = c("", "NA"))
+frame <- inst |>
+  filter(level == "4-year", bach_cohort >= 30,
+         carnegie %in% c("Doctoral", "Master's", "Baccalaureate", "Special focus")) |>
+  mutate(log_headcount = log10(headcount)) |>
+  select(unitid, name, control, locale, carnegie, hbcu, pct_pell, net_price, stu_fac_ratio,
+         log_headcount, pct_any_grant, pct_women_ug, pct_white_ug, pct_black_ug, pct_hispanic_ug,
+         pct_asian_ug, pct_intl_ug, retention_ft, grad_rate_bach_6yr) |>
+  na.omit() |>
+  mutate(across(c(control, locale, carnegie, hbcu), factor))
+frame$split <- ifelse(frame$unitid %% 10 < 7, "train", "test")
+train <- filter(frame, split == "train")
+test <- filter(frame, split == "test")
+rmse <- function(actual, predicted) sqrt(mean((actual - predicted)^2))
+predictors <- setdiff(names(frame), c("unitid", "name", "split", "grad_rate_bach_6yr"))
+f_all <- reformulate(predictors, "grad_rate_bach_6yr")
+x_train <- model.matrix(f_all, train)[, -1]
+x_test <- model.matrix(f_all, test)[, -1]
+y_train <- train$grad_rate_bach_6yr
+```
+
+::: {.lab-exercise data-exercise="ml4_tree"}
+
+### A tree, scored honestly
+
+Fit a regression tree of depth 3 with `rpart()` on the training rows, then return its RMSE on the **test** rows. A single number.
+
+```{webr}
+#| exercise: ml4_tree
+tree <- rpart(f_all, data = ______, control = rpart.control(maxdepth = ______, cp = 0))
+rmse(test$grad_rate_bach_6yr, predict(tree, test))
+```
+
+::: {.hint exercise="ml4_tree"}
+::: {.callout-note collapse="false"}
+## Hint
+The tree is fitted on `train`. `maxdepth` is the number of questions on the longest path from the root to a leaf, which is 3 here.
+:::
+:::
+
+::: {.solution exercise="ml4_tree"}
+::: {.callout-tip collapse="false"}
+## Solution
+```r
+tree <- rpart(f_all, data = train, control = rpart.control(maxdepth = 3, cp = 0))
+rmse(test$grad_rate_bach_6yr, predict(tree, test))
+```
+About eleven points: a point worse than the straight line, from a model you can read aloud in eight sentences.
+:::
+:::
+
+```{webr}
+#| exercise: ml4_tree
+#| check: true
+tree_ok <- rpart(f_all, data = train, control = rpart.control(maxdepth = 3, cp = 0))
+expected <- rmse(test$grad_rate_bach_6yr, predict(tree_ok, test))
+on_train <- rmse(train$grad_rate_bach_6yr, predict(tree_ok, train))
+tree_cheat <- rpart(f_all, data = test, control = rpart.control(maxdepth = 3, cp = 0))
+cheat <- rmse(test$grad_rate_bach_6yr, predict(tree_cheat, test))
+val <- suppressWarnings(as.numeric(unlist(.result))[1])
+if (length(val) == 1 && !is.na(val) && isTRUE(abs(val - expected) < 1e-3)) {
+  list(correct = TRUE, message = sprintf("Correct: a test RMSE of %.2f points from a depth-3 tree.", expected))
+} else if (length(val) == 1 && !is.na(val) && isTRUE(abs(val - cheat) < 1e-3)) {
+  list(correct = FALSE, message = "That tree was fitted on the test rows, so it is scoring its own memory. Fit on train.")
+} else if (length(val) == 1 && !is.na(val) && isTRUE(abs(val - on_train) < 1e-3)) {
+  list(correct = FALSE, message = "That is the training RMSE. Predict for test and compare with test$grad_rate_bach_6yr.")
+} else if (length(val) == 1 && !is.na(val)) {
+  list(correct = FALSE, message = "A number, but not the depth-3 tree's test RMSE. Check maxdepth = 3 and data = train.")
+} else {
+  list(correct = FALSE, message = "Not yet. The answer is a single number: the tree's RMSE on the test rows.")
+}
+```
+
+:::
+
+::: {.lab-exercise data-exercise="ml4_lasso"}
+
+### How many did the lasso keep?
+
+Fit a lasso on `x_train` and `y_train` with the penalty fixed at `lambda = 1`, then return the number of coefficients that are not exactly zero, leaving out the intercept.
+
+```{webr}
+#| exercise: ml4_lasso
+fit <- glmnet(x_train, y_train, alpha = ______, lambda = 1)
+sum(coef(fit)[-1] != ______)
+```
+
+::: {.hint exercise="ml4_lasso"}
+::: {.callout-note collapse="false"}
+## Hint
+`alpha = 1` is the lasso; `alpha = 0` is ridge regression, which shrinks but never zeroes. The count is of coefficients not equal to `0`.
+:::
+:::
+
+::: {.solution exercise="ml4_lasso"}
+::: {.callout-tip collapse="false"}
+## Solution
+```r
+fit <- glmnet(x_train, y_train, alpha = 1, lambda = 1)
+sum(coef(fit)[-1] != 0)
+```
+`r n_kept_1` of `r n_coef`. The `r n_coef - n_kept_1` that went to zero are the ones whose signal the others already carried.
+:::
+:::
+
+```{webr}
+#| exercise: ml4_lasso
+#| check: true
+fit_ok <- glmnet(x_train, y_train, alpha = 1, lambda = 1)
+expected <- sum(coef(fit_ok)[-1] != 0)
+fit_ridge <- glmnet(x_train, y_train, alpha = 0, lambda = 1)
+ridge_n <- sum(coef(fit_ridge)[-1] != 0)
+val <- suppressWarnings(as.numeric(unlist(.result))[1])
+if (length(val) == 1 && !is.na(val) && isTRUE(val == expected)) {
+  list(correct = TRUE, message = sprintf("Correct: %d of %d coefficients survive a penalty of 1.", expected, ncol(x_train)))
+} else if (length(val) == 1 && !is.na(val) && isTRUE(val == ridge_n)) {
+  list(correct = FALSE, message = "That is ridge regression (alpha = 0), which keeps everything. The lasso is alpha = 1.")
+} else if (length(val) == 1 && !is.na(val) && isTRUE(val == expected + 1)) {
+  list(correct = FALSE, message = "One too many: the intercept is being counted. coef(fit)[-1] drops it.")
+} else {
+  list(correct = FALSE, message = "Not yet. The answer is a single whole number: how many coefficients are not zero.")
+}
+```
+
+:::
+
+::: {.lab-exercise data-exercise="ml4_py_forest"}
+
+### A forest in Python
+
+`X_train`, `X_test`, `y_train`, and `y_test` are the split from the Python tab. Fit a random forest of 100 trees with `random_state=1` on the training side and return its RMSE on the test side as a float. This takes a few seconds.
+
+```{pyodide}
+#| setup: true
+#| exercise: ml4_py_forest
+import numpy as np
+import pandas as pd
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.metrics import mean_squared_error
+inst = pd.read_csv("data/institutions.csv")
+num = ["pct_pell", "net_price", "stu_fac_ratio", "log_headcount", "pct_any_grant", "pct_women_ug",
+       "pct_white_ug", "pct_black_ug", "pct_hispanic_ug", "pct_asian_ug", "pct_intl_ug", "retention_ft"]
+cat = ["control", "locale", "carnegie", "hbcu"]
+frame = inst[(inst["level"] == "4-year") & (inst["bach_cohort"] >= 30)
+             & inst["carnegie"].isin(["Doctoral", "Master's", "Baccalaureate", "Special focus"])].copy()
+frame["log_headcount"] = np.log10(frame["headcount"])
+frame = frame.dropna(subset=num + cat + ["grad_rate_bach_6yr"])
+X = pd.concat([frame[num], pd.get_dummies(frame[cat], drop_first=True, dtype=float)], axis=1)
+y = frame["grad_rate_bach_6yr"]
+is_train = frame["unitid"] % 10 < 7
+X_train, X_test, y_train, y_test = X[is_train], X[~is_train], y[is_train], y[~is_train]
+def rmse(actual, predicted):
+    return float(np.sqrt(mean_squared_error(actual, predicted)))
+```
+
+```{pyodide}
+#| exercise: ml4_py_forest
+forest = RandomForestRegressor(n_estimators=100, random_state=1).fit(______, ______)
+rmse(y_test, forest.predict(______))
+```
+
+::: {.hint exercise="ml4_py_forest"}
+::: {.callout-note collapse="false"}
+## Hint
+`.fit()` takes the training features and the training outcome. `.predict()` takes the test features, and the result is compared with `y_test`.
+:::
+:::
+
+::: {.solution exercise="ml4_py_forest"}
+::: {.callout-tip collapse="false"}
+## Solution
+```python
+forest = RandomForestRegressor(n_estimators=100, random_state=1).fit(X_train, y_train)
+rmse(y_test, forest.predict(X_test))
+```
+:::
+:::
+
+```{pyodide}
+#| exercise: ml4_py_forest
+#| check: true
+_f = RandomForestRegressor(n_estimators=100, random_state=1).fit(X_train, y_train)
+_expected = rmse(y_test, _f.predict(X_test))
+_on_train = rmse(y_train, _f.predict(X_train))
+try:
+    val = float(result)
+except Exception:
+    val = None
+if val is not None and abs(val - _expected) < 1e-3:
+    feedback = {"correct": True, "message": f"Correct: a test RMSE of {_expected:.2f} points, the best of the models in this lesson."}
+elif val is not None and abs(val - _on_train) < 1e-3:
+    feedback = {"correct": False, "message": "That is the training RMSE, which a forest all but memorizes. Predict on X_test."}
+elif val is not None and val < 6:
+    feedback = {"correct": False, "message": "Too good to be true: the forest is being scored on rows it was fitted to. Fit on the training side and predict on X_test."}
+else:
+    feedback = {"correct": False, "message": "Not yet. Expected a single float: the forest's RMSE on the test rows."}
+feedback
+```
+
+:::
+
+## In your stack {.beat data-beat="4 · In your stack"}
+
+Excel and Power BI can fit the straight line with any number of predictors, and they can find a tree's first split by brute force. Neither can grow the rest of the tree or fit a lasso, and that boundary is the useful thing to know. The `predict-rate` sheet in [ir-lab.xlsx](data/ir-lab.xlsx) shows how far the formulas go.
+
+::: {.panel-tabset group="stack"}
+
+### Excel
+
+The sheet holds the frame with the training rows first, rows 2 to `r fmt(tr_last)`, and the test rows after them, `r fmt(te_first)` to `r fmt(last_row)`. Six numeric predictors sit in columns D to I and completion in column J.
+
+| Step | Formula |
+|---|---|
+| Split rule, column K | `=IF(MOD(A2,10)<7,"train","test")` |
+| Intercept, training rows only | `=INDEX(LINEST(J2:J`r tr_last`, D2:I`r tr_last`, TRUE, TRUE), 1, 7)` |
+| Coefficient on Pell, column D | `=INDEX(LINEST(J2:J`r tr_last`, D2:I`r tr_last`, TRUE, TRUE), 1, 6)` |
+| Prediction, column L | the intercept plus each coefficient times its column |
+| Test RMSE | `=SQRT(SUMXMY2(J`r te_first`:J`r last_row`, L`r te_first`:L`r last_row`)/COUNT(J`r te_first`:J`r last_row`))` |
+
+`LINEST` returns the coefficients in reverse column order, so column I's coefficient comes first and the intercept last. That is the straight line from the animation with six predictors, and it is as far as Excel's built-in fitting goes.
+
+**A tree's first split** is a search, and the sheet runs it. For each candidate cut on Pell share, held in column O from row 20 down, one array formula gives the squared error left after splitting the training rows there:
+
+```{r}
+#| echo: false
+#| results: asis
+cat(sprintf("```\n=DEVSQ(IF(D$2:D$%d < O20, J$2:J$%d)) + DEVSQ(IF(D$2:D$%d >= O20, J$2:J$%d))\n```\n",
+            tr_last, tr_last, tr_last, tr_last))
+```
+
+The cut with the smallest total is the root split, the same one the animation finds at depth 1. The tree then repeats the search inside each half, and inside each quarter, which is a loop; that is where the workbook stops and R or Python starts.
+
+**Ridge regression by hand.** With two standardized predictors the penalized fit has a closed form, and the sheet spells it out from five cells: the correlation between the predictors, each one's correlation with the outcome, the outcome's standard deviation, and the training count. A column of penalties from 0 upward shows both coefficients shrinking toward zero, which is the whole idea of regularization in eight rows. The lasso has no closed form, so it is not there.
+
+### Power BI
+
+::: {.ir-powerbi data-powerbi-page="regression" data-powerbi-title="Pell and completion"}
+**Interactive report: not connected yet.** Download the [Power BI project](data/ir-lab-powerbi.zip) to explore this lesson in Power BI Desktop. The embedded report will appear here once it is connected.
+:::
+
+`LINESTX` takes as many predictors as you list, so the straight line with several numeric columns is one measure, fitted on the training rows and scored on the test rows exactly as in **Split before you fit**. Categorical predictors need 0/1 calculated columns first, one per level after the first:
+
+```dax
+Is Public = IF ( institutions[control] = "Public", 1, 0 )
+
+Line Fit =
+LINESTX (
+    FILTER (
+        institutions,
+        institutions[Split] = "train"
+            && institutions[level] = "4-year"
+            && institutions[bach_cohort] >= 30
+            && NOT ISBLANK ( institutions[retention_ft] )
+            && NOT ISBLANK ( institutions[net_price] )
+            && NOT ISBLANK ( institutions[grad_rate_bach_6yr] )
+    ),
+    institutions[grad_rate_bach_6yr],
+    institutions[pct_pell],
+    institutions[net_price],
+    institutions[retention_ft],
+    institutions[stu_fac_ratio],
+    institutions[Is Public]
+)
+```
+
+`Line Fit` is a table expression, so it lives inside a measure's `VAR`, and `MAXX ( fit, [Slope1] )` through `[Slope5]` pull out the coefficients for the prediction column and the RMSE measure.
+
+Three visuals do the tree's job without code. The **Decomposition tree** with AI splits set to "High value" is a tree grown by hand: each expansion picks the field that separates the outcome most, which is the greedy rule `rpart` uses, minus the held-out scoring. The **Key influencers** visual with `grad_rate_bach_6yr` as the target reports which values of which fields move it, which is the importance chart with the direction attached. And a **Python visual** or **R visual** runs the forest from the `Do it` tab inside the report, at the cost of needing Python or R on every machine that refreshes it.
+
+:::
+
+## Before you leave
+
+::: {.takeaways}
+1. **Score everything the same way.** One split, one test set, one number per model. The forest beats the line by about a point and a half here; the single tree loses by one.
+2. **Regularization buys simplicity more than accuracy when data is plentiful.** The lasso matched the line with `r n_kept` terms instead of `r n_coef`. With two hundred training rows instead of a thousand it would also have beaten it.
+3. **A tree is a set of rules; a forest is an average of many.** Trees are readable and unstable, forests are stable and opaque. Use the tree to explain and the forest to predict.
+4. **Ask when the strongest predictor is known.** Every model leaned on retention. A prediction that needs this year's retention rate is a prediction for next year, not this one.
+:::
+
+Next in this track: **Predict a yes or no**, on classification, thresholds, and the confusion matrix behind every early-alert model.

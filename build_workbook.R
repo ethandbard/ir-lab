@@ -8,7 +8,7 @@ build_workbook <- function(institutions, variables, path) {
   # Functions added to Excel after 2007 must be stored with the _xlfn. prefix
   # or Excel and LibreOffice show #NAME? until the cell is re-entered.
   writeFormula <- function(wb, sheet, x, ...) {
-    x <- gsub("(?<![A-Za-z._])(STDEV\\.S|STDEV\\.P|MINIFS|MAXIFS|PERCENTILE\\.INC|PERCENTILE\\.EXC|CONCAT|IFS|XLOOKUP|CONFIDENCE\\.T|T\\.INV\\.2T)\\(",
+    x <- gsub("(?<![A-Za-z._])(STDEV\\.S|STDEV\\.P|VAR\\.S|VAR\\.P|MINIFS|MAXIFS|PERCENTILE\\.INC|PERCENTILE\\.EXC|CONCAT|IFS|XLOOKUP|CONFIDENCE\\.T|T\\.INV\\.2T|T\\.DIST\\.2T|T\\.DIST\\.RT|T\\.DIST|T\\.TEST|NORM\\.S\\.DIST|RANK\\.AVG)\\(",
               "_xlfn.\\1(", x, perl = TRUE)
     openxlsx::writeFormula(wb, sheet, x, ...)
   }
@@ -735,6 +735,306 @@ build_workbook <- function(institutions, variables, path) {
   mergeCells(wb, ws, cols = 11:14, rows = 21)
   setRowHeights(wb, ws, rows = 21, heights = 60)
   setColWidths(wb, ws, cols = 1:14, widths = c(9, 40, 18, 10, 10, 18, 8, 10, 12, 3, 30, 12, 12, 26))
+  freezePane(wb, ws, firstActiveRow = 2)
+
+  # ---- relationships --------------------------------------------------
+  # Correlations on the 4-year frame: CORREL for Pearson, RANK.AVG then
+  # CORREL for Spearman, helper columns for the within-sector version, and
+  # a matrix built one CORREL at a time so blanks are handled pairwise.
+  rel <- institutions |>
+    dplyr::filter(level == "4-year", bach_cohort >= 30, !is.na(grad_rate_bach_6yr)) |>
+    dplyr::select(unitid, name, control, pct_pell, net_price, retention_ft, stu_fac_ratio,
+                  headcount, grad_rate_bach_6yr) |>
+    as.data.frame()
+  n <- nrow(rel)
+  last <- n + 1
+  rows <- 2:last
+  addWorksheet(wb, "relationships")
+  ws <- "relationships"
+  writeData(wb, ws, rel, startRow = 1, startCol = 1, headerStyle = hdr)
+  writeData(wb, ws, t(c("log_headcount", "rank_headcount", "rank_completion",
+                        "public_price", "public_completion", "nonprofit_price", "nonprofit_completion")),
+            startRow = 1, startCol = 10, colNames = FALSE)
+  addStyle(wb, ws, hdr, rows = 1, cols = 10:16)
+  writeFormula(wb, ws, sprintf("=LOG10(H%d)", rows), startRow = 2, startCol = 10)
+  writeFormula(wb, ws, sprintf("=RANK.AVG(H%d,H$2:H$%d,1)", rows, last), startRow = 2, startCol = 11)
+  writeFormula(wb, ws, sprintf("=RANK.AVG(I%d,I$2:I$%d,1)", rows, last), startRow = 2, startCol = 12)
+  # A blank net price would become 0 inside IF, so the helper pair blanks out together.
+  writeFormula(wb, ws, sprintf("=IF(AND(C%d=\"Public\",E%d<>\"\"),E%d,\"\")", rows, rows, rows), startRow = 2, startCol = 13)
+  writeFormula(wb, ws, sprintf("=IF(AND(C%d=\"Public\",E%d<>\"\"),I%d,\"\")", rows, rows, rows), startRow = 2, startCol = 14)
+  writeFormula(wb, ws, sprintf("=IF(AND(C%d=\"Private nonprofit\",E%d<>\"\"),E%d,\"\")", rows, rows, rows), startRow = 2, startCol = 15)
+  writeFormula(wb, ws, sprintf("=IF(AND(C%d=\"Private nonprofit\",E%d<>\"\"),I%d,\"\")", rows, rows, rows), startRow = 2, startCol = 16)
+  addStyle(wb, ws, num2, rows = rows, cols = 10, gridExpand = TRUE)
+
+  writeData(wb, ws, "Relationships", startRow = 1, startCol = 18)
+  addStyle(wb, ws, title, rows = 1, cols = 18)
+  writeData(wb, ws, paste(
+    "CORREL skips a pair when either cell is blank or text, which is R's complete.obs.",
+    "Spearman is CORREL on the RANK.AVG columns. The helper columns M to P blank out every row",
+    "outside the sector, so CORREL on them is the within-sector correlation."
+  ), startRow = 2, startCol = 18)
+  addStyle(wb, ws, note, rows = 2, cols = 18)
+  mergeCells(wb, ws, cols = 18:23, rows = 2)
+  setRowHeights(wb, ws, rows = 2, heights = 48)
+  labels <- c("Institutions", "Pearson r, Pell and completion", "Pearson r, net price and completion",
+              "R squared, net price and completion", "Pearson r, headcount and completion",
+              "Pearson r, log headcount and completion", "Spearman rho, headcount and completion",
+              "r, net price and completion, public only",
+              "r, net price and completion, private nonprofit only")
+  forms <- c(
+    sprintf("=COUNT(I2:I%d)", last),
+    sprintf("=CORREL(D2:D%d,I2:I%d)", last, last),
+    sprintf("=CORREL(E2:E%d,I2:I%d)", last, last),
+    sprintf("=RSQ(I2:I%d,E2:E%d)", last, last),
+    sprintf("=CORREL(H2:H%d,I2:I%d)", last, last),
+    sprintf("=CORREL(J2:J%d,I2:I%d)", last, last),
+    sprintf("=CORREL(K2:K%d,L2:L%d)", last, last),
+    sprintf("=CORREL(M2:M%d,N2:N%d)", last, last),
+    sprintf("=CORREL(O2:O%d,P2:P%d)", last, last)
+  )
+  writeData(wb, ws, labels, startRow = 4, startCol = 18)
+  for (i in seq_along(forms)) writeFormula(wb, ws, forms[i], startRow = 3 + i, startCol = 19)
+  addStyle(wb, ws, createStyle(numFmt = "0.000"), rows = 5:12, cols = 19)
+
+  mvars <- c("pct_pell", "net_price", "retention_ft", "stu_fac_ratio", "headcount", "grad_rate_bach_6yr", "log_headcount")
+  mcols <- c(4, 5, 6, 7, 8, 9, 10)
+  writeData(wb, ws, "Correlation matrix (CORREL on each pair)", startRow = 14, startCol = 18)
+  writeData(wb, ws, t(mvars), startRow = 15, startCol = 19, colNames = FALSE)
+  addStyle(wb, ws, hdr, rows = 15, cols = 18:25)
+  writeData(wb, ws, mvars, startRow = 16, startCol = 18)
+  for (i in seq_along(mvars)) for (j in seq_along(mvars)) {
+    ci <- int2col(mcols[i]); cj <- int2col(mcols[j])
+    writeFormula(wb, ws, sprintf("=CORREL(%s$2:%s$%d,%s$2:%s$%d)", ci, ci, last, cj, cj, last),
+                 startRow = 15 + i, startCol = 18 + j)
+  }
+  addStyle(wb, ws, num2, rows = 16:22, cols = 19:25, gridExpand = TRUE)
+  writeData(wb, ws, paste(
+    "Data > Data Analysis > Correlation writes the same matrix in one step but treats a blank as zero;",
+    "clear or filter the blank rows first. Insert > Scatter with a trendline draws any pair."
+  ), startRow = 24, startCol = 18)
+  addStyle(wb, ws, note, rows = 24, cols = 18)
+  mergeCells(wb, ws, cols = 18:25, rows = 24)
+  setRowHeights(wb, ws, rows = 24, heights = 36)
+  setColWidths(wb, ws, cols = 1:25, widths = c(9, 40, 18, 9, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 3, 44, rep(11, 7)))
+  freezePane(wb, ws, firstActiveRow = 2)
+
+  # ---- two-groups -----------------------------------------------------
+  # Two columns of completion rates, then Welch's t-test and Cohen's d in
+  # scalar formulas, with T.TEST as the one-call check.
+  tg <- institutions |>
+    dplyr::filter(level == "4-year", bach_cohort >= 30, !is.na(grad_rate_bach_6yr),
+                  control %in% c("Public", "Private nonprofit"))
+  pub <- tg$grad_rate_bach_6yr[tg$control == "Public"]
+  npf <- tg$grad_rate_bach_6yr[tg$control == "Private nonprofit"]
+  addWorksheet(wb, "two-groups")
+  ws <- "two-groups"
+  writeData(wb, ws, "Two groups: 6-year bachelor's completion, public against private nonprofit", startRow = 1)
+  addStyle(wb, ws, title, rows = 1, cols = 1)
+  writeData(wb, ws, paste(
+    "4-year institutions with a bachelor's cohort of at least 30. T.TEST with type 3 is Welch's test and returns the p-value;",
+    "the block below rebuilds it in steps so the t statistic, degrees of freedom, and interval are visible.",
+    "Cohen's d is the difference in means over the pooled standard deviation."
+  ), startRow = 2)
+  addStyle(wb, ws, note, rows = 2, cols = 1)
+  mergeCells(wb, ws, cols = 1:8, rows = 2)
+  setRowHeights(wb, ws, rows = 2, heights = 48)
+  writeData(wb, ws, t(c("Public", "Private nonprofit")), startRow = 4, startCol = 1, colNames = FALSE)
+  addStyle(wb, ws, hdr, rows = 4, cols = 1:2)
+  writeData(wb, ws, pub, startRow = 5, startCol = 1)
+  writeData(wb, ws, npf, startRow = 5, startCol = 2)
+  addStyle(wb, ws, num1, rows = 5:(4 + max(length(pub), length(npf))), cols = 1:2, gridExpand = TRUE)
+  ra <- "A5:A1100"
+  rb <- "B5:B1100"
+  writeData(wb, ws, t(c("Group statistics", "Public", "Private nonprofit")), startRow = 4, startCol = 4, colNames = FALSE)
+  addStyle(wb, ws, hdr, rows = 4, cols = 4:6)
+  writeData(wb, ws, c("n", "Mean", "Standard deviation", "Variance", "Standard error of the mean"),
+            startRow = 5, startCol = 4)
+  group_forms <- function(r) c(sprintf("=COUNT(%s)", r), sprintf("=AVERAGE(%s)", r),
+                               sprintf("=STDEV.S(%s)", r), sprintf("=VAR.S(%s)", r))
+  fa <- group_forms(ra)
+  fb <- group_forms(rb)
+  for (i in 1:4) {
+    writeFormula(wb, ws, fa[i], startRow = 4 + i, startCol = 5)
+    writeFormula(wb, ws, fb[i], startRow = 4 + i, startCol = 6)
+  }
+  writeFormula(wb, ws, "=E7/SQRT(E5)", startRow = 9, startCol = 5)
+  writeFormula(wb, ws, "=F7/SQRT(F5)", startRow = 9, startCol = 6)
+  addStyle(wb, ws, num2, rows = 6:9, cols = 5:6, gridExpand = TRUE)
+
+  writeData(wb, ws, t(c("Welch's t-test and effect size", "Value")), startRow = 11, startCol = 4, colNames = FALSE)
+  addStyle(wb, ws, hdr, rows = 11, cols = 4:5)
+  test_labels <- c("Difference in means (nonprofit - public)", "Standard error of the difference", "t statistic",
+                   "Welch degrees of freedom", "p-value, two-sided", "p-value from T.TEST (type 3)",
+                   "95% interval, lower", "95% interval, upper", "Pooled standard deviation", "Cohen's d",
+                   "Share of public-private pairs where the private is higher")
+  test_forms <- c(
+    "=F6-E6",
+    "=SQRT(E8/E5+F8/F5)",
+    "=E12/E13",
+    "=(E8/E5+F8/F5)^2/((E8/E5)^2/(E5-1)+(F8/F5)^2/(F5-1))",
+    "=T.DIST.2T(ABS(E14),E15)",
+    sprintf("=T.TEST(%s,%s,2,3)", ra, rb),
+    "=E12-T.INV.2T(0.05,E15)*E13",
+    "=E12+T.INV.2T(0.05,E15)*E13",
+    "=SQRT(((E5-1)*E8+(F5-1)*F8)/(E5+F5-2))",
+    "=E12/E20",
+    "=NORM.S.DIST(E21/SQRT(2),TRUE)"
+  )
+  writeData(wb, ws, test_labels, startRow = 12, startCol = 4)
+  for (i in seq_along(test_forms)) writeFormula(wb, ws, test_forms[i], startRow = 11 + i, startCol = 5)
+  addStyle(wb, ws, num2, rows = c(12:15, 18:21), cols = 5, gridExpand = TRUE)
+  addStyle(wb, ws, createStyle(numFmt = "0.00E+00"), rows = 16:17, cols = 5, gridExpand = TRUE)
+  addStyle(wb, ws, createStyle(numFmt = "0.0%"), rows = 22, cols = 5)
+  writeData(wb, ws, paste(
+    "Data > Data Analysis > t-Test: Two-Sample Assuming Unequal Variances writes the same numbers with one-",
+    "and two-tailed p-values. T.TEST type 2 is the equal-variance version. NORM.S.DIST of d / SQRT(2) is the",
+    "probability that a random private nonprofit beats a random public."
+  ), startRow = 24, startCol = 4)
+  addStyle(wb, ws, note, rows = 24, cols = 4)
+  mergeCells(wb, ws, cols = 4:8, rows = 24)
+  setRowHeights(wb, ws, rows = 24, heights = 60)
+  setColWidths(wb, ws, cols = 1:8, widths = c(12, 18, 3, 52, 14, 18, 3, 3))
+  freezePane(wb, ws, firstActiveRow = 5)
+
+  # ---- predict-rate ---------------------------------------------------
+  # Training rows first (last digit of unitid 0-6), LINEST with six numeric
+  # predictors on that block, the exhaustive search for a tree's first split
+  # on percent Pell, and ridge regression in closed form for two predictors.
+  pr <- institutions |>
+    dplyr::filter(level == "4-year", bach_cohort >= 30,
+                  carnegie %in% c("Doctoral", "Master's", "Baccalaureate", "Special focus")) |>
+    dplyr::mutate(log_headcount = round(log10(headcount), 4)) |>
+    dplyr::select(unitid, name, control, locale, carnegie, hbcu, pct_pell, net_price, stu_fac_ratio,
+                  log_headcount, pct_any_grant, pct_women_ug, pct_white_ug, pct_black_ug, pct_hispanic_ug,
+                  pct_asian_ug, pct_intl_ug, retention_ft, grad_rate_bach_6yr) |>
+    tidyr::drop_na() |>
+    dplyr::mutate(split = ifelse(unitid %% 10 < 7, "train", "test")) |>
+    dplyr::arrange(split == "test", unitid) |>
+    dplyr::select(unitid, name, control, pct_pell, net_price, retention_ft, stu_fac_ratio,
+                  log_headcount, pct_asian_ug, grad_rate_bach_6yr) |>
+    as.data.frame()
+  n <- nrow(pr)
+  last <- n + 1
+  n_train <- sum(pr$unitid %% 10 < 7)
+  tr_last <- n_train + 1
+  te_first <- n_train + 2
+  addWorksheet(wb, "predict-rate")
+  ws <- "predict-rate"
+  writeData(wb, ws, pr, startRow = 1, startCol = 1, headerStyle = hdr)
+  writeData(wb, ws, t(c("split", "predicted", "squared error")), startRow = 1, startCol = 11, colNames = FALSE)
+  addStyle(wb, ws, hdr, rows = 1, cols = 11:13)
+  rows <- 2:last
+  writeFormula(wb, ws, sprintf("=IF(MOD(A%d,10)<7,\"train\",\"test\")", rows), startRow = 2, startCol = 11)
+  writeFormula(wb, ws, sprintf("=$P$6+$P$7*D%d+$P$8*E%d+$P$9*F%d+$P$10*G%d+$P$11*H%d+$P$12*I%d",
+                               rows, rows, rows, rows, rows, rows), startRow = 2, startCol = 12)
+  writeFormula(wb, ws, sprintf("=(J%d-L%d)^2", rows, rows), startRow = 2, startCol = 13)
+  addStyle(wb, ws, num1, rows = rows, cols = 12:13, gridExpand = TRUE)
+
+  writeData(wb, ws, "Predict a rate", startRow = 1, startCol = 15)
+  addStyle(wb, ws, title, rows = 1, cols = 15)
+  writeData(wb, ws, paste(
+    "Training rows (last digit of unitid 0-6) are rows 2 to", tr_last, "and the test rows follow.",
+    "LINEST fits 6-year completion (J) on columns D to I using the training block only;",
+    "the prediction column scores every row and the RMSE formulas score each block."
+  ), startRow = 2, startCol = 15)
+  addStyle(wb, ws, note, rows = 2, cols = 15)
+  mergeCells(wb, ws, cols = 15:20, rows = 2)
+  setRowHeights(wb, ws, rows = 2, heights = 60)
+  lin <- sprintf("LINEST(J2:J%d,D2:I%d,TRUE,TRUE)", tr_last, tr_last)
+  labels <- c("Training rows", "Test rows", "Intercept", "Percent Pell", "Net price", "Full-time retention",
+              "Student-faculty ratio", "Log10 headcount", "Percent Asian", "Training R squared",
+              "Training RMSE", "Test RMSE", "Test RMSE, guess the training mean")
+  forms <- c(
+    sprintf("=COUNTIF(K2:K%d,\"train\")", last),
+    sprintf("=COUNTIF(K2:K%d,\"test\")", last),
+    sprintf("=INDEX(%s,1,7)", lin),
+    sprintf("=INDEX(%s,1,6)", lin),
+    sprintf("=INDEX(%s,1,5)", lin),
+    sprintf("=INDEX(%s,1,4)", lin),
+    sprintf("=INDEX(%s,1,3)", lin),
+    sprintf("=INDEX(%s,1,2)", lin),
+    sprintf("=INDEX(%s,1,1)", lin),
+    sprintf("=INDEX(%s,3,1)", lin),
+    sprintf("=SQRT(SUMXMY2(J2:J%d,L2:L%d)/COUNT(J2:J%d))", tr_last, tr_last, tr_last),
+    sprintf("=SQRT(SUMXMY2(J%d:J%d,L%d:L%d)/COUNT(J%d:J%d))", te_first, last, te_first, last, te_first, last),
+    sprintf("=SQRT(SUMPRODUCT((J%d:J%d-AVERAGE(J2:J%d))^2)/COUNT(J%d:J%d))", te_first, last, tr_last, te_first, last)
+  )
+  writeData(wb, ws, labels, startRow = 4, startCol = 15)
+  for (i in seq_along(forms)) writeFormula(wb, ws, forms[i], startRow = 3 + i, startCol = 16)
+  addStyle(wb, ws, createStyle(numFmt = "0.0000"), rows = 6:12, cols = 16, gridExpand = TRUE)
+  addStyle(wb, ws, num2, rows = 13:16, cols = 16, gridExpand = TRUE)
+
+  writeData(wb, ws, "A tree's first split: exhaustive search on percent Pell, training rows only", startRow = 18, startCol = 15)
+  addStyle(wb, ws, hdr, rows = 18, cols = 15:20)
+  writeData(wb, ws, t(c("Cut at Pell <", "n below", "Mean below", "n at or above", "Mean at or above", "Squared error left")),
+            startRow = 19, startCol = 15, colNames = FALSE)
+  addStyle(wb, ws, hdr, rows = 19, cols = 15:20)
+  cuts <- seq(10, 90, by = 5)
+  writeData(wb, ws, cuts, startRow = 20, startCol = 15)
+  for (i in seq_along(cuts)) {
+    r <- 19 + i
+    writeFormula(wb, ws, sprintf("=COUNTIF(D$2:D$%d,\"<\"&O%d)", tr_last, r), startRow = r, startCol = 16)
+    writeFormula(wb, ws, sprintf("=AVERAGEIF(D$2:D$%d,\"<\"&O%d,J$2:J$%d)", tr_last, r, tr_last), startRow = r, startCol = 17)
+    writeFormula(wb, ws, sprintf("=COUNTIF(D$2:D$%d,\">=\"&O%d)", tr_last, r), startRow = r, startCol = 18)
+    writeFormula(wb, ws, sprintf("=AVERAGEIF(D$2:D$%d,\">=\"&O%d,J$2:J$%d)", tr_last, r, tr_last), startRow = r, startCol = 19)
+    writeFormula(wb, ws, sprintf("=DEVSQ(IF(D$2:D$%d<O%d,J$2:J$%d))+DEVSQ(IF(D$2:D$%d>=O%d,J$2:J$%d))",
+                                 tr_last, r, tr_last, tr_last, r, tr_last), startRow = r, startCol = 20, array = TRUE)
+  }
+  last_cut <- 19 + length(cuts)
+  addStyle(wb, ws, num1, rows = 20:last_cut, cols = c(17, 19), gridExpand = TRUE)
+  addStyle(wb, ws, createStyle(numFmt = "#,##0"), rows = 20:last_cut, cols = c(16, 18, 20), gridExpand = TRUE)
+  writeData(wb, ws, c("Squared error with no split", "Best cut", "Squared error at the best cut",
+                      "Share of squared error removed"), startRow = last_cut + 2, startCol = 15)
+  writeFormula(wb, ws, sprintf("=DEVSQ(J2:J%d)", tr_last), startRow = last_cut + 2, startCol = 16)
+  writeFormula(wb, ws, sprintf("=INDEX(O20:O%d,MATCH(MIN(T20:T%d),T20:T%d,0))", last_cut, last_cut, last_cut),
+               startRow = last_cut + 3, startCol = 16)
+  writeFormula(wb, ws, sprintf("=MIN(T20:T%d)", last_cut), startRow = last_cut + 4, startCol = 16)
+  writeFormula(wb, ws, sprintf("=1-P%d/P%d", last_cut + 4, last_cut + 2), startRow = last_cut + 5, startCol = 16)
+  addStyle(wb, ws, createStyle(numFmt = "#,##0"), rows = c(last_cut + 2, last_cut + 4), cols = 16, gridExpand = TRUE)
+  addStyle(wb, ws, createStyle(numFmt = "0.0%"), rows = last_cut + 5, cols = 16)
+
+  # Ridge in closed form. With z-scored predictors and centered y:
+  #   sum z1^2 = sum z2^2 = n - 1, sum z1 z2 = (n - 1) r12,
+  #   sum z1 y = (n - 1) r1y sd_y, sum z2 y = (n - 1) r2y sd_y,
+  # so b = (Z'Z + lambda I)^-1 Z'y needs only five cells.
+  rr <- last_cut + 8
+  writeData(wb, ws, "Ridge regression in closed form: two standardized predictors, Pell (D) and net price (E)", startRow = rr, startCol = 15)
+  addStyle(wb, ws, hdr, rows = rr, cols = 15:18)
+  writeData(wb, ws, c("Training rows (n)", "r, Pell and net price", "r, Pell and completion",
+                      "r, net price and completion", "SD of completion"), startRow = rr + 1, startCol = 15)
+  writeFormula(wb, ws, sprintf("=COUNT(J2:J%d)", tr_last), startRow = rr + 1, startCol = 16)
+  writeFormula(wb, ws, sprintf("=CORREL(D2:D%d,E2:E%d)", tr_last, tr_last), startRow = rr + 2, startCol = 16)
+  writeFormula(wb, ws, sprintf("=CORREL(D2:D%d,J2:J%d)", tr_last, tr_last), startRow = rr + 3, startCol = 16)
+  writeFormula(wb, ws, sprintf("=CORREL(E2:E%d,J2:J%d)", tr_last, tr_last), startRow = rr + 4, startCol = 16)
+  writeFormula(wb, ws, sprintf("=STDEV.S(J2:J%d)", tr_last), startRow = rr + 5, startCol = 16)
+  addStyle(wb, ws, createStyle(numFmt = "0.000"), rows = (rr + 2):(rr + 5), cols = 16, gridExpand = TRUE)
+  writeData(wb, ws, t(c("Penalty", "Pell coefficient", "Net price coefficient", "Shrinkage")),
+            startRow = rr + 7, startCol = 15, colNames = FALSE)
+  addStyle(wb, ws, hdr, rows = rr + 7, cols = 15:18)
+  pens <- c(0, 100, 300, 1000, 3000, 10000, 30000)
+  writeData(wb, ws, pens, startRow = rr + 8, startCol = 15)
+  nP <- sprintf("$P$%d", rr + 1); r12 <- sprintf("$P$%d", rr + 2); r1y <- sprintf("$P$%d", rr + 3)
+  r2y <- sprintf("$P$%d", rr + 4); sdy <- sprintf("$P$%d", rr + 5)
+  for (i in seq_along(pens)) {
+    r <- rr + 7 + i
+    det <- sprintf("(((%s-1)+O%d)*((%s-1)+O%d)-((%s-1)*%s)^2)", nP, r, nP, r, nP, r12)
+    writeFormula(wb, ws, sprintf("=(((%s-1)+O%d)*(%s-1)*%s*%s-(%s-1)*%s*(%s-1)*%s*%s)/%s",
+                                 nP, r, nP, r1y, sdy, nP, r12, nP, r2y, sdy, det), startRow = r, startCol = 16)
+    writeFormula(wb, ws, sprintf("=(((%s-1)+O%d)*(%s-1)*%s*%s-(%s-1)*%s*(%s-1)*%s*%s)/%s",
+                                 nP, r, nP, r2y, sdy, nP, r12, nP, r1y, sdy, det), startRow = r, startCol = 17)
+    writeFormula(wb, ws, sprintf("=SQRT(P%d^2+Q%d^2)/SQRT(P$%d^2+Q$%d^2)", r, r, rr + 8, rr + 8), startRow = r, startCol = 18)
+  }
+  addStyle(wb, ws, num2, rows = (rr + 8):(rr + 7 + length(pens)), cols = 16:17, gridExpand = TRUE)
+  addStyle(wb, ws, createStyle(numFmt = "0.0%"), rows = (rr + 8):(rr + 7 + length(pens)), cols = 18, gridExpand = TRUE)
+  writeData(wb, ws, paste(
+    "Coefficients are points of completion per standard deviation of the predictor. At penalty 0 they equal",
+    "LINEST on the z-scored columns; as the penalty grows both shrink toward zero. The lasso has no closed form,",
+    "and a full tree repeats the split search inside every leaf: both belong in R or Python."
+  ), startRow = rr + 16, startCol = 15)
+  addStyle(wb, ws, note, rows = rr + 16, cols = 15)
+  mergeCells(wb, ws, cols = 15:20, rows = rr + 16)
+  setRowHeights(wb, ws, rows = rr + 16, heights = 60)
+  setColWidths(wb, ws, cols = 1:20, widths = c(9, 40, 18, 9, 10, 10, 10, 10, 10, 10, 8, 10, 12, 3, 44, 12, 12, 12, 14, 16))
   freezePane(wb, ws, firstActiveRow = 2)
 
   saveWorkbook(wb, path, overwrite = TRUE)

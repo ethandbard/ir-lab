@@ -1,0 +1,710 @@
+---
+title: "Relationships"
+subtitle: "Scatterplots, correlation, and the difference between association and cause"
+webr:
+  packages:
+    - dplyr
+    - ggplot2
+    - tidyr
+  resources:
+    - data/institutions.csv
+pyodide:
+  packages:
+    - pandas
+    - matplotlib
+    - scipy
+  resources:
+    - data/institutions.csv
+---
+
+{{< include ./_extensions/r-wasm/live/_knitr.qmd >}}
+
+```{r}
+#| include: false
+source("_common.R")
+four <- institutions |>
+  filter(level == "4-year", bach_cohort >= 30, !is.na(grad_rate_bach_6yr)) |>
+  mutate(log_headcount = log10(headcount))
+n_four <- nrow(four)
+r_of <- function(x, y, method = "pearson") cor(four[[x]], four[[y]], use = "complete.obs", method = method)
+r_pell <- round(r_of("pct_pell", "grad_rate_bach_6yr"), 2)
+rho_pell <- round(r_of("pct_pell", "grad_rate_bach_6yr", "spearman"), 2)
+r_price <- round(r_of("net_price", "grad_rate_bach_6yr"), 2)
+r2_price <- round(r_price^2, 2)
+r_head <- round(r_of("headcount", "grad_rate_bach_6yr"), 2)
+rho_head <- round(r_of("headcount", "grad_rate_bach_6yr", "spearman"), 2)
+r_loghead <- round(r_of("log_headcount", "grad_rate_bach_6yr"), 2)
+r_ret <- round(r_of("retention_ft", "grad_rate_bach_6yr"), 2)
+r_sf <- round(r_of("stu_fac_ratio", "grad_rate_bach_6yr"), 2)
+n_price <- sum(!is.na(four$net_price))
+price_ci <- round(cor.test(four$net_price, four$grad_rate_bach_6yr)$conf.int, 2)
+by_ctrl <- four |>
+  group_by(control) |>
+  summarise(n = n(),
+            r_pell = cor(pct_pell, grad_rate_bach_6yr, use = "complete.obs"),
+            r_price = cor(net_price, grad_rate_bach_6yr, use = "complete.obs"),
+            r_size = cor(log_headcount, grad_rate_bach_6yr),
+            r_rawsize = cor(headcount, grad_rate_bach_6yr))
+g <- function(ctrl, col) round(by_ctrl[[col]][by_ctrl$control == ctrl], 2)
+set.seed(5)
+r30 <- replicate(500, {
+  i <- sample(n_four, 30)
+  cor(four$net_price[i], four$grad_rate_bach_6yr[i], use = "complete.obs")
+})
+r30_lo <- round(quantile(r30, 0.025), 2)
+r30_hi <- round(quantile(r30, 0.975), 2)
+```
+
+::: {.lesson-eyebrow}
+Explore · Lesson 4 of 6
+:::
+
+The most expensive four-year institutions graduate the most students. Across `r fmt(n_price)` institutions with a bachelor's cohort of at least 30, the correlation between `r v("net_price")` and `r v("grad_rate_bach_6yr")` is `r r_price`. That number is true, it will survive any recomputation, and it says nothing about whether raising price would raise completion. This lesson is about reading a relationship for what it is: its direction, its strength, its shape, and the several things besides cause that can produce it.
+
+**You will be able to:** read a scatterplot for direction, strength, shape, and stray points; compute and interpret Pearson's r and Spearman's rho; check whether a relationship holds inside groups; and list the explanations for an association that are not cause.
+
+## Watch it move {.beat data-beat="1 · Watch it move"}
+
+Each dot is a four-year institution. Pick any two columns, and the readout gives the correlation two ways: Pearson's r, which measures how close the dots sit to a straight line, and Spearman's rho, which does the same on their ranks and so does not care whether the line is straight. Color by control to see whether the relationship survives inside each sector.
+
+::: {.lab-anim}
+
+```{ojs}
+//| echo: false
+inst = FileAttachment("data/institutions.csv").csv({typed: true})
+relRows = inst.filter(d => d.level === "4-year" && d.bach_cohort >= 30 && d.grad_rate_bach_6yr != null)
+
+relVars = new Map([
+  ["Percent Pell", "pct_pell"],
+  ["Net price ($)", "net_price"],
+  ["Full-time retention (%)", "retention_ft"],
+  ["Student-faculty ratio", "stu_fac_ratio"],
+  ["12-month headcount", "headcount"],
+  ["Percent international", "pct_intl_ug"],
+  ["Percent with any grant aid", "pct_any_grant"],
+  ["6-year completion (%)", "grad_rate_bach_6yr"]
+])
+relLabel = new Map([...relVars].map(([label, key]) => [key, label]))
+relControls = ["Public", "Private nonprofit", "Private for-profit"]
+relColor = new Map([
+  ["Public", "var(--lab-primary)"],
+  ["Private nonprofit", "var(--lab-accent)"],
+  ["Private for-profit", "var(--lab-aqua)"]
+])
+
+pearson = (xs, ys) => {
+  const mx = d3.mean(xs), my = d3.mean(ys);
+  let sxy = 0, sxx = 0, syy = 0;
+  for (let i = 0; i < xs.length; i++) {
+    const dx = xs[i] - mx, dy = ys[i] - my;
+    sxy += dx * dy; sxx += dx * dx; syy += dy * dy;
+  }
+  return sxy / Math.sqrt(sxx * syy);
+}
+ranks = v => {
+  const idx = d3.range(v.length).sort((a, b) => v[a] - v[b]);
+  const r = new Array(v.length);
+  let i = 0;
+  while (i < idx.length) {
+    let j = i;
+    while (j + 1 < idx.length && v[idx[j + 1]] === v[idx[i]]) j++;
+    const avg = (i + j) / 2 + 1;
+    for (let k = i; k <= j; k++) r[idx[k]] = avg;
+    i = j + 1;
+  }
+  return r;
+}
+spearman = (xs, ys) => pearson(ranks(xs), ranks(ys))
+olsLine = (xs, ys) => {
+  const mx = d3.mean(xs), my = d3.mean(ys);
+  let sxy = 0, sxx = 0;
+  for (let i = 0; i < xs.length; i++) { sxy += (xs[i] - mx) * (ys[i] - my); sxx += (xs[i] - mx) ** 2; }
+  const b1 = sxy / sxx;
+  return {b0: my - b1 * mx, b1};
+}
+```
+
+::: {.lab-controls}
+```{ojs}
+//| echo: false
+viewof relX = Inputs.select(relVars, {label: "Across", value: "pct_pell"})
+viewof relY = Inputs.select(relVars, {label: "Up", value: "grad_rate_bach_6yr"})
+viewof relLog = Inputs.toggle({label: "Log scale across", value: false})
+viewof relByControl = Inputs.toggle({label: "Color by control", value: false})
+```
+:::
+
+```{ojs}
+//| echo: false
+relStats = {
+  const rows = relRows.filter(d => d[relX] != null && d[relY] != null && (!relLog || d[relX] > 0));
+  const xv = d => relLog ? Math.log10(d[relX]) : d[relX];
+  const xs = rows.map(xv), ys = rows.map(d => d[relY]);
+  const r = pearson(xs, ys);
+  const rho = spearman(rows.map(d => d[relX]), ys);
+  const line = olsLine(xs, ys);
+  const groups = relControls.map(name => {
+    const sub = rows.filter(d => d.control === name);
+    const gx = sub.map(xv), gy = sub.map(d => d[relY]);
+    return {name, n: sub.length, r: sub.length > 2 ? pearson(gx, gy) : NaN,
+            line: sub.length > 2 ? olsLine(gx, gy) : null, xr: d3.extent(gx)};
+  });
+  return {rows, xs, ys, r, rho, line, groups, xv};
+}
+```
+
+```{ojs}
+//| echo: false
+relNode = d3.create("svg").attr("class", "lab-svg").node()
+
+relPlot = {
+  const width = 860, height = 440, margin = {top: 16, right: 20, bottom: 50, left: 62};
+  const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const dur = reduce ? 0 : 650;
+  const {rows, xs, ys, line, groups, xv} = relStats;
+  const x = d3.scaleLinear().domain(d3.extent(xs)).nice().range([margin.left, width - margin.right]);
+  const y = d3.scaleLinear().domain(d3.extent(ys)).nice().range([height - margin.bottom, margin.top]);
+  const money = relX === "net_price" && !relLog;
+  const tickFmt = relLog ? (v => d3.format("~s")(10 ** v)) : money ? d3.format("$~s") : d3.format("~f");
+  const logTicks = dom => {
+    const mults = dom[1] - dom[0] <= 2.5 ? [1, 2, 5] : dom[1] - dom[0] <= 4 ? [1, 3] : [1];
+    const out = [];
+    for (let e = Math.floor(dom[0]); e <= Math.ceil(dom[1]); e++) for (const m of mults) {
+      const v = e + Math.log10(m);
+      if (v >= dom[0] - 1e-9 && v <= dom[1] + 1e-9) out.push(v);
+    }
+    return out;
+  };
+  const yFmt = relY === "net_price" ? d3.format("$~s") : d3.format("~f");
+  const fmtVal = key => key === "net_price" ? d3.format("$,.0f") : key === "headcount" ? d3.format(",.0f") : d3.format(".1f");
+  const clipY = v => Math.max(y.domain()[0], Math.min(y.domain()[1], v));
+  const segment = (fit, x0, x1) => ({x1: x(x0), y1: y(clipY(fit.b0 + fit.b1 * x0)), x2: x(x1), y2: y(clipY(fit.b0 + fit.b1 * x1))});
+
+  const svg = d3.select(relNode);
+  svg.attr("viewBox", [0, 0, width, height]);
+  const layer = name => { let g = svg.select(`g.${name}`); if (g.empty()) g = svg.append("g").attr("class", name); return g; };
+  const gx = layer("axis"), gy = layer("axisy"), glab = layer("labels"), gd = layer("dots"), gl = layer("lines");
+
+  const t = svg.transition().duration(dur).ease(d3.easeCubicInOut);
+
+  gx.attr("transform", `translate(0,${height - margin.bottom})`).transition(t)
+    .call(d3.axisBottom(x).ticks(8).tickValues(relLog ? logTicks(x.domain()) : null).tickFormat(tickFmt).tickSizeOuter(0));
+  gy.attr("transform", `translate(${margin.left},0)`).transition(t)
+    .call(d3.axisLeft(y).ticks(8).tickFormat(yFmt).tickSizeOuter(0));
+
+  glab.selectAll("text.axis-label").data([
+    {t: relLabel.get(relX) + (relLog ? " (log scale)" : ""), x: width - margin.right, y: height - 10, rot: null, anchor: "end"},
+    {t: relLabel.get(relY), x: 0, y: 0, rot: `translate(14,${margin.top}) rotate(-90)`, anchor: "end"}
+  ]).join("text").attr("class", "axis-label")
+    .attr("x", d => d.rot ? null : d.x).attr("y", d => d.rot ? null : d.y)
+    .attr("transform", d => d.rot).attr("text-anchor", d => d.anchor).text(d => d.t);
+
+  gd.selectAll("circle").data(rows, d => d.unitid)
+    .join(
+      enter => enter.append("circle").attr("r", 0)
+        .attr("cx", d => x(xv(d))).attr("cy", d => y(d[relY]))
+        .call(e => e.append("title")),
+      update => update,
+      exit => exit.transition(t).attr("r", 0).remove()
+    )
+    .call(sel => sel.select("title").text(d => `${d.name}\n${d.control}\n${relLabel.get(relX)}: ${fmtVal(relX)(d[relX])}\n${relLabel.get(relY)}: ${fmtVal(relY)(d[relY])}`))
+    .transition(t)
+    .attr("r", 2.6)
+    .attr("cx", d => x(xv(d))).attr("cy", d => y(d[relY]))
+    .attr("fill", d => relByControl ? relColor.get(d.control) : "var(--lab-primary)")
+    .attr("fill-opacity", relByControl ? 0.55 : 0.4);
+
+  const fits = [{name: "all", fit: line, xr: x.domain(), color: "var(--lab-ink)", width: 2.6, show: true},
+    ...groups.map(gr => ({name: gr.name, fit: gr.line, xr: gr.xr, color: relColor.get(gr.name), width: 2, show: relByControl && gr.line && gr.n > 10}))];
+  gl.selectAll("line").data(fits.filter(f => f.fit), d => d.name)
+    .join(enter => enter.append("line").attr("stroke-linecap", "round").attr("opacity", 0))
+    .attr("stroke", d => d.color).attr("stroke-width", d => d.width)
+    .transition(t)
+    .attr("opacity", d => d.show ? 1 : 0)
+    .attr("x1", d => segment(d.fit, d.xr[0], d.xr[1]).x1).attr("y1", d => segment(d.fit, d.xr[0], d.xr[1]).y1)
+    .attr("x2", d => segment(d.fit, d.xr[0], d.xr[1]).x2).attr("y2", d => segment(d.fit, d.xr[0], d.xr[1]).y2);
+
+  return svg.node();
+}
+```
+
+```{ojs}
+//| echo: false
+relReadout = {
+  const {rows, r, rho, groups} = relStats;
+  const f2 = d3.format(".2f"), f = d3.format(",");
+  const a = Math.abs(r);
+  const strength = a < 0.1 ? "no linear relationship to speak of" : a < 0.3 ? "a weak linear relationship" : a < 0.5 ? "a moderate linear relationship" : "a strong linear relationship";
+  const direction = a < 0.1 ? "" : r > 0 ? ", higher across going with higher up" : ", higher across going with lower up";
+  const gap = Math.abs(rho) - a;
+  const shape = gap > 0.08
+    ? " Spearman is clearly stronger than Pearson: the relationship is monotone but not straight, or a few extreme values are pulling the line."
+    : gap < -0.08 ? " Pearson is stronger than Spearman: a few extreme rows are doing much of the work." : "";
+  const within = relByControl
+    ? " Within sectors: " + groups.filter(gr => gr.n > 10).map(gr => `${gr.name} ${f2(gr.r)} (n = ${f(gr.n)})`).join(", ") + "."
+    : "";
+  return html`<div class="lab-readout">
+    <div><span class="k">Pearson r</span><span class="val primary">${f2(r)}</span></div>
+    <div><span class="k">Spearman rho</span><span class="val">${f2(rho)}</span></div>
+    <div><span class="k">R squared</span><span class="val">${f2(r * r)}</span></div>
+    <div><span class="k">Institutions</span><span class="val">${f(rows.length)}</span></div>
+    ${relByControl ? groups.filter(gr => gr.n > 10).map(gr => html`<div><span class="k">r, ${gr.name}</span><span class="val" style="color:${relColor.get(gr.name)}">${f2(gr.r)}</span></div>`) : ""}
+  </div>
+  <p class="lab-hint">Pearson's r says this is ${strength}${direction}.${shape}${within} Four-year institutions with a bachelor's cohort of at least 30; rows missing either value are dropped.</p>`;
+}
+```
+
+:::
+
+Three things to try:
+
+1. **Pell share and completion.** The strongest simple relationship in the table apart from retention: r = `r r_pell`, rho = `r rho_pell`. Color by control. It holds inside every sector, steeper among private nonprofits (`r g("Private nonprofit", "r_pell")`) than publics (`r g("Public", "r_pell")`). A relationship that survives inside groups is not an artifact of the groups.
+2. **Net price and completion.** r = `r r_price`, and it is still there within publics (`r g("Public", "r_price")`) and within nonprofits (`r g("Private nonprofit", "r_price")`), so it is not just that private institutions are both pricier and higher-completing. It is still not cause. Price stands in for the things that come with it: selective admissions, residential campuses, full-time students. Raising tuition by five thousand dollars would not buy five points of completion.
+3. **Headcount and completion.** Pearson says `r r_head`; Spearman says `r rho_head`. Headcount is skewed, with a few institutions past fifty thousand students, and the raw scale hands them most of the leverage over the line. Switch on the log scale and Pearson climbs to `r r_loghead`. Then color by control: on the raw scale, size barely registers among private nonprofits (`r g("Private nonprofit", "r_rawsize")`); on the log scale it is `r g("Private nonprofit", "r_size")`, close to the publics' `r g("Public", "r_size")`. The relationship was there all along, hidden behind a handful of very large campuses.
+
+## Do it {.beat data-beat="2 · Do it"}
+
+The cells below run in your browser. The frame is the usual one: four-year institutions with a bachelor's cohort of at least 30 and a reported six-year rate.
+
+::: {.panel-tabset group="language"}
+
+### R
+
+```{webr}
+#| autorun: true
+#| caption: Load, filter, and correlate one pair
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+inst <- read.csv("data/institutions.csv", na.strings = c("", "NA"))
+
+four <- inst |>
+  filter(level == "4-year", bach_cohort >= 30, !is.na(grad_rate_bach_6yr)) |>
+  mutate(log_headcount = log10(headcount))
+
+cor(four$net_price, four$grad_rate_bach_6yr, use = "complete.obs")
+cor.test(four$net_price, four$grad_rate_bach_6yr)
+```
+
+`use = "complete.obs"` drops the rows where either value is blank; without it `cor()` returns `NA` the moment it meets one. `cor.test()` adds a confidence interval, and with `r fmt(n_price)` institutions it is narrow. With 30 it would not be: in repeated samples of 30 from this table, r for this same pair ranges from `r r30_lo` to `r r30_hi`.
+
+Before trusting any r, draw the dots. The straight line is what r measures; the curve is a check on whether a straight line was the right idea.
+
+```{webr}
+#| autorun: true
+#| caption: The scatterplot, with a line and a curve
+ggplot(four, aes(net_price, grad_rate_bach_6yr)) +
+  geom_point(alpha = 0.3, size = 1.2, color = "#2a78d6") +
+  geom_smooth(method = "lm", se = FALSE, color = "#14213d", formula = y ~ x) +
+  geom_smooth(method = "loess", se = FALSE, color = "#eb6834", linewidth = 0.8, formula = y ~ x) +
+  scale_x_continuous(labels = function(x) paste0("$", x / 1000, "k")) +
+  scale_y_continuous(labels = function(x) paste0(x, "%")) +
+  labs(x = "Average net price, 2022-23", y = "6-year bachelor's completion",
+       title = "Dark line: least squares. Orange: a local curve.") +
+  theme_minimal(base_size = 13)
+```
+
+One number per pair scales up to a matrix. The heatmap is the fastest way to read it, and the last row is the one an IR office usually wants: what goes with completion.
+
+```{webr}
+#| autorun: true
+#| caption: Correlation matrix as a heatmap
+num <- four |>
+  select(pct_pell, net_price, retention_ft, stu_fac_ratio, log_headcount,
+         pct_intl_ug, pct_any_grant, grad_rate_bach_6yr)
+cm <- cor(num, use = "pairwise.complete.obs")
+
+as.data.frame(cm) |>
+  mutate(row = rownames(cm)) |>
+  pivot_longer(-row, names_to = "col", values_to = "r") |>
+  mutate(row = factor(row, rev(names(num))), col = factor(col, names(num))) |>
+  ggplot(aes(col, row, fill = r)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = sprintf("%.2f", r)), size = 3) +
+  scale_fill_gradient2(low = "#eb6834", mid = "white", high = "#2a78d6", limits = c(-1, 1)) +
+  labs(x = NULL, y = NULL) +
+  theme_minimal(base_size = 12) +
+  theme(axis.text.x = element_text(angle = 30, hjust = 1), legend.position = "none",
+        panel.grid = element_blank())
+```
+
+`pairwise.complete.obs` computes each cell on the rows that have both of its variables, so different cells use slightly different institutions. That is usually what you want for a description and never what you want for a model.
+
+Pearson's r is a statement about a straight line. When one variable is skewed, or the relationship bends, the rank version tells a different story, and a log transform often brings the two back together.
+
+```{webr}
+#| autorun: true
+#| caption: Pearson, Spearman, and a log transform
+c(pearson = cor(four$headcount, four$grad_rate_bach_6yr),
+  spearman = cor(four$headcount, four$grad_rate_bach_6yr, method = "spearman"),
+  pearson_log = cor(four$log_headcount, four$grad_rate_bach_6yr)) |>
+  round(3)
+```
+
+Spearman's rho does not change under the log, because ranks do not. Pearson's r does, because the log pulls the fifty-thousand-student campuses in from the far right of the plot. Whenever the two disagree, look at the plot before choosing.
+
+The question that follows any correlation is whether it holds inside the groups you already know about. One `group_by()` answers it.
+
+```{webr}
+#| autorun: true
+#| caption: The same correlations inside each sector
+four |>
+  group_by(control) |>
+  summarise(
+    n = n(),
+    r_price = cor(net_price, grad_rate_bach_6yr, use = "complete.obs"),
+    r_size = cor(log_headcount, grad_rate_bach_6yr),
+    r_pell = cor(pct_pell, grad_rate_bach_6yr, use = "complete.obs")
+  ) |>
+  mutate(across(where(is.numeric) & !n, ~ round(.x, 2)))
+```
+
+Finally, the reason the plot comes first. R ships four small datasets with the same means, the same variances, the same regression line, and the same r of 0.82. Only one of them is what a correlation of 0.82 makes you picture.
+
+```{webr}
+#| autorun: true
+#| caption: "Anscombe's quartet: one r, four shapes"
+anscombe |>
+  pivot_longer(everything(), names_to = c(".value", "set"), names_pattern = "(.)(.)") |>
+  ggplot(aes(x, y)) +
+  geom_point(color = "#2a78d6", size = 2) +
+  geom_smooth(method = "lm", se = FALSE, color = "#14213d", formula = y ~ x) +
+  facet_wrap(~ set, labeller = labeller(set = function(s) paste("Set", s))) +
+  labs(title = "Four datasets, one r of 0.82") +
+  theme_minimal(base_size = 12)
+```
+
+### Python
+
+```{pyodide}
+#| autorun: true
+#| caption: Load, filter, and correlate one pair
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from scipy import stats
+
+inst = pd.read_csv("data/institutions.csv")
+four = inst[(inst["level"] == "4-year") & (inst["bach_cohort"] >= 30) & inst["grad_rate_bach_6yr"].notna()].copy()
+four["log_headcount"] = np.log10(four["headcount"])
+
+pair = four[["net_price", "grad_rate_bach_6yr"]].dropna()
+res = stats.pearsonr(pair["net_price"], pair["grad_rate_bach_6yr"])
+ci = res.confidence_interval()
+print(f"r = {res.statistic:.3f}, 95% CI {ci.low:.3f} to {ci.high:.3f}, n = {len(pair)}")
+```
+
+```{pyodide}
+#| autorun: true
+#| caption: The scatterplot, with a line
+b1, b0 = np.polyfit(pair["net_price"], pair["grad_rate_bach_6yr"], 1)
+xs = np.linspace(pair["net_price"].min(), pair["net_price"].max(), 50)
+
+fig, ax = plt.subplots(figsize=(8, 4.5))
+ax.scatter(pair["net_price"], pair["grad_rate_bach_6yr"], s=8, alpha=0.3, color="#2a78d6")
+ax.plot(xs, b0 + b1 * xs, color="#14213d", linewidth=2)
+ax.set_xlabel("Average net price, 2022-23 ($)")
+ax.set_ylabel("6-year bachelor's completion (%)")
+ax.spines[["top", "right"]].set_visible(False)
+plt.tight_layout()
+plt.show()
+```
+
+```{pyodide}
+#| autorun: true
+#| caption: Correlation matrix as a heatmap
+cols = ["pct_pell", "net_price", "retention_ft", "stu_fac_ratio", "log_headcount",
+        "pct_intl_ug", "pct_any_grant", "grad_rate_bach_6yr"]
+cm = four[cols].corr()
+
+fig, ax = plt.subplots(figsize=(8, 6.5))
+im = ax.imshow(cm, cmap="RdBu", vmin=-1, vmax=1)
+ax.set_xticks(range(len(cols)), cols, rotation=30, ha="right")
+ax.set_yticks(range(len(cols)), cols)
+for i in range(len(cols)):
+    for j in range(len(cols)):
+        ax.text(j, i, f"{cm.iloc[i, j]:.2f}", ha="center", va="center", fontsize=8)
+plt.tight_layout()
+plt.show()
+```
+
+`DataFrame.corr()` uses pairwise complete rows for each cell, the same as R's `pairwise.complete.obs`.
+
+```{pyodide}
+#| autorun: true
+#| caption: Pearson, Spearman, and a log transform
+pd.Series({
+    "pearson": four["headcount"].corr(four["grad_rate_bach_6yr"]),
+    "spearman": four["headcount"].corr(four["grad_rate_bach_6yr"], method="spearman"),
+    "pearson_log": four["log_headcount"].corr(four["grad_rate_bach_6yr"]),
+}).round(3)
+```
+
+```{pyodide}
+#| autorun: true
+#| caption: The same correlations inside each sector
+def within(g):
+    return pd.Series({
+        "n": len(g),
+        "r_price": g["net_price"].corr(g["grad_rate_bach_6yr"]),
+        "r_size": g["log_headcount"].corr(g["grad_rate_bach_6yr"]),
+        "r_pell": g["pct_pell"].corr(g["grad_rate_bach_6yr"]),
+    })
+
+four.groupby("control")[["net_price", "log_headcount", "pct_pell", "grad_rate_bach_6yr"]].apply(within).round(2)
+```
+
+:::
+
+Association has at least five explanations, and cause is only one of them. The others: **reverse cause** (completion could drive price, if institutions that graduate students can charge more); **a common cause** (selectivity raises both); **selection** (the institutions in the table are the survivors, which trims the cloud); and **chance**, which the confidence interval covers and nothing else does. A correlation earns the word "because" only after the other four have been argued away, and a table of one year cannot do that on its own.
+
+## Practice {.beat data-beat="3 · Practice"}
+
+Fill in the blanks and press Run. The check reads the value your code returns, so make the last line the answer.
+
+```{webr}
+#| setup: true
+#| exercise:
+#|   - eda4_cor
+#|   - eda4_group
+library(dplyr)
+inst <- read.csv("data/institutions.csv", na.strings = c("", "NA"))
+four <- inst |>
+  filter(level == "4-year", bach_cohort >= 30, !is.na(grad_rate_bach_6yr)) |>
+  mutate(log_headcount = log10(headcount))
+```
+
+::: {.lab-exercise data-exercise="eda4_cor"}
+
+### One correlation
+
+`four` holds the filtered institutions. Return Pearson's correlation between `net_price` and `grad_rate_bach_6yr`, dropping the rows where either is blank.
+
+```{webr}
+#| exercise: eda4_cor
+cor(four$______, four$grad_rate_bach_6yr, use = "______")
+```
+
+::: {.hint exercise="eda4_cor"}
+::: {.callout-note collapse="false"}
+## Hint
+The first blank is the column name. The second is the option that keeps only rows with both values: `"complete.obs"`.
+:::
+:::
+
+::: {.solution exercise="eda4_cor"}
+::: {.callout-tip collapse="false"}
+## Solution
+```r
+cor(four$net_price, four$grad_rate_bach_6yr, use = "complete.obs")
+```
+About 0.49. Square it and net price accounts for roughly a quarter of the variance in completion; the other three quarters is everything else.
+:::
+:::
+
+```{webr}
+#| exercise: eda4_cor
+#| check: true
+expected <- cor(four$net_price, four$grad_rate_bach_6yr, use = "complete.obs")
+spear <- cor(four$net_price, four$grad_rate_bach_6yr, use = "complete.obs", method = "spearman")
+val <- suppressWarnings(as.numeric(unlist(.result))[1])
+if (length(val) == 1 && !is.na(val) && isTRUE(abs(val - expected) < 1e-4)) {
+  list(correct = TRUE, message = sprintf("Correct: r = %.2f, so R squared is %.2f. A moderate positive association, and a fact about price as a proxy rather than price as a lever.", expected, expected^2))
+} else if (length(val) == 1 && !is.na(val) && isTRUE(abs(val - spear) < 1e-4)) {
+  list(correct = FALSE, message = "That is Spearman's rho. The exercise asks for Pearson's r, which is the default method.")
+} else if (length(val) == 1 && is.na(val)) {
+  list(correct = FALSE, message = "NA: net_price has blanks. Tell cor() to drop them with use = \"complete.obs\".")
+} else {
+  list(correct = FALSE, message = "Not yet. The answer is a single number from cor() on net_price and grad_rate_bach_6yr.")
+}
+```
+
+:::
+
+::: {.lab-exercise data-exercise="eda4_group"}
+
+### Does it hold inside each sector?
+
+Return one row per `control` with the number of institutions in `n` and Pearson's correlation between `net_price` and `grad_rate_bach_6yr` in a column named `r`.
+
+```{webr}
+#| exercise: eda4_group
+four |>
+  group_by(______) |>
+  summarise(n = n(), r = cor(net_price, grad_rate_bach_6yr, use = ______))
+```
+
+::: {.hint exercise="eda4_group"}
+::: {.callout-note collapse="false"}
+## Hint
+Group by `control`. The `use` argument takes the same string as the previous exercise, in quotes.
+:::
+:::
+
+::: {.solution exercise="eda4_group"}
+::: {.callout-tip collapse="false"}
+## Solution
+```r
+four |>
+  group_by(control) |>
+  summarise(n = n(), r = cor(net_price, grad_rate_bach_6yr, use = "complete.obs"))
+```
+Positive in all three sectors, strongest among private nonprofits. The relationship is not a sector-mix artifact, which rules out one explanation and leaves the rest standing.
+:::
+:::
+
+```{webr}
+#| exercise: eda4_group
+#| check: true
+expected <- four |>
+  dplyr::group_by(control) |>
+  dplyr::summarise(n = dplyr::n(), r = cor(net_price, grad_rate_bach_6yr, use = "complete.obs"))
+ok <- is.data.frame(.result) &&
+  all(c("control", "n", "r") %in% names(.result)) &&
+  nrow(.result) == 3 &&
+  isTRUE(all.equal(sort(.result$r), sort(expected$r), tolerance = 1e-6))
+if (ok) {
+  list(correct = TRUE, message = "Correct. Three positive correlations: within publics, within nonprofits, within for-profits. Whatever produces the association is not the sector mix.")
+} else if (is.data.frame(.result) && "r" %in% names(.result) && any(is.na(.result$r))) {
+  list(correct = FALSE, message = "The r column has NA in it. Blanks in net_price need use = \"complete.obs\".")
+} else if (is.data.frame(.result) && nrow(.result) != 3) {
+  list(correct = FALSE, message = "Wrong number of rows. Group by control, which has three values.")
+} else {
+  list(correct = FALSE, message = "Not yet. The result should be a data frame with columns control, n, and r.")
+}
+```
+
+:::
+
+::: {.lab-exercise data-exercise="eda4_py_spearman"}
+
+### Ranks in Python
+
+Return Spearman's correlation between `headcount` and `grad_rate_bach_6yr` on `four`.
+
+```{pyodide}
+#| setup: true
+#| exercise: eda4_py_spearman
+import pandas as pd
+inst = pd.read_csv("data/institutions.csv")
+four = inst[(inst["level"] == "4-year") & (inst["bach_cohort"] >= 30) & inst["grad_rate_bach_6yr"].notna()].copy()
+```
+
+```{pyodide}
+#| exercise: eda4_py_spearman
+four["headcount"].corr(four["grad_rate_bach_6yr"], method="______")
+```
+
+::: {.hint exercise="eda4_py_spearman"}
+::: {.callout-note collapse="false"}
+## Hint
+`.corr()` takes `method="pearson"` by default. The rank version is `"spearman"`.
+:::
+:::
+
+::: {.solution exercise="eda4_py_spearman"}
+::: {.callout-tip collapse="false"}
+## Solution
+```python
+four["headcount"].corr(four["grad_rate_bach_6yr"], method="spearman")
+```
+:::
+:::
+
+```{pyodide}
+#| exercise: eda4_py_spearman
+#| check: true
+expected = four["headcount"].corr(four["grad_rate_bach_6yr"], method="spearman")
+pear = four["headcount"].corr(four["grad_rate_bach_6yr"])
+try:
+    val = float(result)
+except Exception:
+    val = None
+if val is not None and abs(val - expected) < 1e-6:
+    feedback = {"correct": True, "message": f"Correct: rho = {expected:.2f}, against a Pearson r of {pear:.2f} on the raw headcount. The ranks see past the skew."}
+elif val is not None and abs(val - pear) < 1e-6:
+    feedback = {"correct": False, "message": "That is Pearson's r. Pass method=\"spearman\" for the rank correlation."}
+else:
+    feedback = {"correct": False, "message": "Not yet. Expected a single number from .corr() with method=\"spearman\"."}
+feedback
+```
+
+:::
+
+## In your stack {.beat data-beat="4 · In your stack"}
+
+Correlation is one of the few statistics every tool has built in. The `relationships` sheet in [ir-lab.xlsx](data/ir-lab.xlsx) holds the filtered rows with the formulas below already in place.
+
+::: {.panel-tabset group="stack"}
+
+### Excel
+
+`CORREL` and `PEARSON` are the same function. Both skip a pair when either cell is blank or text, which is the `complete.obs` behavior. The ranges below match the sheet, where column E is net price, column H is headcount, and column I is completion.
+
+| Quantity | Formula |
+|---|---|
+| Pearson r, net price and completion | `=CORREL(E2:E1654, I2:I1654)` |
+| R squared | `=RSQ(I2:I1654, E2:E1654)` |
+| Pearson r on the log of headcount | `=CORREL(J2:J1654, I2:I1654)` with `=LOG10(H2)` in column J |
+| Rank of each headcount | `=RANK.AVG(H2, H$2:H$1654, 1)` in column K |
+| Spearman rho | `=CORREL(K2:K1654, L2:L1654)` with the completion ranks in column L |
+
+Spearman's rho is Pearson's r on ranks, and `RANK.AVG` gives tied values the average rank, which is the convention R and Python use. The within-sector version needs a helper column such as `=IF(C2="Public", E2, "")`; `CORREL` on that column and its matching completion column ignores the text cells and correlates only the publics.
+
+For the full matrix, Data, Data Analysis, Correlation on the block of numeric columns writes the lower triangle in one step. It has no `pairwise.complete.obs`: a blank anywhere in a row is treated as zero, so filter or fill first. The sheet builds the same matrix from `CORREL` one cell at a time, which handles the blanks correctly.
+
+The chart is Insert, Scatter, then Chart Elements, Trendline, with "Display R-squared value" ticked. What Excel cannot draw is the local curve from the R tab; if the trendline looks wrong, that is the tool asking for a different one.
+
+### Power BI
+
+::: {.ir-powerbi data-powerbi-page="regression" data-powerbi-title="Pell and completion"}
+**Interactive report: not connected yet.** Download the [Power BI project](data/ir-lab-powerbi.zip) to explore this lesson in Power BI Desktop. The embedded report will appear here once it is connected.
+:::
+
+DAX has no `CORREL`, but the Quick Measures gallery has a **Correlation coefficient** entry that writes one for you. It is worth reading what it writes, because the same shape gives you every statistic in this lesson:
+
+```dax
+Price Completion r =
+VAR t =
+    FILTER (
+        institutions,
+        institutions[level] = "4-year"
+            && institutions[bach_cohort] >= 30
+            && NOT ISBLANK ( institutions[net_price] )
+            && NOT ISBLANK ( institutions[grad_rate_bach_6yr] )
+    )
+VAR mx = AVERAGEX ( t, institutions[net_price] )
+VAR my = AVERAGEX ( t, institutions[grad_rate_bach_6yr] )
+VAR sxy = SUMX ( t, ( institutions[net_price] - mx ) * ( institutions[grad_rate_bach_6yr] - my ) )
+VAR sxx = SUMX ( t, ( institutions[net_price] - mx ) ^ 2 )
+VAR syy = SUMX ( t, ( institutions[grad_rate_bach_6yr] - my ) ^ 2 )
+RETURN
+    DIVIDE ( sxy, SQRT ( sxx * syy ) )
+```
+
+Put it on a card next to a slicer on `control` and the card becomes the within-sector correlation from the animation, because the `FILTER` respects the slicer. Wrap the table in `ALL ( institutions )` if you want it to ignore the page's filters instead.
+
+Spearman needs ranks, which are calculated columns:
+
+```dax
+Headcount Rank =
+RANKX ( FILTER ( institutions, NOT ISBLANK ( institutions[headcount] ) ), institutions[headcount], , ASC, Dense )
+```
+
+Then the same measure on the two rank columns is rho. `RANKX` has no average-tie option, so it differs from R by a hair wherever values tie.
+
+**The chart** is a scatter visual with `net_price` on X, `grad_rate_bach_6yr` on Y, `unitid` in Values, and a trend line from the Analytics pane. Two features are worth knowing. A **Play axis** field animates the scatter across a category, which is a way to show a relationship inside each sector one at a time. And right-clicking a point offers **Analyze, Find where this distribution is different**, which is Power BI's own attempt at the "does it hold inside groups" question.
+
+:::
+
+## Before you leave
+
+::: {.takeaways}
+1. **Plot before you compute.** r describes a straight line through the dots. If the dots are not around a straight line, r is describing something that is not there.
+2. **Two numbers, two questions.** Pearson's r asks how straight; Spearman's rho asks how consistently one goes with the other. When they disagree, a skewed variable or a bend is the reason, and a log often reconciles them.
+3. **Check inside the groups.** A relationship that holds within publics and within privates is not an artifact of the sectors. One that vanishes inside them was.
+4. **Association has five explanations.** Cause, reverse cause, a common cause, selection, and chance. A cross-section of one year can rule out chance and not much else. Say "goes with", not "leads to".
+:::
+
+Next in this track: **Outliers and leverage**, on finding the rows that move every summary and deciding what to do with them.

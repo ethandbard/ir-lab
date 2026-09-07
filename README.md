@@ -19,10 +19,13 @@ A practice site for exploratory data analysis, statistics, and machine learning 
 | `eda-distributions.qmd` | Explore, lesson 1: histograms and skew. |
 | `eda-missing.qmd` | Explore, lesson 2: missingness patterns and complete-case bias. |
 | `eda-compare.qmd` | Explore, lesson 3: boxplots, small multiples, and variance explained by a grouping. |
+| `eda-relationships.qmd` | Explore, lesson 4: scatterplots, Pearson and Spearman correlation, association versus cause. |
 | `stats-sampling.qmd` | Test, lesson 1: bootstrap and confidence intervals. |
+| `stats-two-groups.qmd` | Test, lesson 2: Welch's t-test, Cohen's d, and power. |
 | `stats-regression.qmd` | Test, lesson 5: simple linear regression. |
 | `stats-logistic.qmd` | Test, lesson 6: logistic regression and odds ratios. |
 | `ml-split.qmd` | Model, lesson 1: train/test splits, cross-validation, and leakage. |
+| `ml-predict-rate.qmd` | Model, lesson 2: lasso, regression trees, and random forests on held-out data. |
 | `ml-clustering.qmd` | Model, lesson 4: k-means peer groups. |
 | `ml-pca.qmd` | Model, lesson 5: principal components. |
 | `build_data.R` | Builds `data/` from `../ipeds/data/raw`. |
@@ -34,7 +37,13 @@ A practice site for exploratory data analysis, statistics, and machine learning 
 
 ## Build
 
-`build_data.R` needs the raw IPEDS files in `../ipeds/data/raw`. Without them, `build_workbook.R` can still be run on its own against the CSVs in `data/` (it needs the openxlsx package).
+`build_data.R` needs the raw IPEDS files in `../ipeds/data/raw`. Without them, `build_workbook.R` can still be run on its own against the CSVs in `data/` (it needs the openxlsx package):
+
+```sh
+Rscript -e 'source("build_workbook.R"); i <- read.csv("data/institutions.csv", na.strings = c("", "NA")); v <- read.csv("data/variables.csv"); build_workbook(i, v, "data/ir-lab.xlsx")'
+```
+
+The pre-rendered numbers in `ml-predict-rate.qmd` need rpart, glmnet, and randomForest installed locally; `setup.R` installs them.
 
 ```sh
 Rscript setup.R          # once: installs build packages

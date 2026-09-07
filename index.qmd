@@ -121,19 +121,19 @@ swarm = {
 <span class="track-verb">Explore</span>
 <span class="track-name">Exploratory data analysis</span>
 <p>Distributions, missingness, comparisons, relationships, outliers, and the IPEDS subtotal trap.</p>
-<span class="lab-progress" data-exercises="eda1_median eda1_small eda1_py_median eda2_share eda2_dropped eda2_py_share eda3_median eda3_gap eda3_py_median"></span>
+<span class="lab-progress" data-exercises="eda1_median eda1_small eda1_py_median eda2_share eda2_dropped eda2_py_share eda3_median eda3_gap eda3_py_median eda4_cor eda4_group eda4_py_spearman"></span>
 </a>
 <a class="track" href="stats.html">
 <span class="track-verb">Test</span>
 <span class="track-name">Statistical analysis</span>
 <p>Uncertainty, group comparisons, proportions, regression, and logistic models with honest interpretation.</p>
-<span class="lab-progress" data-exercises="stats1_fit stats1_predict stats1_py_fit stats2_fit stats2_predict stats2_py_fit stats3_boot stats3_ci stats3_py_boot"></span>
+<span class="lab-progress" data-exercises="stats1_fit stats1_predict stats1_py_fit stats2_fit stats2_predict stats2_py_fit stats3_boot stats3_ci stats3_py_boot stats4_ttest stats4_d stats4_py_ttest"></span>
 </a>
 <a class="track" href="ml.html">
 <span class="track-verb">Model</span>
 <span class="track-name">Machine learning</span>
 <p>Splits, predicting rates and outcomes, peer groups, dimension reduction, and forecasting enrollment.</p>
-<span class="lab-progress" data-exercises="ml1_scale ml1_elbow ml1_py_fit ml2_cum ml2_load ml2_py_fit ml3_split ml3_cv ml3_py_split"></span>
+<span class="lab-progress" data-exercises="ml1_scale ml1_elbow ml1_py_fit ml2_cum ml2_load ml2_py_fit ml3_split ml3_cv ml3_py_split ml4_tree ml4_lasso ml4_py_forest"></span>
 </a>
 </div>
 ```

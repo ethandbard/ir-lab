@@ -1,0 +1,775 @@
+---
+title: "Two groups"
+subtitle: "t-tests, effect sizes, and why a significant difference can still be tiny"
+webr:
+  packages:
+    - dplyr
+    - ggplot2
+    - broom
+  resources:
+    - data/institutions.csv
+pyodide:
+  packages:
+    - pandas
+    - matplotlib
+    - scipy
+  resources:
+    - data/institutions.csv
+---
+
+{{< include ./_extensions/r-wasm/live/_knitr.qmd >}}
+
+```{r}
+#| include: false
+source("_common.R")
+two <- institutions |>
+  filter(level == "4-year", bach_cohort >= 30, !is.na(grad_rate_bach_6yr),
+         control %in% c("Public", "Private nonprofit"))
+pub <- two$grad_rate_bach_6yr[two$control == "Public"]
+npf <- two$grad_rate_bach_6yr[two$control == "Private nonprofit"]
+n_pub <- length(pub)
+n_npf <- length(npf)
+m_pub <- round(mean(pub), 1)
+m_npf <- round(mean(npf), 1)
+sd_pub <- round(sd(pub), 1)
+sd_npf <- round(sd(npf), 1)
+gap <- round(mean(npf) - mean(pub), 1)
+tt <- t.test(npf, pub)
+t_stat <- round(unname(tt$statistic), 2)
+t_df <- round(unname(tt$parameter))
+ci <- round(tt$conf.int, 1)
+p_txt <- format(signif(tt$p.value, 2), scientific = TRUE)
+pooled <- sqrt(((n_pub - 1) * var(pub) + (n_npf - 1) * var(npf)) / (n_pub + n_npf - 2))
+d_val <- round((mean(npf) - mean(pub)) / pooled, 2)
+superior <- round(100 * mean(outer(npf, pub, ">")))
+twr <- filter(two, !is.na(retention_ft))
+ret <- t.test(retention_ft ~ control, data = twr)
+ret_gap <- round(unname(ret$estimate[1] - ret$estimate[2]), 2)
+ret_p <- round(ret$p.value, 2)
+ret_n <- nrow(twr)
+ret_pooled <- with(twr, sqrt(((sum(control == "Public") - 1) * var(retention_ft[control == "Public"]) +
+  (sum(control == "Private nonprofit") - 1) * var(retention_ft[control == "Private nonprofit"])) / (nrow(twr) - 2)))
+ret_d <- round(ret_gap / ret_pooled, 2)
+ret_detect <- round(1.96 * unname(ret$stderr), 1)
+twf <- filter(two, !is.na(stu_fac_ratio))
+sf <- t.test(stu_fac_ratio ~ control, data = twf)
+sf_gap <- round(unname(sf$estimate[2] - sf$estimate[1]), 1)
+sf_pooled <- with(twf, sqrt(((sum(control == "Public") - 1) * var(stu_fac_ratio[control == "Public"]) +
+  (sum(control == "Private nonprofit") - 1) * var(stu_fac_ratio[control == "Private nonprofit"])) / (nrow(twf) - 2)))
+sf_d <- round(sf_gap / sf_pooled, 2)
+cs <- filter(institutions, level == "4-year", bach_cohort >= 30, !is.na(grad_rate_bach_6yr), locale %in% c("City", "Suburb"))
+cs_t <- t.test(grad_rate_bach_6yr ~ locale, data = cs)
+cs_gap <- round(abs(unname(diff(cs_t$estimate))), 2)
+cs_p <- round(cs_t$p.value, 2)
+set.seed(3)
+power_at <- function(n) mean(replicate(300, t.test(sample(pub, n), sample(npf, n))$p.value < 0.05))
+pow30 <- round(100 * power_at(30))
+pow250 <- round(100 * power_at(250))
+```
+
+::: {.lesson-eyebrow}
+Test · Lesson 2 of 6
+:::
+
+The mean six-year completion rate at private nonprofit four-year institutions is `r gap` points above the public mean: `r m_npf`% against `r m_pub`%, across `r fmt(n_npf)` and `r fmt(n_pub)` institutions with a bachelor's cohort of at least 30. Three questions follow, and a t-test answers only the first. Could a gap this size turn up between two samples of the same population? How big is it, measured against how much institutions vary anyway? And does it matter for the decision in front of you? This lesson gives you the test, the effect size that belongs beside it, and a sentence for each.
+
+**You will be able to:** run and read a two-sample t-test, report a difference with its confidence interval, compute Cohen's d and say what it means, and explain why a p-value and an effect size answer different questions.
+
+## Watch it move {.beat data-beat="1 · Watch it move"}
+
+Two groups of institutions, one strip each. The orange line is the group mean and the bracket is its 95% confidence interval. Choose how many institutions to draw from each group and step through the draws: at small sizes the means jump with every draw, and the readout runs Welch's t-test on whatever was drawn, with the effect size beside it.
+
+::: {.lab-anim}
+
+```{ojs}
+//| echo: false
+inst = FileAttachment("data/institutions.csv").csv({typed: true})
+tgRows = inst.filter(d => d.level === "4-year" && d.bach_cohort >= 30 && d.grad_rate_bach_6yr != null)
+
+tgDefs = new Map([
+  ["6-year completion, public vs private nonprofit", {v: "grad_rate_bach_6yr", by: "control", a: "Public", b: "Private nonprofit", label: "6-year bachelor's completion", unit: "points", domain: [0, 100], suffix: "%"}],
+  ["Full-time retention, public vs private nonprofit", {v: "retention_ft", by: "control", a: "Public", b: "Private nonprofit", label: "Full-time retention", unit: "points", domain: [0, 100], suffix: "%"}],
+  ["Student-faculty ratio, public vs private nonprofit", {v: "stu_fac_ratio", by: "control", a: "Public", b: "Private nonprofit", label: "Student-faculty ratio", unit: "students per faculty member", domain: [0, 40], suffix: ""}],
+  ["6-year completion, city vs suburb", {v: "grad_rate_bach_6yr", by: "locale", a: "City", b: "Suburb", label: "6-year bachelor's completion", unit: "points", domain: [0, 100], suffix: "%"}]
+])
+tgSizes = new Map([["15", 15], ["30", 30], ["60", 60], ["120", 120], ["250", 250], ["All", Infinity]])
+
+lgamma = x => {
+  // Lanczos approximation; every argument here is at least 0.5, so no reflection is needed.
+  const c = [0.99999999999980993, 676.5203681218851, -1259.1392167224028, 771.32342877765313,
+             -176.61502916214059, 12.507343278686905, -0.13857109526572012, 9.9843695780195716e-6, 1.5056327351493116e-7];
+  x -= 1;
+  let a = c[0];
+  const t = x + 7.5;
+  for (let i = 1; i < 9; i++) a += c[i] / (x + i);
+  return 0.5 * Math.log(2 * Math.PI) + (x + 0.5) * Math.log(t) - t + Math.log(a);
+}
+betacf = (a, b, x) => {
+  const FPMIN = 1e-300, EPS = 3e-14;
+  const qab = a + b, qap = a + 1, qam = a - 1;
+  let c = 1, d = 1 - qab * x / qap;
+  if (Math.abs(d) < FPMIN) d = FPMIN;
+  d = 1 / d;
+  let h = d;
+  for (let m = 1; m <= 400; m++) {
+    const m2 = 2 * m;
+    let aa = m * (b - m) * x / ((qam + m2) * (a + m2));
+    d = 1 + aa * d; if (Math.abs(d) < FPMIN) d = FPMIN;
+    c = 1 + aa / c; if (Math.abs(c) < FPMIN) c = FPMIN;
+    d = 1 / d; h *= d * c;
+    aa = -(a + m) * (qab + m) * x / ((a + m2) * (qap + m2));
+    d = 1 + aa * d; if (Math.abs(d) < FPMIN) d = FPMIN;
+    c = 1 + aa / c; if (Math.abs(c) < FPMIN) c = FPMIN;
+    d = 1 / d;
+    const del = d * c; h *= del;
+    if (Math.abs(del - 1) < EPS) break;
+  }
+  return h;
+}
+ibeta = (a, b, x) => {
+  if (x <= 0) return 0;
+  if (x >= 1) return 1;
+  const bt = Math.exp(lgamma(a + b) - lgamma(a) - lgamma(b) + a * Math.log(x) + b * Math.log(1 - x));
+  return x < (a + 1) / (a + b + 2) ? bt * betacf(a, b, x) / a : 1 - bt * betacf(b, a, 1 - x) / b;
+}
+tPvalue = (tabs, df) => ibeta(df / 2, 0.5, df / (df + tabs * tabs))
+tQuantile = (p, df) => {
+  let lo = 0, hi = 200;
+  for (let i = 0; i < 80; i++) {
+    const mid = (lo + hi) / 2;
+    const cdf = 1 - tPvalue(mid, df) / 2;
+    if (cdf < p) lo = mid; else hi = mid;
+  }
+  return (lo + hi) / 2;
+}
+```
+
+::: {.lab-controls}
+```{ojs}
+//| echo: false
+viewof tgPick = Inputs.select(tgDefs, {label: "Comparison"})
+viewof tgN = Inputs.radio(tgSizes, {label: "Institutions per group", value: 30})
+viewof tgDraw = Inputs.range([1, 12], {label: "Sample draw", step: 1, value: 1})
+```
+:::
+
+```{ojs}
+//| echo: false
+tgStats = {
+  const def = tgPick;
+  const all = !Number.isFinite(tgN);
+  const pool = name => tgRows.filter(d => d[def.by] === name && d[def.v] != null);
+  const seed = ((tgDraw * 7919 + (all ? 0 : tgN) * 131 + def.v.length * 17 + def.a.length) % 10007) / 10007;
+  const shuffle = d3.shuffler(d3.randomLcg(seed));
+  const take = name => { const p = pool(name); return all ? p : shuffle(p.slice()).slice(0, Math.min(tgN, p.length)); };
+  const summ = rows => {
+    const v = rows.map(d => d[def.v]);
+    const n = v.length, mean = d3.mean(v), sd = d3.deviation(v);
+    return {rows, v, n, mean, sd, half: tQuantile(0.975, n - 1) * sd / Math.sqrt(n)};
+  };
+  const a = summ(take(def.a)), b = summ(take(def.b));
+  const diff = b.mean - a.mean;
+  const va = a.sd ** 2 / a.n, vb = b.sd ** 2 / b.n;
+  const se = Math.sqrt(va + vb);
+  const df = (va + vb) ** 2 / (va ** 2 / (a.n - 1) + vb ** 2 / (b.n - 1));
+  const tstat = diff / se;
+  const p = tPvalue(Math.abs(tstat), df);
+  const half = tQuantile(0.975, df) * se;
+  const pooled = Math.sqrt(((a.n - 1) * a.sd ** 2 + (b.n - 1) * b.sd ** 2) / (a.n + b.n - 2));
+  let wins = 0;
+  for (const x of a.v) for (const y of b.v) wins += y > x ? 1 : y === x ? 0.5 : 0;
+  return {def, a, b, all, diff, se, df, tstat, p, lo: diff - half, hi: diff + half, d: diff / pooled, superiority: wins / (a.n * b.n)};
+}
+```
+
+```{ojs}
+//| echo: false
+tgNode = d3.create("svg").attr("class", "lab-svg").node()
+
+tgPlot = {
+  const width = 860, rowH = 96, margin = {top: 12, right: 20, bottom: 44, left: 176};
+  const height = margin.top + rowH * 2 + margin.bottom;
+  const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const dur = reduce ? 0 : 600;
+  const {def, a, b} = tgStats;
+  const groups = [{name: def.a, s: a}, {name: def.b, s: b}];
+  const x = d3.scaleLinear().domain(def.domain).range([margin.left, width - margin.right]);
+  const y = d3.scalePoint().domain(groups.map(g => g.name)).range([margin.top + rowH / 2, margin.top + rowH * 1.5]);
+  const clampX = v => x(Math.max(def.domain[0], Math.min(def.domain[1], v)));
+  const jitter = d3.randomNormal.source(d3.randomLcg(7))(0, rowH * 0.16);
+  const rows = [...a.rows.map(d => ({...d, g: def.a})), ...b.rows.map(d => ({...d, g: def.b}))];
+  const jit = new Map(rows.map(d => [d.unitid, Math.max(-rowH * 0.36, Math.min(rowH * 0.36, jitter()))]));
+  const big = rows.length > 400;
+  const f1 = d3.format(".1f"), fc = d3.format(",");
+
+  const svg = d3.select(tgNode);
+  svg.attr("viewBox", [0, 0, width, height]);
+  const layer = name => { let g = svg.select(`g.${name}`); if (g.empty()) g = svg.append("g").attr("class", name); return g; };
+  const axis = layer("axis"), labels = layer("labels"), dots = layer("dots"), means = layer("means");
+  const t = svg.transition().duration(dur).ease(d3.easeCubicInOut);
+
+  axis.attr("transform", `translate(0,${height - margin.bottom})`)
+    .call(d3.axisBottom(x).ticks(10).tickFormat(v => v + def.suffix).tickSizeOuter(0));
+  axis.selectAll("text.axis-title").data([0]).join("text").attr("class", "axis-title")
+    .attr("x", width - margin.right).attr("y", 36).attr("text-anchor", "end")
+    .attr("font-size", 12).attr("fill", "currentColor").text(def.label);
+
+  labels.selectAll("g.row").data(groups, d => d.name)
+    .join(enter => {
+      const g = enter.append("g").attr("class", "row");
+      g.append("text").attr("class", "name").attr("font-size", 13).attr("font-weight", 600).attr("fill", "var(--lab-ink)");
+      g.append("text").attr("class", "count").attr("font-size", 11).attr("fill", "var(--lab-muted)");
+      return g;
+    })
+    .attr("transform", d => `translate(${margin.left - 12},${y(d.name)})`)
+    .call(g => {
+      g.select("text.name").attr("text-anchor", "end").attr("dy", "-0.2em").text(d => d.name);
+      g.select("text.count").attr("text-anchor", "end").attr("dy", "1.05em")
+        .text(d => `n = ${fc(d.s.n)} · mean ${f1(d.s.mean)}${def.suffix}`);
+    });
+
+  dots.selectAll("circle").data(rows, d => d.unitid)
+    .join(
+      enter => enter.append("circle").attr("r", 0)
+        .attr("cx", d => clampX(d[def.v])).attr("cy", d => y(d.g) + jit.get(d.unitid))
+        .attr("fill", "var(--lab-primary)")
+        .call(e => e.append("title")),
+      update => update,
+      exit => exit.transition(t).attr("r", 0).remove()
+    )
+    .call(sel => sel.select("title").text(d => `${d.name}\n${d.g}\n${def.label}: ${f1(d[def.v])}${def.suffix}`))
+    .transition(t).delay((d, i) => reduce || big ? 0 : (i % 30) * 8)
+    .attr("r", big ? 2.2 : 3.6)
+    .attr("cx", d => clampX(d[def.v])).attr("cy", d => y(d.g) + jit.get(d.unitid))
+    .attr("fill-opacity", big ? 0.3 : 0.6);
+
+  const m = means.selectAll("g.mean").data(groups, d => d.name)
+    .join(enter => {
+      const g = enter.append("g").attr("class", "mean");
+      g.append("line").attr("class", "ci").attr("stroke", "var(--lab-ink)").attr("stroke-width", 1.6);
+      g.append("line").attr("class", "cap lo").attr("stroke", "var(--lab-ink)").attr("stroke-width", 1.6);
+      g.append("line").attr("class", "cap hi").attr("stroke", "var(--lab-ink)").attr("stroke-width", 1.6);
+      g.append("line").attr("class", "center").attr("stroke", "var(--lab-accent)").attr("stroke-width", 3).attr("stroke-linecap", "round");
+      return g;
+    });
+  m.attr("transform", d => `translate(0,${y(d.name)})`);
+  m.select("line.center").transition(t)
+    .attr("x1", d => clampX(d.s.mean)).attr("x2", d => clampX(d.s.mean)).attr("y1", -rowH * 0.44).attr("y2", rowH * 0.44);
+  m.select("line.ci").transition(t)
+    .attr("x1", d => clampX(d.s.mean - d.s.half)).attr("x2", d => clampX(d.s.mean + d.s.half)).attr("y1", 0).attr("y2", 0);
+  m.select("line.cap.lo").transition(t)
+    .attr("x1", d => clampX(d.s.mean - d.s.half)).attr("x2", d => clampX(d.s.mean - d.s.half)).attr("y1", -7).attr("y2", 7);
+  m.select("line.cap.hi").transition(t)
+    .attr("x1", d => clampX(d.s.mean + d.s.half)).attr("x2", d => clampX(d.s.mean + d.s.half)).attr("y1", -7).attr("y2", 7);
+
+  return svg.node();
+}
+```
+
+```{ojs}
+//| echo: false
+tgReadout = {
+  const {def, a, b, all, diff, df, tstat, p, lo, hi, d, superiority} = tgStats;
+  const f1 = d3.format(".1f"), f2 = d3.format(".2f"), pct = d3.format(".0%");
+  const pf = p < 0.001 ? (p < 1e-15 ? "< 1e-15" : d3.format(".1e")(p)) : d3.format(".3f")(p);
+  const ad = Math.abs(d);
+  const size = ad < 0.2 ? "negligible" : ad < 0.5 ? "small" : ad < 0.8 ? "medium" : "large";
+  const sig = p < 0.05;
+  const higher = diff > 0 ? def.b : def.a;
+  const share = pct(diff > 0 ? superiority : 1 - superiority);
+  let hint;
+  if (sig && ad < 0.2) {
+    hint = `Significant and negligible. With this many institutions the test can detect a gap this small, and a gap this small is still small: in a random pair, ${higher.toLowerCase()} is higher only ${share} of the time.`;
+  } else if (sig) {
+    hint = `The gap is unlikely to be chance, and the effect size calls it ${size}: in a random ${def.a.toLowerCase()} and ${def.b.toLowerCase()} pair, the ${higher.toLowerCase()} one has the higher value ${share} of the time.`;
+  } else if (ad >= 0.5) {
+    hint = `A ${size} effect in this draw and a sample too small to tell it from chance. That is a power problem, not evidence of no difference.`;
+  } else if (all) {
+    hint = `Every institution is in and the gap is still within what chance produces. The interval says the true gap is between ${f1(lo)} and ${f1(hi)} ${def.unit}: small either way.`;
+  } else {
+    hint = `Not distinguishable from zero at this sample size. The interval on the difference is the honest summary: anywhere from ${f1(lo)} to ${f1(hi)} ${def.unit}.`;
+  }
+  return html`<div class="lab-readout">
+    <div><span class="k">${def.a} mean</span><span class="val">${f1(a.mean)}${def.suffix}</span></div>
+    <div><span class="k">${def.b} mean</span><span class="val">${f1(b.mean)}${def.suffix}</span></div>
+    <div><span class="k">Difference (second − first)</span><span class="val accent">${d3.format("+.1f")(diff)}</span></div>
+    <div><span class="k">95% CI for the difference</span><span class="val">${f1(lo)} to ${f1(hi)}</span></div>
+    <div><span class="k">Welch t, df ${d3.format(".0f")(df)}</span><span class="val">${f2(tstat)}</span></div>
+    <div><span class="k">p-value</span><span class="val ${sig ? "primary" : ""}">${pf}</span></div>
+    <div><span class="k">Cohen's d</span><span class="val primary">${f2(d)}</span></div>
+  </div>
+  <p class="lab-hint">${hint} Sample sizes ${a.n} and ${b.n}; Welch's test does not assume the two spreads are equal.</p>`;
+}
+```
+
+:::
+
+Three things to try:
+
+1. **Thirty per group.** Completion, public against private nonprofit, 30 institutions each. Step through the draws. The difference in means swings by ten points or more, its interval usually straddles zero, and p lands under 0.05 in about `r pow30`% of draws. That figure is the test's power at this sample size, and it is why "no significant difference" from thirty institutions means almost nothing.
+2. **Everyone.** Switch to All. Now p is `r p_txt`, and the test is certain the gap is not zero. Cohen's d is `r d_val`: draw one public and one private at random, and the private has the higher rate `r superior`% of the time. Significant, and modest. Both words belong in the report.
+3. **Retention.** Full-time retention, the same two sectors: a gap of `r ret_gap` points, d = `r ret_d`, and with all `r fmt(ret_n)` institutions p is still `r ret_p`. Not every large sample produces a significant result, only every large sample with a real gap inside it. Then try the student-faculty ratio, where d is about `r sf_d`: fifteen per group usually catches it. Large effects need small samples. Small effects need enormous ones.
+
+## Do it {.beat data-beat="2 · Do it"}
+
+The cells below run in your browser. The frame is four-year institutions with a bachelor's cohort of at least 30, a reported six-year rate, and a control of public or private nonprofit; for-profits are set aside because there are only fifty of them here.
+
+::: {.panel-tabset group="language"}
+
+### R
+
+```{webr}
+#| autorun: true
+#| caption: Load, filter, and summarise the two groups
+library(dplyr)
+library(ggplot2)
+library(broom)
+
+inst <- read.csv("data/institutions.csv", na.strings = c("", "NA"))
+
+two <- inst |>
+  filter(level == "4-year", bach_cohort >= 30, !is.na(grad_rate_bach_6yr),
+         control %in% c("Public", "Private nonprofit"))
+
+two |>
+  group_by(control) |>
+  summarise(n = n(), mean = mean(grad_rate_bach_6yr), sd = sd(grad_rate_bach_6yr),
+            se = sd / sqrt(n)) |>
+  mutate(across(where(is.numeric) & !n, ~ round(.x, 2)))
+```
+
+The standard error of each mean is under a point, and the gap between the means is nearly seven. The t-test formalizes that comparison: the difference divided by the standard error of the difference, and the probability of a ratio that large if the true difference were zero.
+
+```{webr}
+#| autorun: true
+#| caption: Welch's two-sample t-test
+fit <- t.test(grad_rate_bach_6yr ~ control, data = two)
+fit
+tidy(fit) |> select(estimate, conf.low, conf.high, statistic, parameter, p.value)
+```
+
+R's default is Welch's version, which does not assume the two groups have the same spread; there is no reason to prefer the classic equal-variance test now that this one exists. The estimate is private nonprofit minus public, because the groups are taken in alphabetical order, and the interval is the sentence to report: the gap is between five and nine points.
+
+A p-value that small says the gap is real. It does not say the gap is big. Cohen's d is the gap in units of the spread inside the groups, and it is what makes "big" a comparable claim across outcomes measured in different units.
+
+```{webr}
+#| autorun: true
+#| caption: Cohen's d and what it means in pairs
+pub <- two$grad_rate_bach_6yr[two$control == "Public"]
+npf <- two$grad_rate_bach_6yr[two$control == "Private nonprofit"]
+
+cohens_d <- function(x, y) {
+  pooled <- sqrt(((length(x) - 1) * var(x) + (length(y) - 1) * var(y)) / (length(x) + length(y) - 2))
+  (mean(y) - mean(x)) / pooled
+}
+
+d <- cohens_d(pub, npf)
+c(d = d,
+  superiority_from_d = pnorm(d / sqrt(2)),
+  superiority_counted = mean(outer(npf, pub, ">"))) |>
+  round(3)
+```
+
+The second and third numbers are the same idea two ways: the probability that a randomly chosen private nonprofit beats a randomly chosen public. About 60%, against the 50% of a coin flip. That is the honest picture of a "highly significant" seven-point gap, and the densities show why.
+
+```{webr}
+#| autorun: true
+#| caption: Two distributions that mostly overlap
+group_means <- two |> group_by(control) |> summarise(mean = mean(grad_rate_bach_6yr))
+
+ggplot(two, aes(grad_rate_bach_6yr, fill = control, color = control)) +
+  geom_density(alpha = 0.25, adjust = 1.2) +
+  geom_vline(data = group_means, aes(xintercept = mean, color = control), linewidth = 1) +
+  scale_fill_manual(values = c(Public = "#2a78d6", `Private nonprofit` = "#eb6834")) +
+  scale_color_manual(values = c(Public = "#2a78d6", `Private nonprofit` = "#eb6834")) +
+  scale_x_continuous(labels = function(x) paste0(x, "%")) +
+  labs(x = "6-year bachelor's completion", y = NULL, fill = NULL, color = NULL) +
+  theme_minimal(base_size = 13) +
+  theme(legend.position = "top", axis.text.y = element_blank())
+```
+
+Why does the same gap turn significant only when the sample is large? Draw the experiment. For each sample size, take 200 random pairs of groups, test each, and count how often p falls under 0.05. That share is the power of the test, and it is the number to know before promising a study will find anything.
+
+```{webr}
+#| autorun: true
+#| caption: Power against sample size, by simulation
+set.seed(1)
+power_curve <- bind_rows(lapply(c(15, 30, 60, 120, 250), function(n) {
+  p <- replicate(200, t.test(sample(pub, n), sample(npf, n))$p.value)
+  data.frame(n = n, power = mean(p < 0.05))
+}))
+
+ggplot(power_curve, aes(n, power)) +
+  geom_line(color = "#2a78d6", linewidth = 1) +
+  geom_point(color = "#2a78d6", size = 2.5) +
+  geom_hline(yintercept = 0.8, linetype = "dashed", color = "#5c6674") +
+  scale_x_log10(breaks = c(15, 30, 60, 120, 250)) +
+  scale_y_continuous(labels = function(x) paste0(100 * x, "%"), limits = c(0, 1)) +
+  labs(x = "Institutions per group (log scale)", y = "Share of draws with p < 0.05",
+       title = "Power to detect a d of about 0.36. Dashed line: the conventional 80%.") +
+  theme_minimal(base_size = 13)
+```
+
+Two smaller tools belong in the same drawer. The Wilcoxon rank-sum test (also called Mann-Whitney) compares the groups on ranks, which is the choice when the outcome is skewed or has a ceiling. And the same `t.test()` call with `var.equal = TRUE` is the textbook version; here it gives nearly the same answer, which is the usual case when the groups are large.
+
+```{webr}
+#| autorun: true
+#| caption: The rank-based alternative
+wilcox.test(grad_rate_bach_6yr ~ control, data = two)
+```
+
+### Python
+
+```{pyodide}
+#| autorun: true
+#| caption: Load, filter, and summarise the two groups
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from scipy import stats
+
+inst = pd.read_csv("data/institutions.csv")
+two = inst[(inst["level"] == "4-year") & (inst["bach_cohort"] >= 30) & inst["grad_rate_bach_6yr"].notna()
+           & inst["control"].isin(["Public", "Private nonprofit"])].copy()
+
+summary = two.groupby("control")["grad_rate_bach_6yr"].agg(n="size", mean="mean", sd="std")
+summary["se"] = summary["sd"] / np.sqrt(summary["n"])
+summary.round(2)
+```
+
+```{pyodide}
+#| autorun: true
+#| caption: Welch's two-sample t-test
+pub = two.loc[two["control"] == "Public", "grad_rate_bach_6yr"].to_numpy()
+npf = two.loc[two["control"] == "Private nonprofit", "grad_rate_bach_6yr"].to_numpy()
+
+res = stats.ttest_ind(npf, pub, equal_var=False)
+ci = res.confidence_interval()
+print(f"difference = {npf.mean() - pub.mean():.2f}, 95% CI {ci.low:.2f} to {ci.high:.2f}")
+print(f"t = {res.statistic:.2f}, df = {res.df:.0f}, p = {res.pvalue:.2e}")
+```
+
+`equal_var=False` asks for Welch's version. The default in scipy is still the equal-variance test, so say it every time.
+
+```{pyodide}
+#| autorun: true
+#| caption: Cohen's d and what it means in pairs
+def cohens_d(x, y):
+    pooled = np.sqrt(((len(x) - 1) * x.var(ddof=1) + (len(y) - 1) * y.var(ddof=1)) / (len(x) + len(y) - 2))
+    return (y.mean() - x.mean()) / pooled
+
+d = cohens_d(pub, npf)
+pd.Series({
+    "d": d,
+    "superiority_from_d": stats.norm.cdf(d / np.sqrt(2)),
+    "superiority_counted": (npf[:, None] > pub[None, :]).mean(),
+}).round(3)
+```
+
+```{pyodide}
+#| autorun: true
+#| caption: Two distributions that mostly overlap
+bins = np.arange(0, 101, 4)
+fig, ax = plt.subplots(figsize=(8, 4.5))
+ax.hist(pub, bins=bins, density=True, alpha=0.4, color="#2a78d6", label="Public")
+ax.hist(npf, bins=bins, density=True, alpha=0.4, color="#eb6834", label="Private nonprofit")
+ax.axvline(pub.mean(), color="#2a78d6", linewidth=2)
+ax.axvline(npf.mean(), color="#eb6834", linewidth=2)
+ax.set_xlabel("6-year bachelor's completion (%)")
+ax.set_yticks([])
+ax.legend(frameon=False)
+ax.spines[["top", "right", "left"]].set_visible(False)
+plt.tight_layout()
+plt.show()
+```
+
+```{pyodide}
+#| autorun: true
+#| caption: Power against sample size, by simulation
+rng = np.random.default_rng(1)
+rows = []
+for n in [15, 30, 60, 120, 250]:
+    p = [stats.ttest_ind(rng.choice(pub, n, replace=False), rng.choice(npf, n, replace=False), equal_var=False).pvalue
+         for _ in range(200)]
+    rows.append({"n": n, "power": np.mean(np.array(p) < 0.05)})
+power_curve = pd.DataFrame(rows)
+
+fig, ax = plt.subplots(figsize=(8, 4.5))
+ax.plot(power_curve["n"], power_curve["power"], marker="o", color="#2a78d6")
+ax.axhline(0.8, linestyle="--", color="#5c6674")
+ax.set_xscale("log")
+ax.set_xticks([15, 30, 60, 120, 250], [15, 30, 60, 120, 250])
+ax.set_ylim(0, 1)
+ax.set_xlabel("Institutions per group (log scale)")
+ax.set_ylabel("Share of draws with p < 0.05")
+ax.set_title("Power to detect a d of about 0.36. Dashed line: the conventional 80%.", loc="left", fontsize=11)
+ax.spines[["top", "right"]].set_visible(False)
+plt.tight_layout()
+plt.show()
+```
+
+```{pyodide}
+#| autorun: true
+#| caption: The rank-based alternative
+stats.mannwhitneyu(npf, pub)
+```
+
+:::
+
+## Practice {.beat data-beat="3 · Practice"}
+
+Fill in the blanks and press Run. The check reads the value your code returns, so make the last line the answer.
+
+```{webr}
+#| setup: true
+#| exercise:
+#|   - stats4_ttest
+#|   - stats4_d
+library(dplyr)
+inst <- read.csv("data/institutions.csv", na.strings = c("", "NA"))
+two <- inst |>
+  filter(level == "4-year", bach_cohort >= 30, !is.na(grad_rate_bach_6yr),
+         control %in% c("Public", "Private nonprofit"))
+pub <- two$grad_rate_bach_6yr[two$control == "Public"]
+npf <- two$grad_rate_bach_6yr[two$control == "Private nonprofit"]
+```
+
+::: {.lab-exercise data-exercise="stats4_ttest"}
+
+### Retention instead of completion
+
+`two` holds the filtered institutions. Run Welch's t-test comparing full-time retention, `retention_ft`, between the two controls, and return the test result.
+
+```{webr}
+#| exercise: stats4_ttest
+t.test(______ ~ ______, data = two)
+```
+
+::: {.hint exercise="stats4_ttest"}
+::: {.callout-note collapse="false"}
+## Hint
+The outcome goes on the left of the tilde and the grouping column, `control`, on the right. `t.test()` drops rows with a blank outcome on its own.
+:::
+:::
+
+::: {.solution exercise="stats4_ttest"}
+::: {.callout-tip collapse="false"}
+## Solution
+```r
+t.test(retention_ft ~ control, data = two)
+```
+A gap under a point and a p-value near 0.17. With sixteen hundred institutions this test could have found a gap of about a point and a half; the real one is smaller than that.
+:::
+:::
+
+```{webr}
+#| exercise: stats4_ttest
+#| check: true
+expected <- t.test(retention_ft ~ control, data = two)
+comp <- t.test(grad_rate_bach_6yr ~ control, data = two)
+ok <- inherits(.result, "htest") &&
+  isTRUE(abs(unname(.result$statistic) - unname(expected$statistic)) < 1e-6) &&
+  isTRUE(abs(.result$p.value - expected$p.value) < 1e-6)
+if (ok) {
+  list(correct = TRUE, message = sprintf("Correct. Difference %.2f points, p = %.2f. Not distinguishable from zero, and the interval (%.1f to %.1f) says any real gap is small.", unname(expected$estimate[1] - expected$estimate[2]), expected$p.value, expected$conf.int[1], expected$conf.int[2]))
+} else if (inherits(.result, "htest") && isTRUE(abs(unname(.result$statistic) - unname(comp$statistic)) < 1e-6)) {
+  list(correct = FALSE, message = "That is the completion test again. The outcome for this exercise is retention_ft.")
+} else if (inherits(.result, "htest")) {
+  list(correct = FALSE, message = "That is a test, but not this one. Check the formula: retention_ft ~ control, with var.equal left at its default.")
+} else {
+  list(correct = FALSE, message = "Not yet. The last line should be the t.test() call itself so the result is returned.")
+}
+```
+
+:::
+
+::: {.lab-exercise data-exercise="stats4_d"}
+
+### Cohen's d by hand
+
+`pub` and `npf` hold the completion rates of the two groups. Complete the effect size: the difference in means, private nonprofit minus public, divided by the pooled standard deviation.
+
+```{webr}
+#| exercise: stats4_d
+pooled_sd <- sqrt(((length(pub) - 1) * var(pub) + (length(npf) - 1) * var(npf)) /
+                    (length(pub) + length(npf) - 2))
+(mean(______) - mean(______)) / ______
+```
+
+::: {.hint exercise="stats4_d"}
+::: {.callout-note collapse="false"}
+## Hint
+The numerator is `mean(npf) - mean(pub)`, in that order. The denominator is the `pooled_sd` computed on the line above.
+:::
+:::
+
+::: {.solution exercise="stats4_d"}
+::: {.callout-tip collapse="false"}
+## Solution
+```r
+pooled_sd <- sqrt(((length(pub) - 1) * var(pub) + (length(npf) - 1) * var(npf)) /
+                    (length(pub) + length(npf) - 2))
+(mean(npf) - mean(pub)) / pooled_sd
+```
+About 0.36: a third of a standard deviation, which the usual labels call small to medium. The p-value could not have told you that.
+:::
+:::
+
+```{webr}
+#| exercise: stats4_d
+#| check: true
+pooled_ok <- sqrt(((length(pub) - 1) * var(pub) + (length(npf) - 1) * var(npf)) / (length(pub) + length(npf) - 2))
+expected <- (mean(npf) - mean(pub)) / pooled_ok
+val <- suppressWarnings(as.numeric(unlist(.result))[1])
+if (length(val) == 1 && !is.na(val) && isTRUE(abs(val - expected) < 1e-4)) {
+  list(correct = TRUE, message = sprintf("Correct: d = %.2f. In a random public and private pair, the private one has the higher rate about %.0f%% of the time.", expected, 100 * pnorm(expected / sqrt(2))))
+} else if (length(val) == 1 && !is.na(val) && isTRUE(abs(val + expected) < 1e-4)) {
+  list(correct = FALSE, message = "Right size, wrong sign. The exercise asks for private nonprofit minus public.")
+} else if (length(val) == 1 && !is.na(val) && isTRUE(abs(val - (mean(npf) - mean(pub))) < 1e-4)) {
+  list(correct = FALSE, message = "That is the raw difference in points. Divide by pooled_sd to put it in units of spread.")
+} else {
+  list(correct = FALSE, message = "Not yet. The answer is a single number: the difference in means divided by the pooled standard deviation.")
+}
+```
+
+:::
+
+::: {.lab-exercise data-exercise="stats4_py_ttest"}
+
+### The same test in Python
+
+`pub` and `npf` are NumPy arrays of completion rates. Run Welch's t-test and return the result object.
+
+```{pyodide}
+#| setup: true
+#| exercise: stats4_py_ttest
+import numpy as np
+import pandas as pd
+from scipy import stats
+inst = pd.read_csv("data/institutions.csv")
+two = inst[(inst["level"] == "4-year") & (inst["bach_cohort"] >= 30) & inst["grad_rate_bach_6yr"].notna()
+           & inst["control"].isin(["Public", "Private nonprofit"])]
+pub = two.loc[two["control"] == "Public", "grad_rate_bach_6yr"].to_numpy()
+npf = two.loc[two["control"] == "Private nonprofit", "grad_rate_bach_6yr"].to_numpy()
+```
+
+```{pyodide}
+#| exercise: stats4_py_ttest
+stats.ttest_ind(npf, pub, equal_var=______)
+```
+
+::: {.hint exercise="stats4_py_ttest"}
+::: {.callout-note collapse="false"}
+## Hint
+Welch's test is the one that does not assume equal variances, so the argument is `False`.
+:::
+:::
+
+::: {.solution exercise="stats4_py_ttest"}
+::: {.callout-tip collapse="false"}
+## Solution
+```python
+stats.ttest_ind(npf, pub, equal_var=False)
+```
+:::
+:::
+
+```{pyodide}
+#| exercise: stats4_py_ttest
+#| check: true
+expected = stats.ttest_ind(npf, pub, equal_var=False)
+student = stats.ttest_ind(npf, pub, equal_var=True)
+stat = getattr(result, "statistic", None)
+if stat is not None and abs(float(stat) - expected.statistic) < 1e-6:
+    feedback = {"correct": True, "message": f"Correct: t = {expected.statistic:.2f} on {expected.df:.0f} degrees of freedom, the same numbers as the R tab."}
+elif stat is not None and abs(float(stat) - student.statistic) < 1e-6:
+    feedback = {"correct": False, "message": "That is the equal-variance test. Pass equal_var=False for Welch's version."}
+else:
+    feedback = {"correct": False, "message": "Not yet. Expected the result of stats.ttest_ind(npf, pub, equal_var=False)."}
+feedback
+```
+
+:::
+
+## In your stack {.beat data-beat="4 · In your stack"}
+
+Both tools can run this test in full, and both can compute the effect size that should sit beside it. The `two-groups` sheet in [ir-lab.xlsx](data/ir-lab.xlsx) holds the two columns of rates with every formula below in place.
+
+::: {.panel-tabset group="stack"}
+
+### Excel
+
+The sheet has public rates in column A and private nonprofit rates in column B, from row 5 down. `T.TEST` returns the p-value directly; the arguments after the two ranges are the number of tails and the type, where 3 means two samples with unequal variances.
+
+| Quantity | Formula |
+|---|---|
+| Difference in means | `=AVERAGE(B5:B1100)-AVERAGE(A5:A1100)` |
+| p-value, Welch | `=T.TEST(A5:A1100, B5:B1100, 2, 3)` |
+| Standard error of the difference | `=SQRT(VAR.S(A5:A1100)/COUNT(A5:A1100)+VAR.S(B5:B1100)/COUNT(B5:B1100))` |
+| t statistic | difference divided by the standard error |
+| Welch degrees of freedom | `=(E8/E5+F8/F5)^2/((E8/E5)^2/(E5-1)+(F8/F5)^2/(F5-1))` with variances in row 8 and counts in row 5 |
+| 95% interval | difference `±` `T.INV.2T(0.05, df)` times the standard error |
+| Pooled standard deviation | `=SQRT(((E5-1)*E8+(F5-1)*F8)/(E5+F5-2))` |
+| Cohen's d | difference divided by the pooled standard deviation |
+
+`T.TEST` with type 2 is the equal-variance version. Data, Data Analysis, t-Test: Two-Sample Assuming Unequal Variances writes the whole table, including both one- and two-tailed p-values; ignore the one-tailed row unless you decided the direction before looking.
+
+There is no effect-size function, which is why the sheet spells it out. The "share of pairs" translation is `=NORM.S.DIST(d/SQRT(2), TRUE)`.
+
+### Power BI
+
+::: {.ir-powerbi data-powerbi-page="distributions" data-powerbi-title="Completion distribution"}
+**Interactive report: not connected yet.** Download the [Power BI project](data/ir-lab-powerbi.zip) to explore this lesson in Power BI Desktop. The embedded report will appear here once it is connected.
+:::
+
+DAX has the t distribution but no t-test, so the test is six short measures. Each group statistic is a `CALCULATE` over the shared filter:
+
+```dax
+Public Mean =
+CALCULATE (
+    AVERAGE ( institutions[grad_rate_bach_6yr] ),
+    institutions[control] = "Public",
+    institutions[level] = "4-year",
+    institutions[bach_cohort] >= 30
+)
+
+Public Var = CALCULATE ( VAR.S ( institutions[grad_rate_bach_6yr] ), institutions[control] = "Public", institutions[level] = "4-year", institutions[bach_cohort] >= 30 )
+Public N = CALCULATE ( COUNT ( institutions[grad_rate_bach_6yr] ), institutions[control] = "Public", institutions[level] = "4-year", institutions[bach_cohort] >= 30 )
+```
+
+With the same three for `"Private nonprofit"`, the test is arithmetic:
+
+```dax
+Gap = [Nonprofit Mean] - [Public Mean]
+
+Welch SE = SQRT ( [Nonprofit Var] / [Nonprofit N] + [Public Var] / [Public N] )
+
+Welch t = DIVIDE ( [Gap], [Welch SE] )
+
+Welch df =
+VAR a = [Public Var] / [Public N]
+VAR b = [Nonprofit Var] / [Nonprofit N]
+RETURN DIVIDE ( ( a + b ) ^ 2, a ^ 2 / ( [Public N] - 1 ) + b ^ 2 / ( [Nonprofit N] - 1 ) )
+
+Welch p = T.DIST.2T ( ABS ( [Welch t] ), [Welch df] )
+
+Cohen d =
+VAR pooled =
+    SQRT ( ( ( [Public N] - 1 ) * [Public Var] + ( [Nonprofit N] - 1 ) * [Nonprofit Var] ) / ( [Public N] + [Nonprofit N] - 2 ) )
+RETURN DIVIDE ( [Gap], pooled )
+```
+
+Put `Gap`, `Welch p`, and `Cohen d` on three cards. Because every measure respects the page's filters, a slicer on `size` or `region` reruns the test inside the slice, which is the fastest way to find out whether the sector gap holds within a size band. Watch the counts when you do: the `Public N` card is the reminder that a slice of thirty institutions has the power you saw in the animation.
+
+:::
+
+## Before you leave
+
+::: {.takeaways}
+1. **The test asks one question.** Could this gap be zero? Report the p-value with the difference and its interval, never on its own.
+2. **The effect size is the gap in units of spread.** d = `r d_val` here: real, and modest. "In a random public and private pair, the private has the higher rate about `r superior`% of the time" is a sentence a provost can use.
+3. **p moves with n. d does not.** With enough rows every gap is significant, and a significant gap of half a point is still half a point.
+4. **A null result from a small sample is not evidence of no difference.** Say what gap the sample could have detected. Thirty institutions per group would miss this sector gap most of the time.
+:::
+
+Next in this track: **Many groups**, on ANOVA, multiple comparisons, and the cost of asking many questions at once.
