@@ -1,0 +1,968 @@
+---
+title: "Predict a yes or no"
+subtitle: "Classification, thresholds, and the confusion matrix behind every early-alert model"
+webr:
+  packages:
+    - dplyr
+    - ggplot2
+    - tidyr
+    - rpart
+    - rpart.plot
+    - randomForest
+  resources:
+    - data/institutions.csv
+pyodide:
+  packages:
+    - pandas
+    - matplotlib
+    - scikit-learn
+  resources:
+    - data/institutions.csv
+---
+
+{{< include ./_extensions/r-wasm/live/_knitr.qmd >}}
+
+```{r}
+#| include: false
+source("_common.R")
+suppressPackageStartupMessages({
+  library(rpart)
+  library(randomForest)
+})
+frame <- institutions |>
+  filter(level == "4-year", bach_cohort >= 30,
+         carnegie %in% c("Doctoral", "Master's", "Baccalaureate", "Special focus")) |>
+  mutate(log_headcount = log10(headcount)) |>
+  select(unitid, name, control, locale, carnegie, hbcu, pct_pell, net_price, stu_fac_ratio,
+         log_headcount, pct_any_grant, pct_women_ug, pct_white_ug, pct_black_ug, pct_hispanic_ug,
+         pct_asian_ug, pct_intl_ug, retention_ft, grad_rate_bach_6yr) |>
+  na.omit() |>
+  mutate(across(c(control, locale, carnegie, hbcu), factor))
+frame$low <- as.integer(frame$grad_rate_bach_6yr < 50)
+frame$split <- ifelse(frame$unitid %% 10 < 7, "train", "test")
+train <- filter(frame, split == "train")
+test <- filter(frame, split == "test")
+n_train <- nrow(train)
+n_test <- nrow(test)
+tr_last <- n_train + 1
+te_first <- n_train + 2
+last_row <- nrow(frame) + 1
+share_low <- round(100 * mean(frame$low))
+n_low_test <- sum(test$low)
+share_low_test <- round(100 * mean(test$low))
+majority <- round(100 * (1 - mean(test$low)))
+predictors <- setdiff(names(frame), c("unitid", "name", "split", "grad_rate_bach_6yr", "low"))
+f_all <- reformulate(predictors, "low")
+f_cls <- reformulate(predictors, "factor(low)")
+m_lg <- glm(f_all, data = train, family = binomial)
+p_lg <- predict(m_lg, test, type = "response")
+metrics <- function(p, y, thr) {
+  flag <- as.integer(p >= thr)
+  tp <- sum(flag == 1 & y == 1); fp <- sum(flag == 1 & y == 0)
+  fn <- sum(flag == 0 & y == 1); tn <- sum(flag == 0 & y == 0)
+  list(tp = tp, fp = fp, fn = fn, tn = tn, flagged = tp + fp,
+       acc = round(100 * (tp + tn) / length(y)), prec = round(100 * tp / (tp + fp)),
+       rec = round(100 * tp / (tp + fn)), spec = round(100 * tn / (tn + fp)))
+}
+auc <- function(p, y) {
+  r <- rank(p)
+  n1 <- sum(y == 1); n0 <- sum(y == 0)
+  (sum(r[y == 1]) - n1 * (n1 + 1) / 2) / (n1 * n0)
+}
+m50 <- metrics(p_lg, test$low, 0.5)
+m30 <- metrics(p_lg, test$low, 0.3)
+m70 <- metrics(p_lg, test$low, 0.7)
+auc_lg <- round(auc(p_lg, test$low), 2)
+thr_grid <- seq(0.05, 0.95, by = 0.01)
+rec_grid <- sapply(thr_grid, function(t) metrics(p_lg, test$low, t)$rec)
+thr90 <- max(thr_grid[rec_grid >= 90])
+m90 <- metrics(p_lg, test$low, thr90)
+m2 <- glm(low ~ pct_pell + retention_ft, data = train, family = binomial)
+p2 <- predict(m2, test, type = "response")
+auc2 <- round(auc(p2, test$low), 2)
+a50 <- metrics(p2, test$low, 0.5)
+a30 <- metrics(p2, test$low, 0.3)
+a70 <- metrics(p2, test$low, 0.7)
+tree <- rpart(f_cls, data = train, method = "class", control = rpart.control(maxdepth = 3, cp = 0))
+p_tree <- predict(tree, test, type = "prob")[, "1"]
+auc_tree <- round(auc(p_tree, test$low), 2)
+acc_tree <- metrics(p_tree, test$low, 0.5)$acc
+root_split <- labels(tree)[2]
+set.seed(1)
+rf <- randomForest(f_cls, data = train, ntree = 300)
+p_rf <- predict(rf, test, type = "prob")[, "1"]
+auc_rf <- round(auc(p_rf, test$low), 2)
+r50 <- metrics(p_rf, test$low, 0.5)
+imp <- importance(rf)
+top_imp <- rownames(imp)[order(-imp[, 1])][1:2]
+m_noret <- glm(update(f_all, . ~ . - retention_ft), data = train, family = binomial)
+p_noret <- predict(m_noret, test, type = "response")
+auc_noret <- round(auc(p_noret, test$low), 2)
+acc_noret <- metrics(p_noret, test$low, 0.5)$acc
+```
+
+::: {.lesson-eyebrow}
+Model · Lesson 3 of 6
+:::
+
+**Predict a rate** put a number on every institution. Most of the models an IR office is asked for do something narrower: they put a flag on some of them. Which students will not return in the fall, which applicants will enroll, which institutions will graduate fewer than half of a cohort. The flag is a yes or no, and behind every one of them is a probability and a line drawn through it. This lesson is about that line. The frame is the `r fmt(nrow(frame))` four-year institutions from the last lesson, and the outcome is whether `r v("grad_rate_bach_6yr")` fell below 50%, which `r share_low`% of them did. The models are scored on the `r fmt(n_test)` test institutions they never saw, and every number in the lesson depends on where the line is drawn.
+
+**You will be able to:** turn a predicted probability into a flag, read a confusion matrix, compute precision, recall, and accuracy and explain why accuracy is the least useful of the three, read an ROC curve and its AUC, and choose a threshold from the cost of each kind of mistake.
+
+## Watch it move {.beat data-beat="1 · Watch it move"}
+
+Two predictors, so the model can be drawn: Pell share across and full-time retention up. A logistic regression fitted on the training institutions gives each one a probability of low completion, and the shaded region is where that probability is above the threshold: everything inside gets flagged. Orange dots are institutions that really did graduate fewer than half; blue ones did not. A dark ring marks a mistake. Slide the threshold and watch the two kinds of mistake trade places, while the dot on the ROC curve slides along a curve that never moves.
+
+::: {.lab-anim}
+
+```{ojs}
+//| echo: false
+inst = FileAttachment("data/institutions.csv").csv({typed: true})
+clCols = ["pct_pell", "net_price", "stu_fac_ratio", "headcount", "pct_any_grant", "pct_women_ug", "pct_white_ug",
+  "pct_black_ug", "pct_hispanic_ug", "pct_asian_ug", "pct_intl_ug", "retention_ft", "grad_rate_bach_6yr",
+  "control", "locale", "carnegie", "hbcu"]
+clRows = inst
+  .filter(d => d.level === "4-year" && d.bach_cohort >= 30
+    && ["Doctoral", "Master's", "Baccalaureate", "Special focus"].includes(d.carnegie)
+    && clCols.every(c => d[c] != null))
+  .map(d => ({unitid: d.unitid, name: d.name, control: d.control, pell: d.pct_pell, ret: d.retention_ft,
+              rate: d.grad_rate_bach_6yr, low: d.grad_rate_bach_6yr < 50 ? 1 : 0, set: d.unitid % 10 < 7 ? "train" : "test"}))
+clTrain = clRows.filter(d => d.set === "train")
+clTest = clRows.filter(d => d.set === "test")
+
+solve3 = (M, v) => {
+  const A = M.map(r => r.slice()), b = v.slice();
+  for (let c = 0; c < 3; c++) {
+    let piv = c;
+    for (let r = c + 1; r < 3; r++) if (Math.abs(A[r][c]) > Math.abs(A[piv][c])) piv = r;
+    [A[c], A[piv]] = [A[piv], A[c]];
+    [b[c], b[piv]] = [b[piv], b[c]];
+    for (let r = 0; r < 3; r++) {
+      if (r === c) continue;
+      const f = A[r][c] / A[c][c];
+      for (let k = c; k < 3; k++) A[r][k] -= f * A[c][k];
+      b[r] -= f * b[c];
+    }
+  }
+  return b.map((x, i) => x / A[i][i]);
+}
+
+clFit = {
+  const X = clTrain.map(d => [1, d.pell, d.ret]), y = clTrain.map(d => d.low);
+  const lin = (b, x) => b[0] * x[0] + b[1] * x[1] + b[2] * x[2];
+  const loglik = b => {
+    let s = 0;
+    X.forEach((x, i) => { const p = Math.min(1 - 1e-12, Math.max(1e-12, 1 / (1 + Math.exp(-lin(b, x))))); s += y[i] ? Math.log(p) : Math.log(1 - p); });
+    return s;
+  };
+  let b = [0, 0, 0], cur = loglik(b);
+  for (let it = 0; it < 60; it++) {
+    const g = [0, 0, 0], H = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
+    X.forEach((x, i) => {
+      const p = 1 / (1 + Math.exp(-lin(b, x))), w = p * (1 - p);
+      for (let a = 0; a < 3; a++) { g[a] += (y[i] - p) * x[a]; for (let c = 0; c < 3; c++) H[a][c] += w * x[a] * x[c]; }
+    });
+    const step = solve3(H, g);
+    let scale = 1, nb, nll;
+    for (let h = 0; h < 12; h++) {
+      nb = b.map((v, a) => v + scale * step[a]);
+      nll = loglik(nb);
+      if (nll >= cur - 1e-9) break;
+      scale /= 2;
+    }
+    const done = Math.abs(nll - cur) < 1e-9;
+    b = nb; cur = nll;
+    if (done) break;
+  }
+  const predict = d => 1 / (1 + Math.exp(-(b[0] + b[1] * d.pell + b[2] * d.ret)));
+  for (const d of clRows) d.p = predict(d);
+  return {b, predict};
+}
+
+clRoc = rows => {
+  const sorted = rows.slice().sort((a, b) => b.p - a.p);
+  const n1 = d3.sum(rows, d => d.low), n0 = rows.length - n1;
+  const pts = [{fpr: 0, tpr: 0, p: 1}];
+  let tp = 0, fp = 0;
+  for (const d of sorted) { if (d.low) tp++; else fp++; pts.push({fpr: fp / n0, tpr: tp / n1, p: d.p}); }
+  let auc = 0;
+  for (let i = 1; i < pts.length; i++) auc += (pts[i].fpr - pts[i - 1].fpr) * (pts[i].tpr + pts[i - 1].tpr) / 2;
+  return {pts, auc};
+}
+```
+
+::: {.lab-controls}
+```{ojs}
+//| echo: false
+viewof clThr = Inputs.range([0.05, 0.95], {label: "Flag when the probability of low completion is at least", step: 0.05, value: 0.5})
+viewof clShow = Inputs.radio(["Test", "Training"], {label: "Institutions shown", value: "Test"})
+```
+:::
+
+```{ojs}
+//| echo: false
+clStats = {
+  clFit;
+  const rows = clShow === "Test" ? clTest : clTrain;
+  let tp = 0, fp = 0, fn = 0, tn = 0;
+  for (const d of rows) {
+    const flag = d.p >= clThr;
+    if (flag && d.low) tp++; else if (flag) fp++; else if (d.low) fn++; else tn++;
+  }
+  const roc = clRoc(rows);
+  const cur = roc.pts.reduce((best, q) => Math.abs(q.p - clThr) < Math.abs(best.p - clThr) ? q : best, roc.pts[0]);
+  return {rows, tp, fp, fn, tn, n: rows.length, flagged: tp + fp, acc: (tp + tn) / rows.length,
+          prec: tp + fp ? tp / (tp + fp) : NaN, rec: tp / (tp + fn), spec: tn / (tn + fp), roc, cur,
+          base: d3.sum(rows, d => d.low) / rows.length};
+}
+```
+
+```{ojs}
+//| echo: false
+clNode = d3.create("svg").attr("class", "lab-svg").node()
+
+clPlot = {
+  const width = 860, height = 470, margin = {top: 16, right: 20, bottom: 48, left: 60};
+  const rocW = 230, gap = 46;
+  const plotRight = width - margin.right - rocW - gap;
+  const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const dur = reduce ? 0 : 450;
+  const {rows, roc, cur} = clStats;
+  const b = clFit.b;
+  const x = d3.scaleLinear().domain([0, 100]).range([margin.left, plotRight]);
+  const y = d3.scaleLinear().domain([20, 100]).range([height - margin.bottom, margin.top]);
+  const rx = d3.scaleLinear().domain([0, 1]).range([plotRight + gap, plotRight + gap + rocW]);
+  const ry = d3.scaleLinear().domain([0, 1]).range([height - margin.bottom, height - margin.bottom - rocW]);
+  const logit = Math.log(clThr / (1 - clThr));
+  const boundaryRet = pell => (logit - b[0] - b[1] * pell) / b[2];
+  const clampY = v => Math.max(20, Math.min(100, v));
+  const f1 = d3.format(".1f"), pct = d3.format(".0%");
+
+  const svg = d3.select(clNode);
+  svg.attr("viewBox", [0, 0, width, height]);
+  const layer = name => { let g = svg.select(`g.${name}`); if (g.empty()) g = svg.append("g").attr("class", name); return g; };
+  const gz = layer("zone"), gx = layer("axis"), gy = layer("axisy"), glab = layer("labels"), gd = layer("dots"), gb = layer("boundary"),
+        grx = layer("rocaxis"), gry = layer("rocaxisy"), gr = layer("roc"), gp = layer("rocpoint");
+  const t = svg.transition().duration(dur).ease(d3.easeCubicOut);
+
+  if (gx.selectAll("*").empty()) {
+    gx.attr("transform", `translate(0,${height - margin.bottom})`).call(d3.axisBottom(x).ticks(10).tickFormat(v => v + "%").tickSizeOuter(0));
+    gy.attr("transform", `translate(${margin.left},0)`).call(d3.axisLeft(y).ticks(8).tickFormat(v => v + "%").tickSizeOuter(0));
+    glab.append("text").attr("class", "axis-label").attr("x", plotRight).attr("y", height - 10).attr("text-anchor", "end")
+      .text("Percent of undergraduates awarded Pell");
+    glab.append("text").attr("class", "axis-label").attr("transform", `translate(14,${margin.top}) rotate(-90)`).attr("text-anchor", "end")
+      .text("Full-time retention");
+    grx.attr("transform", `translate(0,${height - margin.bottom})`).call(d3.axisBottom(rx).ticks(4).tickFormat(d3.format(".1f")).tickSizeOuter(0));
+    gry.attr("transform", `translate(${plotRight + gap},0)`).call(d3.axisLeft(ry).ticks(4).tickFormat(d3.format(".1f")).tickSizeOuter(0));
+    glab.append("text").attr("class", "axis-label").attr("x", plotRight + gap + rocW).attr("y", height - 10).attr("text-anchor", "end")
+      .text("False positive rate");
+    glab.append("text").attr("class", "axis-label").attr("transform", `translate(${plotRight + gap - 34},${height - margin.bottom - rocW}) rotate(-90)`).attr("text-anchor", "end")
+      .text("Recall (true positive rate)");
+    gr.append("line").attr("class", "diag").attr("x1", rx(0)).attr("y1", ry(0)).attr("x2", rx(1)).attr("y2", ry(1))
+      .attr("stroke", "var(--lab-rule)").attr("stroke-dasharray", "4 4");
+    gr.append("path").attr("class", "curve").attr("fill", "none").attr("stroke", "var(--lab-ink)").attr("stroke-width", 2);
+    gr.append("text").attr("class", "auc").attr("x", rx(0.95)).attr("y", ry(0.08)).attr("text-anchor", "end")
+      .attr("font-size", 13).attr("font-weight", 700).attr("fill", "var(--lab-ink)");
+    gz.append("path").attr("fill", "var(--lab-accent)").attr("fill-opacity", 0.12);
+    gb.append("path").attr("fill", "none").attr("stroke", "var(--lab-accent)").attr("stroke-width", 2.2).attr("stroke-dasharray", "7 5");
+  }
+
+  const zonePts = [];
+  for (let pell = 0; pell <= 100; pell += 2) zonePts.push([x(pell), y(clampY(boundaryRet(pell)))]);
+  const zonePath = `M${x(0)},${y(20)} ` + zonePts.map(([px, py]) => `L${px},${py}`).join(" ") + ` L${x(100)},${y(20)} Z`;
+  gz.select("path").transition(t).attr("d", zonePath);
+  gb.select("path").transition(t).attr("d", "M" + zonePts.map(([px, py]) => `${px},${py}`).join(" L"));
+
+  gd.selectAll("circle").data(rows, d => d.unitid)
+    .join(
+      enter => enter.append("circle").attr("r", 0).attr("cx", d => x(d.pell)).attr("cy", d => y(clampY(d.ret))).call(e => e.append("title")),
+      update => update,
+      exit => exit.transition(t).attr("r", 0).remove()
+    )
+    .call(sel => sel.select("title").text(d => `${d.name}\n${d.set === "test" ? "Test" : "Training"} set\nPell ${d.pell}%, retention ${d.ret}%\nCompletion ${d.rate}% (${d.low ? "low" : "not low"})\nPredicted probability of low completion ${pct(d.p)}`))
+    .attr("fill", d => d.low ? "var(--lab-accent)" : "var(--lab-primary)")
+    .attr("fill-opacity", 0.55)
+    .attr("stroke", d => (d.p >= clThr) !== (d.low === 1) ? "var(--lab-ink)" : "none")
+    .attr("stroke-width", 1.6)
+    .transition(t)
+    .attr("r", 3.2)
+    .attr("cx", d => x(d.pell)).attr("cy", d => y(clampY(d.ret)));
+
+  const line = d3.line().x(q => rx(q.fpr)).y(q => ry(q.tpr));
+  gr.select("path.curve").attr("d", line(roc.pts));
+  gr.select("text.auc").text(`AUC ${d3.format(".3f")(roc.auc)}`);
+  gp.selectAll("circle").data([cur]).join("circle")
+    .attr("r", 6).attr("fill", "var(--lab-accent)").attr("stroke", "#fff").attr("stroke-width", 2)
+    .transition(t).attr("cx", q => rx(q.fpr)).attr("cy", q => ry(q.tpr));
+
+  return svg.node();
+}
+```
+
+```{ojs}
+//| echo: false
+clReadout = {
+  const {tp, fp, fn, tn, n, flagged, acc, prec, rec, spec, roc, base} = clStats;
+  const pct = d3.format(".0%"), fc = d3.format(",");
+  let hint;
+  if (clThr <= 0.25) {
+    hint = `A low threshold flags almost every low-completion institution and a great many others with it: ${fn} missed, ${fp} flagged for nothing. If the flag triggers a phone call, that is ${fp} calls to institutions that were fine.`;
+  } else if (clThr >= 0.7) {
+    hint = `A high threshold is choosy: ${pct(prec)} of the flags are right, and ${fn} of the ${tp + fn} low-completion institutions are never flagged at all. Precise, and blind to half the problem.`;
+  } else if (Math.abs(clThr - 0.5) < 0.01) {
+    hint = `The default. Nothing about 0.5 is special: it is the threshold that treats a miss and a false alarm as costing the same, which is rarely true of anything an IR office flags. Always guessing "not low" would score ${pct(1 - base)} accuracy here, so accuracy alone flatters every model.`;
+  } else {
+    hint = `Every step of the threshold trades one kind of mistake for the other. The ROC curve is the whole menu of trades this model offers, and the dot is the one you picked. The area under it, ${d3.format(".2f")(roc.auc)}, does not depend on the threshold at all.`;
+  }
+  return html`<div class="lab-readout">
+    <div><span class="k">Flagged</span><span class="val">${fc(flagged)} of ${fc(n)}</span></div>
+    <div><span class="k">Caught (true positives)</span><span class="val primary">${fc(tp)}</span></div>
+    <div><span class="k">False alarms</span><span class="val accent">${fc(fp)}</span></div>
+    <div><span class="k">Missed</span><span class="val accent">${fc(fn)}</span></div>
+    <div><span class="k">Accuracy</span><span class="val">${pct(acc)}</span></div>
+    <div><span class="k">Precision</span><span class="val">${Number.isNaN(prec) ? "n/a" : pct(prec)}</span></div>
+    <div><span class="k">Recall</span><span class="val">${pct(rec)}</span></div>
+    <div><span class="k">AUC</span><span class="val primary">${d3.format(".2f")(roc.auc)}</span></div>
+  </div>
+  <p class="lab-hint">${hint} Logistic regression on Pell share and retention, fitted to ${fc(clTrain.length)} training institutions and scored on the ${clShow.toLowerCase()} set; the models in the code below use every predictor from the last lesson.</p>`;
+}
+```
+
+:::
+
+Three things to try:
+
+1. **The default, on the test rows.** At 0.5 the two-predictor model flags `r a50$flagged` institutions, catches `r a50$tp` of the `r n_low_test` that really had low completion, and is right `r a50$prec`% of the time when it flags. Accuracy is `r a50$acc`%. Then read the hint: always guessing "not low" scores `r majority`%, so the model has bought about twenty points of accuracy, not eighty.
+2. **Slide down to 0.3.** Recall climbs to `r a30$rec`% and precision falls to `r a30$prec`%: `r a30$flagged` institutions flagged, `r a30$fp` of them for nothing. Watch the shaded region grow and the ringed blue dots multiply. That is what "cast a wider net" costs, and whether it is worth paying depends on what happens to a flagged institution, which no statistic can know.
+3. **Slide up to 0.7, then back.** Precision reaches `r a70$prec`%, and recall falls to `r a70$rec`%: half the low-completion institutions are never flagged. The dot on the ROC curve moves the whole way; the curve and its AUC of `r auc2` never change. The curve is the model. The threshold is a policy, and it is the part of the model an IR office should own.
+
+## Do it {.beat data-beat="2 · Do it"}
+
+The frame, the split, and the predictors are the same as **Predict a rate**: four-year institutions with a bachelor's cohort of at least 30, one of the four main Carnegie groups, a value in every predictor, and the last digit of the IPEDS unit ID deciding the split. The outcome is now `low`, one if the six-year rate is under 50% and zero otherwise. The random forest cell takes several seconds.
+
+::: {.panel-tabset group="language"}
+
+### R
+
+```{webr}
+#| autorun: true
+#| caption: Build the frame, the outcome, and the split
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(rpart)
+library(rpart.plot)
+library(randomForest)
+
+inst <- read.csv("data/institutions.csv", na.strings = c("", "NA"))
+
+frame <- inst |>
+  filter(level == "4-year", bach_cohort >= 30,
+         carnegie %in% c("Doctoral", "Master's", "Baccalaureate", "Special focus")) |>
+  mutate(log_headcount = log10(headcount)) |>
+  select(unitid, name, control, locale, carnegie, hbcu, pct_pell, net_price, stu_fac_ratio,
+         log_headcount, pct_any_grant, pct_women_ug, pct_white_ug, pct_black_ug, pct_hispanic_ug,
+         pct_asian_ug, pct_intl_ug, retention_ft, grad_rate_bach_6yr) |>
+  na.omit() |>
+  mutate(across(c(control, locale, carnegie, hbcu), factor))
+
+frame$low <- as.integer(frame$grad_rate_bach_6yr < 50)
+frame$split <- ifelse(frame$unitid %% 10 < 7, "train", "test")
+train <- filter(frame, split == "train")
+test <- filter(frame, split == "test")
+
+predictors <- setdiff(names(frame), c("unitid", "name", "split", "grad_rate_bach_6yr", "low"))
+f_all <- reformulate(predictors, "low")
+
+frame |> group_by(split) |> summarise(n = n(), low = sum(low), share_low = round(mean(low), 3))
+```
+
+The base rate is the first number to write down. `r share_low_test`% of the test institutions had low completion, so a model that flags nobody is `r majority`% accurate. Every accuracy figure below has to be read against that.
+
+The logistic regression from **Yes or no** takes all `r length(predictors)` predictors and returns a probability for each test institution. The flag is the probability against a threshold, and the confusion matrix is the whole story of a threshold in four cells.
+
+```{webr}
+#| autorun: true
+#| caption: Logistic regression and the confusion matrix at 0.5
+m_lg <- glm(f_all, data = train, family = binomial)
+p_test <- predict(m_lg, test, type = "response")
+
+table(actual = test$low, flagged = as.integer(p_test >= 0.5))
+```
+
+Rows are what happened; columns are what the model said. The diagonal is right, the off-diagonal is wrong, and the two kinds of wrong are not the same. A low-completion institution the model did not flag is a miss, a false negative. An institution flagged for nothing is a false alarm, a false positive. Three rates summarize the matrix, and each one answers a different question.
+
+```{webr}
+#| autorun: true
+#| caption: Accuracy, precision, and recall as functions of the threshold
+score <- function(p, y, threshold) {
+  flag <- as.integer(p >= threshold)
+  tp <- sum(flag == 1 & y == 1); fp <- sum(flag == 1 & y == 0)
+  fn <- sum(flag == 0 & y == 1); tn <- sum(flag == 0 & y == 0)
+  data.frame(threshold = threshold, flagged = tp + fp,
+             accuracy = (tp + tn) / length(y),      # share of all calls that were right
+             precision = tp / (tp + fp),            # share of flags that were right
+             recall = tp / (tp + fn),               # share of low-completion institutions caught
+             specificity = tn / (tn + fp))          # share of the others left alone
+}
+
+bind_rows(lapply(c(0.2, 0.3, 0.5, 0.7), function(t) score(p_test, test$low, t))) |>
+  mutate(across(-c(threshold, flagged), ~ round(.x, 3)))
+```
+
+At 0.5 the model catches `r m50$rec`% of the low-completion institutions and `r m50$prec`% of its flags are right. Drop the threshold to 0.3 and recall rises to `r m30$rec`% while precision falls to `r m30$prec`%. Nothing about the model changed. The curve below is every threshold at once.
+
+```{webr}
+#| autorun: true
+#| caption: The trade-off, drawn
+sweep <- bind_rows(lapply(seq(0.05, 0.95, by = 0.01), function(t) score(p_test, test$low, t)))
+
+sweep |>
+  select(threshold, precision, recall, accuracy) |>
+  pivot_longer(-threshold, names_to = "measure") |>
+  ggplot(aes(threshold, value, color = measure)) +
+  geom_line(linewidth = 1) +
+  geom_vline(xintercept = 0.5, linetype = "dashed", color = "#5c6674") +
+  scale_color_manual(values = c(accuracy = "#5c6674", precision = "#2a78d6", recall = "#eb6834")) +
+  scale_y_continuous(labels = function(x) paste0(100 * x, "%")) +
+  labs(x = "Threshold on the predicted probability", y = NULL, color = NULL,
+       title = "Recall falls as the threshold rises; precision climbs. Accuracy barely notices.") +
+  theme_minimal(base_size = 13) +
+  theme(legend.position = "top")
+```
+
+Accuracy is nearly flat across a wide range of thresholds, which is why it is the wrong number to tune to: it cannot see the trade the other two lines are making. The ROC curve draws that trade against the false-alarm rate instead, and the area under it, the AUC, is the one number that describes the model rather than a threshold. It is the probability that a randomly chosen low-completion institution gets a higher predicted probability than a randomly chosen other one.
+
+```{webr}
+#| autorun: true
+#| caption: The ROC curve and the AUC
+roc <- function(p, y) {
+  o <- order(-p)
+  data.frame(threshold = p[o], tpr = cumsum(y[o]) / sum(y), fpr = cumsum(1 - y[o]) / sum(1 - y))
+}
+auc <- function(p, y) {
+  r <- rank(p)
+  n1 <- sum(y == 1); n0 <- sum(y == 0)
+  (sum(r[y == 1]) - n1 * (n1 + 1) / 2) / (n1 * n0)
+}
+
+curve <- roc(p_test, test$low)
+at_half <- curve[which.min(abs(curve$threshold - 0.5)), ]
+
+ggplot(curve, aes(fpr, tpr)) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "#9fb3d1") +
+  geom_path(color = "#14213d", linewidth = 1) +
+  geom_point(data = at_half, color = "#eb6834", size = 4) +
+  annotate("text", x = at_half$fpr + 0.03, y = at_half$tpr - 0.04, label = "threshold 0.5", hjust = 0, color = "#eb6834") +
+  coord_equal() +
+  labs(x = "False positive rate (1 - specificity)", y = "Recall (true positive rate)",
+       title = sprintf("AUC = %.3f. The dashed line is a coin flip, AUC 0.5.", auc(p_test, test$low))) +
+  theme_minimal(base_size = 13)
+```
+
+The tree and the forest from **Predict a rate** classify as easily as they predict rates. The tree's leaves hold a share of low-completion institutions instead of a mean, and the forest votes.
+
+```{webr}
+#| autorun: true
+#| caption: A classification tree, three levels deep
+f_cls <- reformulate(predictors, "factor(low)")
+tree <- rpart(f_cls, data = train, method = "class", control = rpart.control(maxdepth = 3, cp = 0))
+rpart.plot(tree, type = 2, extra = 104, box.palette = "Oranges", shadow.col = NA, cex = 0.7)
+```
+
+The root asks about retention, then Pell share, and the leaves are readable rules: retention under about 72% is a flag on its own. Each leaf shows the share of low-completion institutions among the training rows that reach it, which is the tree's probability.
+
+```{webr}
+#| autorun: true
+#| caption: Three models on one test set
+set.seed(1)
+forest <- randomForest(f_cls, data = train, ntree = 300)
+
+p_tree <- predict(tree, test, type = "prob")[, "1"]
+p_forest <- predict(forest, test, type = "prob")[, "1"]
+
+compare <- function(p, label) {
+  s <- score(p, test$low, 0.5)
+  data.frame(model = label, auc = auc(p, test$low), accuracy_at_0.5 = s$accuracy, recall_at_0.5 = s$recall, precision_at_0.5 = s$precision)
+}
+bind_rows(compare(p_test, "Logistic regression"), compare(p_tree, "One tree, depth 3"), compare(p_forest, "Random forest, 300 trees")) |>
+  mutate(across(where(is.numeric), ~ round(.x, 3)))
+```
+
+The forest edges the logistic regression on AUC, `r auc_rf` to `r auc_lg`, and the single tree trails both. The same ordering as the rate models, for the same reason: the forest can find interactions a line cannot, and a lone tree cannot see past its first few questions.
+
+A probability is only useful as a probability if it is calibrated: among institutions the model gave a 30% chance, about 30% should have had low completion. Bin the predictions and check.
+
+```{webr}
+#| autorun: true
+#| caption: Is a predicted 30% really 30%?
+calib <- data.frame(p = p_test, low = test$low) |>
+  mutate(bin = cut(p, seq(0, 1, by = 0.2), include.lowest = TRUE)) |>
+  group_by(bin) |>
+  summarise(n = n(), predicted = mean(p), observed = mean(low))
+
+ggplot(calib, aes(predicted, observed)) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "#9fb3d1") +
+  geom_line(color = "#2a78d6") +
+  geom_point(aes(size = n), color = "#2a78d6") +
+  coord_equal(xlim = c(0, 1), ylim = c(0, 1)) +
+  labs(x = "Mean predicted probability in the bin", y = "Share with low completion",
+       title = "Close to the diagonal: the probabilities mean what they say") +
+  theme_minimal(base_size = 13)
+```
+
+Logistic regression is calibrated by construction on its training data and usually stays close on new data. Forests and boosted models often are not, and their scores need recalibrating before anyone reads them as chances.
+
+```{webr}
+#| autorun: true
+#| caption: The model without retention
+m_noret <- glm(update(f_all, . ~ . - retention_ft), data = train, family = binomial)
+p_noret <- predict(m_noret, test, type = "response")
+
+c(auc_with_retention = auc(p_test, test$low), auc_without = auc(p_noret, test$low)) |> round(3)
+```
+
+### Python
+
+```{pyodide}
+#| autorun: true
+#| caption: Build the frame, the outcome, and the split
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from sklearn.linear_model import LogisticRegression
+from sklearn.preprocessing import StandardScaler
+from sklearn.pipeline import make_pipeline
+from sklearn.tree import DecisionTreeClassifier, export_text
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import confusion_matrix, roc_curve, roc_auc_score
+
+inst = pd.read_csv("data/institutions.csv")
+num = ["pct_pell", "net_price", "stu_fac_ratio", "log_headcount", "pct_any_grant", "pct_women_ug",
+       "pct_white_ug", "pct_black_ug", "pct_hispanic_ug", "pct_asian_ug", "pct_intl_ug", "retention_ft"]
+cat = ["control", "locale", "carnegie", "hbcu"]
+
+frame = inst[(inst["level"] == "4-year") & (inst["bach_cohort"] >= 30)
+             & inst["carnegie"].isin(["Doctoral", "Master's", "Baccalaureate", "Special focus"])].copy()
+frame["log_headcount"] = np.log10(frame["headcount"])
+frame = frame.dropna(subset=num + cat + ["grad_rate_bach_6yr"])
+
+X = pd.concat([frame[num], pd.get_dummies(frame[cat], drop_first=True, dtype=float)], axis=1)
+y = (frame["grad_rate_bach_6yr"] < 50).astype(int)
+is_train = frame["unitid"] % 10 < 7
+X_train, X_test, y_train, y_test = X[is_train], X[~is_train], y[is_train], y[~is_train]
+
+pd.DataFrame({"n": [len(y_train), len(y_test)], "low": [y_train.sum(), y_test.sum()],
+              "share_low": [y_train.mean().round(3), y_test.mean().round(3)]}, index=["train", "test"])
+```
+
+```{pyodide}
+#| autorun: true
+#| caption: Logistic regression and the confusion matrix at 0.5
+logit = make_pipeline(StandardScaler(), LogisticRegression(penalty=None, max_iter=1000)).fit(X_train, y_train)
+p_test = logit.predict_proba(X_test)[:, 1]
+
+pd.DataFrame(confusion_matrix(y_test, (p_test >= 0.5).astype(int)),
+             index=["actual 0", "actual 1"], columns=["flagged 0", "flagged 1"])
+```
+
+`penalty=None` asks for the same unpenalized fit R's `glm()` produces; scikit-learn's default adds a ridge penalty, which is a reasonable choice but a different model. `predict_proba` returns two columns, and the second is the probability of the outcome being one. `.predict()` would apply a threshold of 0.5 silently, which is the thing this lesson asks you never to let a library do for you.
+
+```{pyodide}
+#| autorun: true
+#| caption: Accuracy, precision, and recall as functions of the threshold
+def score(p, y, threshold):
+    flag = (p >= threshold).astype(int)
+    tp = int(((flag == 1) & (y == 1)).sum()); fp = int(((flag == 1) & (y == 0)).sum())
+    fn = int(((flag == 0) & (y == 1)).sum()); tn = int(((flag == 0) & (y == 0)).sum())
+    return {"threshold": threshold, "flagged": tp + fp, "accuracy": (tp + tn) / len(y),
+            "precision": tp / (tp + fp) if tp + fp else np.nan, "recall": tp / (tp + fn), "specificity": tn / (tn + fp)}
+
+y_arr = y_test.to_numpy()
+pd.DataFrame([score(p_test, y_arr, t) for t in [0.2, 0.3, 0.5, 0.7]]).round(3)
+```
+
+```{pyodide}
+#| autorun: true
+#| caption: The trade-off, drawn
+sweep = pd.DataFrame([score(p_test, y_arr, t) for t in np.arange(0.05, 0.96, 0.01)])
+
+fig, ax = plt.subplots(figsize=(8, 4.5))
+for col, color in [("accuracy", "#5c6674"), ("precision", "#2a78d6"), ("recall", "#eb6834")]:
+    ax.plot(sweep["threshold"], sweep[col], color=color, linewidth=2, label=col)
+ax.axvline(0.5, linestyle="--", color="#5c6674")
+ax.set_ylim(0, 1)
+ax.set_xlabel("Threshold on the predicted probability")
+ax.set_title("Recall falls as the threshold rises; precision climbs. Accuracy barely notices.", loc="left", fontsize=11)
+ax.legend(frameon=False, loc="lower left")
+ax.spines[["top", "right"]].set_visible(False)
+plt.tight_layout()
+plt.show()
+```
+
+```{pyodide}
+#| autorun: true
+#| caption: The ROC curve and the AUC
+fpr, tpr, thresholds = roc_curve(y_test, p_test)
+i = np.argmin(np.abs(thresholds - 0.5))
+
+fig, ax = plt.subplots(figsize=(5.5, 5.5))
+ax.plot([0, 1], [0, 1], linestyle="--", color="#9fb3d1")
+ax.plot(fpr, tpr, color="#14213d", linewidth=2)
+ax.scatter(fpr[i], tpr[i], color="#eb6834", s=60, zorder=3)
+ax.annotate("threshold 0.5", (fpr[i], tpr[i]), textcoords="offset points", xytext=(10, -12), color="#eb6834")
+ax.set_xlabel("False positive rate (1 - specificity)")
+ax.set_ylabel("Recall (true positive rate)")
+ax.set_title(f"AUC = {roc_auc_score(y_test, p_test):.3f}. The dashed line is a coin flip.", loc="left", fontsize=11)
+ax.spines[["top", "right"]].set_visible(False)
+plt.tight_layout()
+plt.show()
+```
+
+```{pyodide}
+#| autorun: true
+#| caption: A classification tree, three levels deep
+tree = DecisionTreeClassifier(max_depth=3, min_samples_leaf=7, random_state=1).fit(X_train, y_train)
+print(export_text(tree, feature_names=list(X.columns), decimals=1, show_weights=True))
+```
+
+`show_weights` prints the count of each class at every leaf, so the leaf's probability is the second number over their sum.
+
+```{pyodide}
+#| autorun: true
+#| caption: Three models on one test set
+forest = RandomForestClassifier(n_estimators=300, random_state=1).fit(X_train, y_train)
+
+def compare(p, label):
+    s = score(p, y_arr, 0.5)
+    return {"model": label, "auc": roc_auc_score(y_test, p), "accuracy_at_0.5": s["accuracy"],
+            "recall_at_0.5": s["recall"], "precision_at_0.5": s["precision"]}
+
+pd.DataFrame([compare(p_test, "Logistic regression"),
+              compare(tree.predict_proba(X_test)[:, 1], "One tree, depth 3"),
+              compare(forest.predict_proba(X_test)[:, 1], "Random forest, 300 trees")]).round(3)
+```
+
+```{pyodide}
+#| autorun: true
+#| caption: Is a predicted 30% really 30%?
+calib = pd.DataFrame({"p": p_test, "low": y_arr})
+calib["bin"] = pd.cut(calib["p"], np.arange(0, 1.01, 0.2), include_lowest=True)
+table = calib.groupby("bin", observed=True).agg(n=("low", "size"), predicted=("p", "mean"), observed=("low", "mean"))
+
+fig, ax = plt.subplots(figsize=(5, 5))
+ax.plot([0, 1], [0, 1], linestyle="--", color="#9fb3d1")
+ax.plot(table["predicted"], table["observed"], color="#2a78d6")
+ax.scatter(table["predicted"], table["observed"], s=table["n"] * 2, color="#2a78d6")
+ax.set_xlim(0, 1); ax.set_ylim(0, 1)
+ax.set_xlabel("Mean predicted probability in the bin")
+ax.set_ylabel("Share with low completion")
+ax.spines[["top", "right"]].set_visible(False)
+plt.tight_layout()
+plt.show()
+```
+
+```{pyodide}
+#| autorun: true
+#| caption: The model without retention
+X_noret_train = X_train.drop(columns="retention_ft")
+X_noret_test = X_test.drop(columns="retention_ft")
+noret = make_pipeline(StandardScaler(), LogisticRegression(penalty=None, max_iter=1000)).fit(X_noret_train, y_train)
+
+pd.Series({"auc_with_retention": roc_auc_score(y_test, p_test),
+           "auc_without": roc_auc_score(y_test, noret.predict_proba(X_noret_test)[:, 1])}).round(3)
+```
+
+:::
+
+The last cell is the one to remember. Retention is the strongest predictor of low completion in the table, and taking it away costs about `r round(100 * (auc_lg - auc_noret))` points of AUC. But retention for a cohort is known a year after that cohort arrives. A flag that needs it cannot be raised at the moment the flag would help. Every early-alert model faces the same question, and the honest version of the model is the one built only from what is known on the day the flag goes out.
+
+## Practice {.beat data-beat="3 · Practice"}
+
+Fill in the blanks and press Run. The check reads the value your code returns, so make the last line the answer. The setup builds `train`, `test`, and `f_all`, fits the logistic regression as `m_lg`, and stores its test probabilities in `p_test`; `auc()` is the function from the R tab.
+
+```{webr}
+#| setup: true
+#| exercise:
+#|   - ml5_recall
+#|   - ml5_leak
+library(dplyr)
+inst <- read.csv("data/institutions.csv", na.strings = c("", "NA"))
+frame <- inst |>
+  filter(level == "4-year", bach_cohort >= 30,
+         carnegie %in% c("Doctoral", "Master's", "Baccalaureate", "Special focus")) |>
+  mutate(log_headcount = log10(headcount)) |>
+  select(unitid, name, control, locale, carnegie, hbcu, pct_pell, net_price, stu_fac_ratio,
+         log_headcount, pct_any_grant, pct_women_ug, pct_white_ug, pct_black_ug, pct_hispanic_ug,
+         pct_asian_ug, pct_intl_ug, retention_ft, grad_rate_bach_6yr) |>
+  na.omit() |>
+  mutate(across(c(control, locale, carnegie, hbcu), factor))
+frame$low <- as.integer(frame$grad_rate_bach_6yr < 50)
+frame$split <- ifelse(frame$unitid %% 10 < 7, "train", "test")
+train <- filter(frame, split == "train")
+test <- filter(frame, split == "test")
+predictors <- setdiff(names(frame), c("unitid", "name", "split", "grad_rate_bach_6yr", "low"))
+f_all <- reformulate(predictors, "low")
+m_lg <- glm(f_all, data = train, family = binomial)
+p_test <- predict(m_lg, test, type = "response")
+auc <- function(p, y) {
+  r <- rank(p)
+  n1 <- sum(y == 1); n0 <- sum(y == 0)
+  (sum(r[y == 1]) - n1 * (n1 + 1) / 2) / (n1 * n0)
+}
+```
+
+::: {.lab-exercise data-exercise="ml5_recall"}
+
+### Recall at a lower threshold
+
+Flag every test institution whose predicted probability is at least 0.3, and return the recall: the share of institutions that really had low completion which the flag caught.
+
+```{webr}
+#| exercise: ml5_recall
+flag <- as.integer(p_test >= ______)
+sum(flag == 1 & test$low == 1) / sum(test$low == ______)
+```
+
+::: {.hint exercise="ml5_recall"}
+::: {.callout-note collapse="false"}
+## Hint
+The threshold is 0.3. Recall divides the caught institutions by all the institutions that had low completion, the rows where `low` is 1.
+:::
+:::
+
+::: {.solution exercise="ml5_recall"}
+::: {.callout-tip collapse="false"}
+## Solution
+```r
+flag <- as.integer(p_test >= 0.3)
+sum(flag == 1 & test$low == 1) / sum(test$low == 1)
+```
+About `r m30$rec`%, up from `r m50$rec`% at 0.5. The price is `r m30$fp` false alarms instead of `r m50$fp`.
+:::
+:::
+
+```{webr}
+#| exercise: ml5_recall
+#| check: true
+flag_ok <- as.integer(p_test >= 0.3)
+expected <- sum(flag_ok == 1 & test$low == 1) / sum(test$low == 1)
+precision <- sum(flag_ok == 1 & test$low == 1) / sum(flag_ok == 1)
+flag_half <- as.integer(p_test >= 0.5)
+at_half <- sum(flag_half == 1 & test$low == 1) / sum(test$low == 1)
+val <- suppressWarnings(as.numeric(unlist(.result))[1])
+if (length(val) == 1 && !is.na(val) && isTRUE(abs(val - expected) < 1e-6)) {
+  list(correct = TRUE, message = sprintf("Correct: recall of %.1f%% at a threshold of 0.3, with %d of %d flags being false alarms.", 100 * expected, sum(flag_ok == 1 & test$low == 0), sum(flag_ok == 1)))
+} else if (length(val) == 1 && !is.na(val) && isTRUE(abs(val - precision) < 1e-6)) {
+  list(correct = FALSE, message = "That is precision: caught over flagged. Recall is caught over all the institutions with low completion, sum(test$low == 1).")
+} else if (length(val) == 1 && !is.na(val) && isTRUE(abs(val - at_half) < 1e-6)) {
+  list(correct = FALSE, message = "That is recall at 0.5. The exercise asks for a threshold of 0.3.")
+} else {
+  list(correct = FALSE, message = "Not yet. The answer is a single number between 0 and 1: caught divided by all low-completion institutions.")
+}
+```
+
+:::
+
+::: {.lab-exercise data-exercise="ml5_leak"}
+
+### The model you could deploy
+
+Retention is not known when the flag would be needed. Refit the logistic regression on the training rows without `retention_ft` and return its AUC on the test rows.
+
+```{webr}
+#| exercise: ml5_leak
+m_deploy <- glm(update(f_all, . ~ . - ______), data = train, family = ______)
+auc(predict(m_deploy, test, type = "response"), test$low)
+```
+
+::: {.hint exercise="ml5_leak"}
+::: {.callout-note collapse="false"}
+## Hint
+`update(f_all, . ~ . - retention_ft)` is the same formula minus one term. The family for a yes-or-no outcome is `binomial`.
+:::
+:::
+
+::: {.solution exercise="ml5_leak"}
+::: {.callout-tip collapse="false"}
+## Solution
+```r
+m_deploy <- glm(update(f_all, . ~ . - retention_ft), data = train, family = binomial)
+auc(predict(m_deploy, test, type = "response"), test$low)
+```
+About `r auc_noret`, against `r auc_lg` with retention. Still a useful model, and the only one of the two that could be run in time to matter.
+:::
+:::
+
+```{webr}
+#| exercise: ml5_leak
+#| check: true
+m_ok <- glm(update(f_all, . ~ . - retention_ft), data = train, family = binomial)
+expected <- auc(predict(m_ok, test, type = "response"), test$low)
+full <- auc(p_test, test$low)
+m_gauss <- glm(update(f_all, . ~ . - retention_ft), data = train)
+gauss <- auc(predict(m_gauss, test), test$low)
+val <- suppressWarnings(as.numeric(unlist(.result))[1])
+if (length(val) == 1 && !is.na(val) && isTRUE(abs(val - expected) < 1e-6)) {
+  list(correct = TRUE, message = sprintf("Correct: AUC %.3f without retention, against %.3f with it. That is the cost of building a model from what is known on the day.", expected, full))
+} else if (length(val) == 1 && !is.na(val) && isTRUE(abs(val - full) < 1e-6)) {
+  list(correct = FALSE, message = "That is the AUC of the full model. Remove retention_ft from the formula with update().")
+} else if (length(val) == 1 && !is.na(val) && isTRUE(abs(val - gauss) < 1e-6)) {
+  list(correct = FALSE, message = "That is a straight line fitted to a yes-or-no outcome. Add family = binomial for the logistic fit.")
+} else {
+  list(correct = FALSE, message = "Not yet. The answer is a single number between 0 and 1: the AUC of the model without retention_ft.")
+}
+```
+
+:::
+
+::: {.lab-exercise data-exercise="ml5_py_confusion"}
+
+### The confusion matrix in Python
+
+`p_test` holds the logistic regression's test probabilities and `y_test` the outcomes. Return the confusion matrix for a threshold of 0.3.
+
+```{pyodide}
+#| setup: true
+#| exercise: ml5_py_confusion
+import numpy as np
+import pandas as pd
+from sklearn.linear_model import LogisticRegression
+from sklearn.preprocessing import StandardScaler
+from sklearn.pipeline import make_pipeline
+from sklearn.metrics import confusion_matrix
+inst = pd.read_csv("data/institutions.csv")
+num = ["pct_pell", "net_price", "stu_fac_ratio", "log_headcount", "pct_any_grant", "pct_women_ug",
+       "pct_white_ug", "pct_black_ug", "pct_hispanic_ug", "pct_asian_ug", "pct_intl_ug", "retention_ft"]
+cat = ["control", "locale", "carnegie", "hbcu"]
+frame = inst[(inst["level"] == "4-year") & (inst["bach_cohort"] >= 30)
+             & inst["carnegie"].isin(["Doctoral", "Master's", "Baccalaureate", "Special focus"])].copy()
+frame["log_headcount"] = np.log10(frame["headcount"])
+frame = frame.dropna(subset=num + cat + ["grad_rate_bach_6yr"])
+X = pd.concat([frame[num], pd.get_dummies(frame[cat], drop_first=True, dtype=float)], axis=1)
+y = (frame["grad_rate_bach_6yr"] < 50).astype(int)
+is_train = frame["unitid"] % 10 < 7
+X_train, X_test, y_train, y_test = X[is_train], X[~is_train], y[is_train], y[~is_train]
+logit = make_pipeline(StandardScaler(), LogisticRegression(penalty=None, max_iter=1000)).fit(X_train, y_train)
+p_test = logit.predict_proba(X_test)[:, 1]
+```
+
+```{pyodide}
+#| exercise: ml5_py_confusion
+confusion_matrix(y_test, (p_test >= ______).astype(int))
+```
+
+::: {.hint exercise="ml5_py_confusion"}
+::: {.callout-note collapse="false"}
+## Hint
+The blank is the threshold, 0.3. The comparison gives True and False, and `.astype(int)` turns them into the ones and zeros `confusion_matrix` expects.
+:::
+:::
+
+::: {.solution exercise="ml5_py_confusion"}
+::: {.callout-tip collapse="false"}
+## Solution
+```python
+confusion_matrix(y_test, (p_test >= 0.3).astype(int))
+```
+:::
+:::
+
+```{pyodide}
+#| exercise: ml5_py_confusion
+#| check: true
+expected = confusion_matrix(y_test, (p_test >= 0.3).astype(int))
+at_half = confusion_matrix(y_test, (p_test >= 0.5).astype(int))
+got = np.asarray(result) if result is not None else None
+if got is not None and got.shape == (2, 2) and (got == expected).all():
+    feedback = {"correct": True, "message": f"Correct: {expected[1, 1]} caught, {expected[0, 1]} false alarms, {expected[1, 0]} missed, {expected[0, 0]} correctly left alone."}
+elif got is not None and got.shape == (2, 2) and (got == at_half).all():
+    feedback = {"correct": False, "message": "That is the matrix at 0.5. The exercise asks for a threshold of 0.3."}
+else:
+    feedback = {"correct": False, "message": "Not yet. Expected the 2 by 2 matrix from confusion_matrix(y_test, flags) with flags at a threshold of 0.3."}
+feedback
+```
+
+:::
+
+## In your stack {.beat data-beat="4 · In your stack"}
+
+Once a model has produced probabilities, everything in this lesson is counting, and counting is what spreadsheets and DAX do best. The `classify` sheet in [ir-lab.xlsx](data/ir-lab.xlsx) holds the two-predictor logistic regression from the animation with a threshold cell driving the whole confusion matrix.
+
+::: {.panel-tabset group="stack"}
+
+### Excel
+
+The sheet has the training rows first, rows 2 to `r fmt(tr_last)`, and the test rows after them, `r fmt(te_first)` to `r fmt(last_row)`. Pell share is in column D, retention in E, completion in F, and the coefficients sit in O4 to O6, seeded with the maximum-likelihood fit so the sheet is right on open.
+
+| Step | Formula |
+|---|---|
+| Outcome, column G | `=IF(F2 < 50, 1, 0)` |
+| Probability, column I | `=1 / (1 + EXP(-($O$4 + $O$5 * D2 + $O$6 * E2)))` |
+| Log-likelihood, column J, training rows | `=G2 * LN(I2) + (1 - G2) * LN(1 - I2)`; O7 sums it, and Solver maximizes O7 by changing O4:O6 |
+| Flag, column K | `=IF(I2 >= $O$9, 1, 0)`, with the threshold in O9 |
+| True positives, test rows | `=SUMPRODUCT((K`r te_first`:K`r last_row` = 1) * (G`r te_first`:G`r last_row` = 1))` |
+| Precision and recall | true positives over flagged, and over all the ones |
+| Rank of each probability, column L, test rows | `=RANK.AVG(I`r te_first`, I$`r te_first`:I$`r last_row`, 1)` |
+| AUC | `=(SUMPRODUCT(L`r te_first`:L`r last_row`, G`r te_first`:G`r last_row`) - n1 * (n1 + 1) / 2) / (n1 * n0)` |
+
+Change O9 and every count updates, which is the threshold slider in a cell. The rank formula for the AUC is the same one the R and Python tabs use: the sum of the ranks of the low-completion institutions, corrected for their own count, over the number of pairs. A threshold table from 0.1 to 0.9 below the panel shows precision and recall at each, built from the same `SUMPRODUCT` pattern with the threshold on the row.
+
+What Excel cannot do is fit the model without Solver, or grow the tree at all, which is where the `Do it` tab starts.
+
+### Power BI
+
+::: {.ir-powerbi data-powerbi-page="regression" data-powerbi-title="Pell and completion"}
+**Interactive report: not connected yet.** Download the [Power BI project](data/ir-lab-powerbi.zip) to explore this lesson in Power BI Desktop. The embedded report will appear here once it is connected.
+:::
+
+A **what-if parameter** is the threshold slider. Modeling, New parameter, Numeric range from 0.05 to 0.95 in steps of 0.05 creates a `Threshold` table, a slicer, and a measure `[Threshold Value]`, and the confusion matrix is four measures that read it. The probability is a calculated column using the coefficients the R tab fits for Pell share and retention alone (`r round(coef(m2)[1], 3)`, `r round(coef(m2)[2], 4)`, and `r round(coef(m2)[3], 4)`), with the `Split` column from **Split before you fit**:
+
+```dax
+Low Probability =
+1 / ( 1 + EXP ( - ( 7.111 + 0.0633 * institutions[pct_pell] - 0.1343 * institutions[retention_ft] ) ) )
+
+Test Rows =
+FILTER ( institutions, institutions[Split] = "test" && NOT ISBLANK ( institutions[Low Probability] ) )
+
+True Positives =
+COUNTROWS ( FILTER ( [Test Rows], institutions[Low Probability] >= [Threshold Value] && institutions[grad_rate_bach_6yr] < 50 ) )
+
+False Positives =
+COUNTROWS ( FILTER ( [Test Rows], institutions[Low Probability] >= [Threshold Value] && institutions[grad_rate_bach_6yr] >= 50 ) )
+
+False Negatives =
+COUNTROWS ( FILTER ( [Test Rows], institutions[Low Probability] < [Threshold Value] && institutions[grad_rate_bach_6yr] < 50 ) )
+
+Precision = DIVIDE ( [True Positives], [True Positives] + [False Positives] )
+Recall = DIVIDE ( [True Positives], [True Positives] + [False Negatives] )
+```
+
+Four cards and the slicer make the animation as a report page, and because every measure respects the page's filters, a slicer on `control` shows whether the same threshold catches the same share of publics and privates, which is the fairness question every flagging model should be asked.
+
+The AUC does not need the threshold. `RANKX` over the test rows gives each probability its rank, and the same sum as the Excel formula follows:
+
+```dax
+AUC =
+VAR t = [Test Rows]
+VAR n1 = COUNTROWS ( FILTER ( t, institutions[grad_rate_bach_6yr] < 50 ) )
+VAR n0 = COUNTROWS ( t ) - n1
+VAR rankSum =
+    SUMX ( FILTER ( t, institutions[grad_rate_bach_6yr] < 50 ), RANKX ( t, institutions[Low Probability], , ASC ) )
+RETURN DIVIDE ( rankSum - n1 * ( n1 + 1 ) / 2, n1 * n0 )
+```
+
+`RANKX` gives tied values the lowest rank rather than the average, so the number can differ from R in the third decimal when probabilities tie, which they rarely do. For the model itself, the **Key influencers** visual with `grad_rate_bach_6yr` bucketed into low and not low is a classification model Power BI fits for you, complete with the odds of each factor; it will not give you a threshold, which is the point of this lesson.
+
+:::
+
+## Before you leave
+
+::: {.takeaways}
+1. **A classifier is a probability and a threshold.** The model gives the first; a person chooses the second. Never let `.predict()` choose it for you at 0.5.
+2. **Accuracy hides the base rate.** Guessing "not low" for everyone scores `r majority`% here. Precision and recall are the numbers that say what the flags are worth.
+3. **Precision and recall trade against each other; the ROC curve is the whole trade.** The AUC of `r auc_lg` describes the model at every threshold at once, and it is the number to compare models on.
+4. **Check calibration and check the calendar.** A predicted 30% should come true about 30% of the time, and a flag that needs this year's retention rate is a flag for next year.
+:::
+
+Next in this track: **Peer groups**, k-means clustering: the algorithm step by step, choosing k, and naming what you found.

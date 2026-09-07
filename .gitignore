@@ -12,3 +12,6 @@ _site/
 **/.pbi/
 **/*.pbix
 data/ir-lab-powerbi.zip
+
+# Python harness cache
+__pycache__/

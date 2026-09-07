@@ -9,10 +9,10 @@ Institutional research lives on comparisons: this year against last, this group 
 <ul class="lessons">
 <li><a href="stats-sampling.html">Sampling and uncertainty<span class="lesson-blurb">Bootstrap a statistic, watch the interval form, and learn what a confidence interval promises.</span></a><span class="lesson-status live">Live</span></li>
 <li><a href="stats-two-groups.html">Two groups<span class="lesson-blurb">t-tests, effect sizes, and why a significant difference can still be tiny.</span></a><span class="lesson-status live">Live</span></li>
-<li class="planned"><a>Many groups<span class="lesson-blurb">ANOVA, multiple comparisons, and the cost of asking many questions at once.</span></a><span class="lesson-status">Planned</span></li>
-<li class="planned"><a>Counts and proportions<span class="lesson-blurb">Chi-square tests and proportion intervals for categorical outcomes.</span></a><span class="lesson-status">Planned</span></li>
+<li><a href="stats-anova.html">Many groups<span class="lesson-blurb">ANOVA, multiple comparisons, and the cost of asking many questions at once.</span></a><span class="lesson-status live">Live</span></li>
+<li><a href="stats-proportions.html">Counts and proportions<span class="lesson-blurb">Chi-square tests and proportion intervals for categorical outcomes.</span></a><span class="lesson-status live">Live</span></li>
 <li><a href="stats-regression.html">A line through the cloud<span class="lesson-blurb">Simple linear regression: least squares, residuals, and reading a coefficient.</span></a><span class="lesson-status live">Live</span></li>
 <li><a href="stats-logistic.html">Yes or no<span class="lesson-blurb">Logistic regression for a yes-or-no outcome, with odds ratios and probabilities explained.</span></a><span class="lesson-status live">Live</span></li>
 </ul>
 
-<p class="lab-progress" data-exercises="stats1_fit stats1_predict stats1_py_fit stats2_fit stats2_predict stats2_py_fit stats3_boot stats3_ci stats3_py_boot stats4_ttest stats4_d stats4_py_ttest"></p>
+<p class="lab-progress" data-exercises="stats1_fit stats1_predict stats1_py_fit stats2_fit stats2_predict stats2_py_fit stats3_boot stats3_ci stats3_py_boot stats4_ttest stats4_d stats4_py_ttest stats5_aov stats5_bonf stats5_py_f stats6_chisq stats6_wilson stats6_py_chi2"></p>

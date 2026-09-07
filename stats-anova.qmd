@@ -1,0 +1,924 @@
+---
+title: "Many groups"
+subtitle: "ANOVA, multiple comparisons, and the cost of asking many questions at once"
+webr:
+  packages:
+    - dplyr
+    - ggplot2
+    - tidyr
+  resources:
+    - data/institutions.csv
+pyodide:
+  packages:
+    - pandas
+    - matplotlib
+    - scipy
+  resources:
+    - data/institutions.csv
+---
+
+{{< include ./_extensions/r-wasm/live/_knitr.qmd >}}
+
+```{r}
+#| include: false
+source("_common.R")
+reg <- institutions |>
+  filter(level == "4-year", bach_cohort >= 30, !is.na(grad_rate_bach_6yr), !is.na(region),
+         !region %in% c("US service schools", "Outlying areas"))
+n_reg <- nrow(reg)
+k <- n_distinct(reg$region)
+n_pairs <- choose(k, 2)
+by_reg <- reg |>
+  group_by(region) |>
+  summarise(n = n(), mean = mean(grad_rate_bach_6yr), sd = sd(grad_rate_bach_6yr)) |>
+  arrange(desc(mean))
+top_reg <- by_reg$region[1]
+top_mean <- round(by_reg$mean[1], 1)
+top_n <- by_reg$n[1]
+bot_reg <- by_reg$region[k]
+bot_mean <- round(by_reg$mean[k], 1)
+bot_n <- by_reg$n[k]
+spread_means <- round(by_reg$mean[1] - by_reg$mean[k], 1)
+fit <- aov(grad_rate_bach_6yr ~ region, data = reg)
+s <- summary(fit)[[1]]
+f_stat <- round(s[1, "F value"], 1)
+df1 <- s[1, "Df"]
+df2 <- s[2, "Df"]
+ss_b <- s[1, "Sum Sq"]
+ss_w <- s[2, "Sum Sq"]
+eta2 <- round(100 * ss_b / (ss_b + ss_w), 1)
+within_sd <- round(sqrt(s[2, "Mean Sq"]), 1)
+p_f <- s[1, "Pr(>F)"]
+tk <- TukeyHSD(fit)$region
+n_tukey <- sum(tk[, "p adj"] < 0.05)
+pw_none <- pairwise.t.test(reg$grad_rate_bach_6yr, reg$region, p.adjust.method = "none")$p.value
+pv <- pw_none[!is.na(pw_none)]
+n_none <- sum(pv < 0.05)
+n_bonf <- sum(p.adjust(pv, "bonferroni") < 0.05)
+n_holm <- sum(p.adjust(pv, "holm") < 0.05)
+n_bh <- sum(p.adjust(pv, "BH") < 0.05)
+set.seed(4)
+fwer_real <- round(100 * mean(replicate(300, {
+  y <- sample(reg$grad_rate_bach_6yr)
+  any(pairwise.t.test(y, reg$region, p.adjust.method = "none")$p.value < 0.05, na.rm = TRUE)
+})))
+ms_w <- s[2, "Mean Sq"]
+pair_p <- sapply(rownames(tk), function(nm) {
+  ab <- strsplit(nm, "-")[[1]]
+  a <- by_reg[by_reg$region == ab[1], ]
+  b <- by_reg[by_reg$region == ab[2], ]
+  t <- (a$mean - b$mean) / sqrt(ms_w * (1 / a$n + 1 / b$n))
+  2 * pt(-abs(t), df2)
+})
+lost <- rownames(tk)[pair_p < 0.05 & tk[, "p adj"] >= 0.05]
+n_lost <- length(lost)
+lost_pair <- sub("-", " and ", lost[1])
+lost_diff <- round(abs(tk[lost[1], "diff"]), 1)
+lost_p_raw <- round(pair_p[lost[1]], 3)
+lost_p_adj <- round(tk[lost[1], "p adj"], 2)
+big_i <- which.max(abs(tk[, "diff"]))
+big_pair <- sub("-", " and ", rownames(tk)[big_i])
+big_diff <- round(abs(tk[big_i, "diff"]), 1)
+big_lwr <- round(min(abs(tk[big_i, c("lwr", "upr")])), 1)
+big_upr <- round(max(abs(tk[big_i, c("lwr", "upr")])), 1)
+set.seed(2)
+null_any <- function(k, n, reps = 300) {
+  mean(replicate(reps, {
+    y <- sample(reg$grad_rate_bach_6yr, k * n)
+    g <- rep(seq_len(k), each = n)
+    any(pairwise.t.test(y, g, p.adjust.method = "none")$p.value < 0.05, na.rm = TRUE)
+  }))
+}
+any8 <- round(100 * null_any(8, 30))
+any4 <- round(100 * null_any(4, 30))
+null_f <- function(k, n, reps = 300) {
+  mean(replicate(reps, {
+    y <- sample(reg$grad_rate_bach_6yr, k * n)
+    g <- factor(rep(seq_len(k), each = n))
+    summary(aov(y ~ g))[[1]][1, 5] < 0.05
+  }))
+}
+f8 <- round(100 * null_f(8, 30))
+rr <- filter(reg, !is.na(retention_ft))
+s_ret <- summary(aov(retention_ft ~ region, data = rr))[[1]]
+f_ret <- round(s_ret[1, "F value"], 1)
+eta_ret <- round(100 * s_ret[1, 2] / sum(s_ret[, 2]), 1)
+car <- filter(reg, carnegie %in% c("Doctoral", "Master's", "Baccalaureate", "Special focus"))
+fit_car <- aov(grad_rate_bach_6yr ~ carnegie, data = car)
+tk_car <- TukeyHSD(fit_car)$carnegie
+n_car_sig <- sum(tk_car[, "p adj"] < 0.05)
+n_car_pairs <- nrow(tk_car)
+doc_mean <- round(mean(car$grad_rate_bach_6yr[car$carnegie == "Doctoral"]), 1)
+other <- car |> filter(carnegie != "Doctoral") |> group_by(carnegie) |> summarise(m = mean(grad_rate_bach_6yr))
+other_lo <- round(min(other$m), 1)
+other_hi <- round(max(other$m), 1)
+welch_f <- round(oneway.test(grad_rate_bach_6yr ~ region, data = reg)$statistic, 1)
+kw_stat <- round(kruskal.test(grad_rate_bach_6yr ~ region, data = reg)$statistic)
+n_aside <- institutions |>
+  filter(level == "4-year", bach_cohort >= 30, !is.na(grad_rate_bach_6yr),
+         region %in% c("US service schools", "Outlying areas")) |>
+  nrow()
+reg_last <- n_reg + 1
+```
+
+::: {.lesson-eyebrow}
+Test · Lesson 3 of 6
+:::
+
+Six-year completion averages `r top_mean`% at the `r top_n` four-year institutions in `r top_reg` and `r bot_mean`% at the `r bot_n` in the `r bot_reg`, with the other six regions in between. **Two groups** gave you a test for one gap. With `r k` regions there are `r n_pairs` gaps, and running the t-test on each at the 5% level would raise a false alarm somewhere about `r fwer_real`% of the time even if every region were the same. This lesson gives you one test for the one question worth asking first, "do these groups differ at all?", a number for how much they differ, and the discipline for what comes after.
+
+**You will be able to:** run and read a one-way ANOVA, explain what the F statistic compares, report eta squared, follow up with Tukey's honest significant difference, and choose a correction for multiple comparisons by the cost of the error it controls.
+
+## Watch it move {.beat data-beat="1 · Watch it move"}
+
+One strip per group, orange tick at each group mean, dashed line at the grand mean. With real regions, the readout runs the ANOVA on all `r fmt(n_reg)` institutions and counts how many of the `r n_pairs` pairwise t-tests come out significant, with and without a correction. Switch to shuffled labels and the same institutions are dealt into groups at random, so any difference you see is chance: step through the draws and watch the pairwise tests find "differences" anyway.
+
+::: {.lab-anim}
+
+```{ojs}
+//| echo: false
+inst = FileAttachment("data/institutions.csv").csv({typed: true})
+mgRows = inst.filter(d => d.level === "4-year" && d.bach_cohort >= 30 && d.grad_rate_bach_6yr != null
+  && d.region != null && d.region !== "US service schools" && d.region !== "Outlying areas")
+mgRegions = d3.groups(mgRows, d => d.region)
+  .map(([name, rows]) => ({name, rows, mean: d3.mean(rows, d => d.grad_rate_bach_6yr)}))
+  .sort((a, b) => b.mean - a.mean)
+
+lgamma = x => {
+  const c = [0.99999999999980993, 676.5203681218851, -1259.1392167224028, 771.32342877765313,
+             -176.61502916214059, 12.507343278686905, -0.13857109526572012, 9.9843695780195716e-6, 1.5056327351493116e-7];
+  x -= 1;
+  let a = c[0];
+  const t = x + 7.5;
+  for (let i = 1; i < 9; i++) a += c[i] / (x + i);
+  return 0.5 * Math.log(2 * Math.PI) + (x + 0.5) * Math.log(t) - t + Math.log(a);
+}
+betacf = (a, b, x) => {
+  const FPMIN = 1e-300, EPS = 3e-14;
+  const qab = a + b, qap = a + 1, qam = a - 1;
+  let c = 1, d = 1 - qab * x / qap;
+  if (Math.abs(d) < FPMIN) d = FPMIN;
+  d = 1 / d;
+  let h = d;
+  for (let m = 1; m <= 400; m++) {
+    const m2 = 2 * m;
+    let aa = m * (b - m) * x / ((qam + m2) * (a + m2));
+    d = 1 + aa * d; if (Math.abs(d) < FPMIN) d = FPMIN;
+    c = 1 + aa / c; if (Math.abs(c) < FPMIN) c = FPMIN;
+    d = 1 / d; h *= d * c;
+    aa = -(a + m) * (qab + m) * x / ((a + m2) * (qap + m2));
+    d = 1 + aa * d; if (Math.abs(d) < FPMIN) d = FPMIN;
+    c = 1 + aa / c; if (Math.abs(c) < FPMIN) c = FPMIN;
+    d = 1 / d;
+    const del = d * c; h *= del;
+    if (Math.abs(del - 1) < EPS) break;
+  }
+  return h;
+}
+ibeta = (a, b, x) => {
+  if (x <= 0) return 0;
+  if (x >= 1) return 1;
+  const bt = Math.exp(lgamma(a + b) - lgamma(a) - lgamma(b) + a * Math.log(x) + b * Math.log(1 - x));
+  return x < (a + 1) / (a + b + 2) ? bt * betacf(a, b, x) / a : 1 - bt * betacf(b, a, 1 - x) / b;
+}
+tPvalue = (tabs, df) => ibeta(df / 2, 0.5, df / (df + tabs * tabs))
+fPvalue = (F, d1, d2) => ibeta(d2 / 2, d1 / 2, d2 / (d2 + d1 * F))
+
+mgAnova = groups => {
+  const all = groups.flatMap(g => g.v);
+  const N = all.length, k = groups.length, grand = d3.mean(all);
+  let ssb = 0, ssw = 0;
+  const stats = groups.map(g => {
+    const n = g.v.length, mean = d3.mean(g.v);
+    ssb += n * (mean - grand) ** 2;
+    for (const x of g.v) ssw += (x - mean) ** 2;
+    return {name: g.name, rows: g.rows, n, mean, sd: d3.deviation(g.v)};
+  });
+  const df1 = k - 1, df2 = N - k, msw = ssw / df2, F = (ssb / df1) / msw;
+  const pairs = [];
+  for (let i = 0; i < k; i++) for (let j = i + 1; j < k; j++) {
+    const a = stats[i], b = stats[j];
+    const t = (a.mean - b.mean) / Math.sqrt(msw * (1 / a.n + 1 / b.n));
+    pairs.push({a: a.name, b: b.name, diff: a.mean - b.mean, t, p: tPvalue(Math.abs(t), df2)});
+  }
+  const m = pairs.length;
+  return {stats, grand, ssb, ssw, df1, df2, F, p: fPvalue(F, df1, df2), eta2: ssb / (ssb + ssw), pairs, m,
+          sigNone: pairs.filter(q => q.p < 0.05).length, sigBonf: pairs.filter(q => q.p * m < 0.05).length, N, k};
+}
+```
+
+::: {.lab-controls}
+```{ojs}
+//| echo: false
+viewof mgMode = Inputs.radio(["Real regions", "Shuffled labels"], {label: "Groups", value: "Real regions"})
+viewof mgK = Inputs.radio(new Map([["2", 2], ["3", 3], ["4", 4], ["6", 6], ["8", 8]]), {label: "Groups when shuffled", value: 8})
+viewof mgN = Inputs.radio(new Map([["15", 15], ["30", 30], ["100", 100]]), {label: "Institutions per group", value: 30})
+viewof mgDraw = Inputs.range([1, 20], {label: "Draw", step: 1, value: 1})
+```
+:::
+
+```{ojs}
+//| echo: false
+mgShuffled = draw => {
+  const seed = ((draw * 7919 + mgK * 131 + mgN * 17) % 10007) / 10007;
+  const pool = d3.shuffler(d3.randomLcg(seed))(mgRows.slice());
+  return d3.range(mgK).map(i => {
+    const rows = pool.slice(i * mgN, (i + 1) * mgN);
+    return {name: `Group ${i + 1}`, rows, v: rows.map(d => d.grad_rate_bach_6yr)};
+  });
+}
+
+mgStats = {
+  const real = mgMode === "Real regions";
+  const groups = real
+    ? mgRegions.map(g => ({name: g.name, rows: g.rows, v: g.rows.map(d => d.grad_rate_bach_6yr)}))
+    : mgShuffled(mgDraw);
+  const res = mgAnova(groups);
+  let tally = null;
+  if (!real) {
+    tally = {none: 0, bonf: 0, f: 0, draws: 20};
+    for (let i = 1; i <= 20; i++) {
+      const r = mgAnova(mgShuffled(i));
+      if (r.sigNone > 0) tally.none++;
+      if (r.sigBonf > 0) tally.bonf++;
+      if (r.p < 0.05) tally.f++;
+    }
+  }
+  return {...res, real, tally};
+}
+```
+
+```{ojs}
+//| echo: false
+mgNode = d3.create("svg").attr("class", "lab-svg").node()
+
+mgPlot = {
+  const width = 860, margin = {top: 12, right: 20, bottom: 44, left: 190};
+  const {stats, grand, real} = mgStats;
+  const rowH = real ? 46 : stats.length <= 4 ? 84 : 56;
+  const height = margin.top + rowH * stats.length + margin.bottom;
+  const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const dur = reduce ? 0 : 600;
+  const x = d3.scaleLinear().domain([0, 100]).range([margin.left, width - margin.right]);
+  const y = d3.scalePoint().domain(stats.map(g => g.name)).range([margin.top + rowH / 2, margin.top + rowH * stats.length - rowH / 2]);
+  const jitter = d3.randomNormal.source(d3.randomLcg(5))(0, rowH * 0.15);
+  const rows = stats.flatMap(g => g.rows.map(d => ({...d, g: g.name})));
+  const jit = new Map(rows.map(d => [d.unitid, Math.max(-rowH * 0.36, Math.min(rowH * 0.36, jitter()))]));
+  const big = rows.length > 500;
+  const f1 = d3.format(".1f"), fc = d3.format(",");
+
+  const svg = d3.select(mgNode);
+  svg.attr("viewBox", [0, 0, width, height]);
+  const layer = name => { let g = svg.select(`g.${name}`); if (g.empty()) g = svg.append("g").attr("class", name); return g; };
+  const axis = layer("axis"), labels = layer("labels"), dots = layer("dots"), means = layer("means"), grandG = layer("grand");
+  const t = svg.transition().duration(dur).ease(d3.easeCubicInOut);
+
+  axis.attr("transform", `translate(0,${height - margin.bottom})`)
+    .call(d3.axisBottom(x).ticks(10).tickFormat(v => v + "%").tickSizeOuter(0));
+  axis.selectAll("text.axis-title").data([0]).join("text").attr("class", "axis-title")
+    .attr("x", width - margin.right).attr("y", 36).attr("text-anchor", "end")
+    .attr("font-size", 12).attr("fill", "currentColor").text("6-year bachelor's completion");
+
+  labels.selectAll("g.row").data(stats, d => d.name)
+    .join(enter => {
+      const g = enter.append("g").attr("class", "row");
+      g.append("text").attr("class", "name").attr("font-size", 13).attr("font-weight", 600).attr("fill", "var(--lab-ink)");
+      g.append("text").attr("class", "count").attr("font-size", 11).attr("fill", "var(--lab-muted)");
+      return g;
+    })
+    .attr("transform", d => `translate(${margin.left - 12},${y(d.name)})`)
+    .call(g => {
+      g.select("text.name").attr("text-anchor", "end").attr("dy", "-0.2em").text(d => d.name);
+      g.select("text.count").attr("text-anchor", "end").attr("dy", "1.05em").text(d => `n = ${fc(d.n)} · mean ${f1(d.mean)}%`);
+    });
+
+  grandG.selectAll("line").data([grand]).join("line")
+    .attr("stroke", "var(--lab-muted)").attr("stroke-dasharray", "5 4").attr("stroke-width", 1.2)
+    .transition(t).attr("x1", d => x(d)).attr("x2", d => x(d)).attr("y1", margin.top).attr("y2", height - margin.bottom);
+
+  dots.selectAll("circle").data(rows, d => d.unitid)
+    .join(
+      enter => enter.append("circle").attr("r", 0).attr("cx", d => x(d.grad_rate_bach_6yr)).attr("cy", d => y(d.g) + jit.get(d.unitid))
+        .attr("fill", "var(--lab-primary)").call(e => e.append("title")),
+      update => update,
+      exit => exit.transition(t).attr("r", 0).remove()
+    )
+    .call(sel => sel.select("title").text(d => `${d.name}\n${d.region}\n${d.g}\nCompletion ${f1(d.grad_rate_bach_6yr)}%`))
+    .transition(t).delay((d, i) => reduce || big ? 0 : (i % 30) * 6)
+    .attr("r", big ? 2 : 3.4)
+    .attr("cx", d => x(d.grad_rate_bach_6yr)).attr("cy", d => y(d.g) + jit.get(d.unitid))
+    .attr("fill-opacity", big ? 0.28 : 0.55);
+
+  means.selectAll("line").data(stats, d => d.name)
+    .join(enter => enter.append("line").attr("stroke", "var(--lab-accent)").attr("stroke-width", 3).attr("stroke-linecap", "round"),
+          update => update,
+          exit => exit.remove())
+    .transition(t)
+    .attr("x1", d => x(d.mean)).attr("x2", d => x(d.mean))
+    .attr("y1", d => y(d.name) - rowH * 0.42).attr("y2", d => y(d.name) + rowH * 0.42);
+
+  return svg.node();
+}
+```
+
+```{ojs}
+//| echo: false
+mgReadout = {
+  const {F, p, eta2, df1, df2, m, sigNone, sigBonf, real, tally, stats, k} = mgStats;
+  const f1 = d3.format(".1f"), f2 = d3.format(".2f"), pct = d3.format(".1%");
+  const pf = p < 0.001 ? (p < 1e-15 ? "< 1e-15" : d3.format(".1e")(p)) : d3.format(".3f")(p);
+  const top = stats[0], bot = stats[stats.length - 1];
+  let hint;
+  if (real) {
+    hint = `The F statistic says the spread between region means is ${f1(F)} times what the spread inside regions predicts, and the chance of that with no real differences is ${pf}. Region explains ${pct(eta2)} of the variance. ${sigNone} of the ${m} pairs are significant with no correction; ${sigBonf} survive Bonferroni.`;
+  } else if (p < 0.05) {
+    hint = `These labels were dealt at random and the F-test was fooled anyway: that happens in about one draw in twenty by design. Across draws 1 to 20 at these settings, the F-test raised a false alarm ${tally.f} times, an uncorrected pairwise test ${tally.none} times, and a Bonferroni-corrected one ${tally.bonf} times.`;
+  } else if (sigNone > 0) {
+    hint = `The F-test says nothing is going on, and it is right: the labels were dealt at random. Yet ${sigNone} of the ${m} pairwise tests came out significant. Across draws 1 to 20 at these settings, at least one uncorrected pair was significant in ${tally.none} draws; with Bonferroni, ${tally.bonf}; the F-test itself, ${tally.f}.`;
+  } else {
+    hint = `Nothing significant in this draw, which is what random labels should produce. Across draws 1 to 20 at these settings, at least one uncorrected pair was significant in ${tally.none} draws, a Bonferroni-corrected pair in ${tally.bonf}, and the F-test in ${tally.f}.`;
+  }
+  return html`<div class="lab-readout">
+    <div><span class="k">F, df ${df1} and ${d3.format(",")(df2)}</span><span class="val primary">${f2(F)}</span></div>
+    <div><span class="k">p-value</span><span class="val ${p < 0.05 ? "primary" : ""}">${pf}</span></div>
+    <div><span class="k">Eta squared</span><span class="val">${pct(eta2)}</span></div>
+    <div><span class="k">Highest minus lowest mean</span><span class="val accent">${f1(top.mean - bot.mean)}</span></div>
+    <div><span class="k">Pairs significant, no correction</span><span class="val accent">${sigNone} of ${m}</span></div>
+    <div><span class="k">Pairs significant, Bonferroni</span><span class="val">${sigBonf} of ${m}</span></div>
+  </div>
+  <p class="lab-hint">${hint} Four-year institutions with a bachelor's cohort of at least 30 in the eight mainland regions; pairwise tests use the pooled within-group variance, as R's pairwise.t.test() does.</p>`;
+}
+```
+
+:::
+
+Three things to try:
+
+1. **Real regions.** F is `r f_stat` on `r df1` and `r fmt(df2)` degrees of freedom, and its p-value is as small as the arithmetic can express. Region explains `r eta2`% of the variance in completion. The largest gap, `r big_pair`, is `r big_diff` points. Of the `r n_pairs` pairs, `r n_none` are significant if you test each one on its own and `r n_bonf` after Bonferroni: `r n_lost` differences, `r lost_pair` among them, appeared only because `r n_pairs` questions were asked.
+2. **Shuffled labels, eight groups of thirty.** Step through the draws. F hovers around 1 and its p-value is usually well above 0.05, because the labels mean nothing. But in about half of the draws, at least one of the 28 pairwise tests comes out significant. The count in the readout is the false-alarm rate of "test every pair and report what sticks", measured.
+3. **Two groups, then four.** With two groups there is one pair, and F is exactly the square of the t statistic from **Two groups**: one question, one 5% risk. Go to four groups, six pairs, and the draws with a false alarm rise to about one in five; eight groups, one in two. The risk grows with the number of questions, not with the amount of data, and Bonferroni brings it back to about one draw in twenty at every setting.
+
+## Do it {.beat data-beat="2 · Do it"}
+
+The cells below run in your browser. The frame is four-year institutions with a bachelor's cohort of at least 30 in the eight mainland regions; the `r n_aside` in outlying areas and the service academies are set aside because a group of five cannot carry a mean.
+
+::: {.panel-tabset group="language"}
+
+### R
+
+```{webr}
+#| autorun: true
+#| caption: Load, filter, and summarise the eight regions
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+inst <- read.csv("data/institutions.csv", na.strings = c("", "NA"))
+
+reg <- inst |>
+  filter(level == "4-year", bach_cohort >= 30, !is.na(grad_rate_bach_6yr), !is.na(region),
+         !region %in% c("US service schools", "Outlying areas"))
+
+reg |>
+  group_by(region) |>
+  summarise(n = n(), mean = mean(grad_rate_bach_6yr), sd = sd(grad_rate_bach_6yr), se = sd / sqrt(n)) |>
+  arrange(desc(mean)) |>
+  mutate(across(c(mean, sd, se), ~ round(.x, 1)))
+```
+
+Every region's standard deviation is near `r within_sd` points, and the standard errors of the means are all under two. The gaps between means run from a fraction of a point to `r big_diff`. Before any test, draw it.
+
+```{webr}
+#| autorun: true
+#| caption: Eight distributions, ordered by their means
+ggplot(reg, aes(grad_rate_bach_6yr, reorder(region, grad_rate_bach_6yr, mean))) +
+  geom_jitter(height = 0.2, alpha = 0.25, size = 1, color = "#2a78d6") +
+  geom_boxplot(fill = NA, color = "#14213d", outlier.shape = NA, width = 0.5) +
+  stat_summary(fun = mean, geom = "point", color = "#eb6834", size = 3) +
+  scale_x_continuous(labels = function(x) paste0(x, "%")) +
+  labs(x = "6-year bachelor's completion", y = NULL, title = "Orange dot: the mean. Box: the middle half.") +
+  theme_minimal(base_size = 13)
+```
+
+The one-way ANOVA asks a single question of all eight groups at once: are the means more spread out than they would be if every institution had been dealt to a region at random? The F statistic is the ratio of two estimates of the same variance. The numerator uses the spread between group means; the denominator uses the spread inside groups. If the groups are the same, both estimate the same thing and F is near one.
+
+```{webr}
+#| autorun: true
+#| caption: The one-way ANOVA
+fit <- aov(grad_rate_bach_6yr ~ region, data = reg)
+summary(fit)
+
+ss <- summary(fit)[[1]][["Sum Sq"]]
+c(eta_squared = round(ss[1] / sum(ss), 3), within_sd = round(sqrt(summary(fit)[[1]][["Mean Sq"]][2]), 1))
+```
+
+F is `r f_stat`, and the p-value says a ratio that large does not happen by chance. Eta squared is the between-group sum of squares over the total, the same "spread explained" from **Compare groups**: `r eta2`% here. The two numbers answer different questions, and the second is the one that says how much region matters, which is not very much.
+
+The p-value comes from the F distribution, but the idea behind it is easy to draw. Shuffle the region labels, so that the true differences are all zero, and compute F again. Do it a few hundred times and the observed F sits far outside anything the shuffles produced.
+
+```{webr}
+#| autorun: true
+#| caption: What F looks like when the labels mean nothing
+set.seed(1)
+f_null <- replicate(300, summary(aov(sample(grad_rate_bach_6yr) ~ region, data = reg))[[1]][1, "F value"])
+f_obs <- summary(fit)[[1]][1, "F value"]
+
+ggplot(data.frame(f = f_null), aes(f)) +
+  geom_histogram(binwidth = 0.2, fill = "#2a78d6", alpha = 0.8, boundary = 0) +
+  geom_vline(xintercept = f_obs, color = "#eb6834", linewidth = 1) +
+  annotate("text", x = f_obs, y = 30, label = sprintf("observed F = %.1f", f_obs), hjust = 1.05, color = "#eb6834") +
+  labs(x = "F statistic with shuffled region labels", y = "Shuffles",
+       title = "300 shuffles. The largest F chance produced is under 4.") +
+  theme_minimal(base_size = 13)
+```
+
+The ANOVA has said that the regions differ. It has not said which ones. Tukey's honest significant difference tests every pair while holding the chance of any false alarm across all `r n_pairs` at 5%, and gives an interval for each gap.
+
+```{webr}
+#| autorun: true
+#| caption: Every pair, with a family-wise correction
+tk <- TukeyHSD(fit)
+
+pairs <- as.data.frame(tk$region) |>
+  mutate(pair = rownames(tk$region), significant = `p adj` < 0.05) |>
+  arrange(diff)
+
+ggplot(pairs, aes(diff, reorder(pair, diff), color = significant)) +
+  geom_vline(xintercept = 0, color = "#5c6674", linetype = "dashed") +
+  geom_pointrange(aes(xmin = lwr, xmax = upr), size = 0.3) +
+  scale_color_manual(values = c(`TRUE` = "#2a78d6", `FALSE` = "#c5cbd5"), labels = c("Interval covers zero", "Significant")) +
+  labs(x = "Difference in mean completion (points), with a 95% family-wise interval", y = NULL, color = NULL) +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "top")
+
+sum(pairs$significant)
+```
+
+`r n_tukey` of the `r n_pairs` pairs are significant. The intervals are wider than the ones a lone t-test would give, because they are built to be right about all `r n_pairs` at once, and the gaps that survive are the ones between the top three regions and the bottom three.
+
+Tukey is one correction among several, and they trade the same two errors differently. The table runs the `r n_pairs` uncorrected t-tests and applies four rules to their p-values.
+
+```{webr}
+#| autorun: true
+#| caption: Four ways to correct the same 28 p-values
+count_sig <- function(method) {
+  p <- pairwise.t.test(reg$grad_rate_bach_6yr, reg$region, p.adjust.method = method)$p.value
+  sum(p < 0.05, na.rm = TRUE)
+}
+
+data.frame(
+  method = c("None", "Bonferroni", "Holm", "Benjamini-Hochberg (FDR)", "Tukey HSD"),
+  controls = c("nothing", "chance of any false alarm", "chance of any false alarm, less conservatively",
+               "share of reported differences that are false", "chance of any false alarm, for pairwise means"),
+  significant = c(count_sig("none"), count_sig("bonferroni"), count_sig("holm"), count_sig("BH"), sum(pairs$significant))
+)
+```
+
+Bonferroni multiplies every p-value by `r n_pairs`; Holm does the same in steps, from the smallest p-value up, and never finds fewer. Both control the family-wise error rate: the chance that even one of the reported differences is a false alarm. Benjamini-Hochberg controls something looser and often more useful, the expected share of reported differences that are false, which is why it lets `r n_bh` through where Bonferroni lets `r n_bonf`. Which one you want depends on what a false alarm costs. A list of regions to investigate can carry a few false leads; a claim in a board report cannot.
+
+Two checks belong at the end. The classic ANOVA assumes the groups have the same spread, and Welch's version does not; the Kruskal-Wallis test works on ranks and does not care about the shape at all. Both agree here, which is the usual case with groups this large.
+
+```{webr}
+#| autorun: true
+#| caption: Two alternatives that relax the assumptions
+oneway.test(grad_rate_bach_6yr ~ region, data = reg)
+kruskal.test(grad_rate_bach_6yr ~ region, data = reg)
+```
+
+Finally, the cost of many questions, measured. Deal `r fmt(8 * 30)` institutions into eight groups of thirty at random, run the ANOVA and all 28 pairwise tests, and repeat.
+
+```{webr}
+#| autorun: true
+#| caption: False alarms under the null, with and without a correction
+set.seed(2)
+false_alarm <- function(reps = 200, k = 8, n = 30) {
+  hits <- replicate(reps, {
+    y <- sample(reg$grad_rate_bach_6yr, k * n)
+    g <- factor(rep(seq_len(k), each = n))
+    p_none <- pairwise.t.test(y, g, p.adjust.method = "none")$p.value
+    p_bonf <- pairwise.t.test(y, g, p.adjust.method = "bonferroni")$p.value
+    c(anova = summary(aov(y ~ g))[[1]][1, 5] < 0.05,
+      any_pair_uncorrected = any(p_none < 0.05, na.rm = TRUE),
+      any_pair_bonferroni = any(p_bonf < 0.05, na.rm = TRUE))
+  })
+  round(rowMeans(hits), 2)
+}
+false_alarm()
+```
+
+The ANOVA and the corrected pairs raise a false alarm about one draw in twenty, which is what 5% means. The uncorrected pairs raise one about half the time.
+
+### Python
+
+```{pyodide}
+#| autorun: true
+#| caption: Load, filter, and summarise the eight regions
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from itertools import combinations
+from scipy import stats
+
+inst = pd.read_csv("data/institutions.csv")
+reg = inst[(inst["level"] == "4-year") & (inst["bach_cohort"] >= 30) & inst["grad_rate_bach_6yr"].notna()
+           & inst["region"].notna() & ~inst["region"].isin(["US service schools", "Outlying areas"])].copy()
+
+summary = reg.groupby("region")["grad_rate_bach_6yr"].agg(n="size", mean="mean", sd="std")
+summary["se"] = summary["sd"] / np.sqrt(summary["n"])
+summary.sort_values("mean", ascending=False).round(1)
+```
+
+```{pyodide}
+#| autorun: true
+#| caption: Eight distributions, ordered by their means
+order = summary.sort_values("mean").index
+groups = [reg.loc[reg["region"] == r, "grad_rate_bach_6yr"].to_numpy() for r in order]
+
+fig, ax = plt.subplots(figsize=(8, 4.5))
+rng = np.random.default_rng(1)
+for i, g in enumerate(groups):
+    ax.scatter(g, i + 1 + rng.normal(0, 0.08, len(g)), s=6, alpha=0.25, color="#2a78d6")
+ax.boxplot(groups, vert=False, showfliers=False, widths=0.5, medianprops=dict(color="#14213d"))
+ax.scatter([g.mean() for g in groups], range(1, len(groups) + 1), color="#eb6834", zorder=3)
+ax.set_yticks(range(1, len(groups) + 1), order)
+ax.set_xlabel("6-year bachelor's completion (%)")
+ax.set_title("Orange dot: the mean. Box: the middle half.", loc="left", fontsize=11)
+ax.spines[["top", "right"]].set_visible(False)
+plt.tight_layout()
+plt.show()
+```
+
+```{pyodide}
+#| autorun: true
+#| caption: The one-way ANOVA
+res = stats.f_oneway(*groups)
+
+all_values = reg["grad_rate_bach_6yr"].to_numpy()
+grand = all_values.mean()
+ss_between = sum(len(g) * (g.mean() - grand) ** 2 for g in groups)
+ss_total = ((all_values - grand) ** 2).sum()
+df1, df2 = len(groups) - 1, len(all_values) - len(groups)
+ms_within = (ss_total - ss_between) / df2
+
+print(f"F = {res.statistic:.1f} on {df1} and {df2} df, p = {res.pvalue:.1e}")
+print(f"eta squared = {ss_between / ss_total:.3f}, within-group SD = {np.sqrt(ms_within):.1f}")
+```
+
+`f_oneway` returns the statistic and its p-value and nothing else, so the sums of squares are computed by hand: eta squared is the between-group sum over the total.
+
+```{pyodide}
+#| autorun: true
+#| caption: What F looks like when the labels mean nothing
+labels = reg["region"].to_numpy()
+f_null = []
+for _ in range(300):
+    shuffled = rng.permutation(all_values)
+    f_null.append(stats.f_oneway(*[shuffled[labels == r] for r in order]).statistic)
+
+fig, ax = plt.subplots(figsize=(8, 4))
+ax.hist(f_null, bins=np.arange(0, 4.2, 0.2), color="#2a78d6", alpha=0.8)
+ax.axvline(res.statistic, color="#eb6834", linewidth=2)
+ax.text(res.statistic, 30, f"observed F = {res.statistic:.1f}", ha="right", color="#eb6834")
+ax.set_xlabel("F statistic with shuffled region labels")
+ax.set_ylabel("Shuffles")
+ax.spines[["top", "right"]].set_visible(False)
+plt.tight_layout()
+plt.show()
+```
+
+```{pyodide}
+#| autorun: true
+#| caption: Every pair, with a family-wise correction
+tk = stats.tukey_hsd(*groups)
+ci = tk.confidence_interval()
+rows = []
+for i, j in combinations(range(len(order)), 2):
+    rows.append({"pair": f"{order[j]}-{order[i]}", "diff": groups[j].mean() - groups[i].mean(),
+                 "lwr": -ci.high[i, j], "upr": -ci.low[i, j], "p_adj": tk.pvalue[i, j]})
+pairs = pd.DataFrame(rows).sort_values("diff").reset_index(drop=True)
+pairs["significant"] = pairs["p_adj"] < 0.05
+
+fig, ax = plt.subplots(figsize=(8, 6.5))
+colors = np.where(pairs["significant"], "#2a78d6", "#c5cbd5")
+ax.axvline(0, linestyle="--", color="#5c6674")
+ax.hlines(range(len(pairs)), pairs["lwr"], pairs["upr"], color=colors)
+ax.scatter(pairs["diff"], range(len(pairs)), color=colors, zorder=3, s=18)
+ax.set_yticks(range(len(pairs)), pairs["pair"], fontsize=8)
+ax.set_xlabel("Difference in mean completion (points), with a 95% family-wise interval")
+ax.spines[["top", "right"]].set_visible(False)
+plt.tight_layout()
+plt.show()
+
+int(pairs["significant"].sum())
+```
+
+```{pyodide}
+#| autorun: true
+#| caption: Four ways to correct the same 28 p-values
+def pooled_pairwise_p():
+    p = []
+    for i, j in combinations(range(len(order)), 2):
+        a, b = groups[i], groups[j]
+        t = (a.mean() - b.mean()) / np.sqrt(ms_within * (1 / len(a) + 1 / len(b)))
+        p.append(2 * stats.t.sf(abs(t), df2))
+    return np.array(p)
+
+def adjust(p, method):
+    m = len(p)
+    if method == "bonferroni":
+        return np.minimum(1, p * m)
+    o = np.argsort(p)
+    ranked = p[o]
+    if method == "holm":
+        adj = np.maximum.accumulate(ranked * (m - np.arange(m)))
+    else:  # Benjamini-Hochberg
+        adj = np.minimum.accumulate((ranked * m / np.arange(1, m + 1))[::-1])[::-1]
+    out = np.empty(m)
+    out[o] = np.minimum(1, adj)
+    return out
+
+p_raw = pooled_pairwise_p()
+pd.DataFrame({
+    "method": ["None", "Bonferroni", "Holm", "Benjamini-Hochberg (FDR)", "Tukey HSD"],
+    "significant": [int((p_raw < 0.05).sum()), int((adjust(p_raw, "bonferroni") < 0.05).sum()),
+                    int((adjust(p_raw, "holm") < 0.05).sum()), int((adjust(p_raw, "BH") < 0.05).sum()),
+                    int(pairs["significant"].sum())],
+})
+```
+
+The pairwise t-tests use the pooled within-group variance from the ANOVA, which is what R's `pairwise.t.test()` does, so the counts match the R tab. `statsmodels.stats.multitest.multipletests` implements every adjustment above and several more.
+
+```{pyodide}
+#| autorun: true
+#| caption: The rank-based alternative
+stats.kruskal(*groups)
+```
+
+```{pyodide}
+#| autorun: true
+#| caption: False alarms under the null, with and without a correction
+rng = np.random.default_rng(2)
+hits = {"anova": 0, "any_pair_uncorrected": 0, "any_pair_bonferroni": 0}
+reps, k, n = 200, 8, 30
+for _ in range(reps):
+    y = rng.choice(all_values, k * n, replace=False).reshape(k, n)
+    f = stats.f_oneway(*y)
+    p = np.array([stats.ttest_ind(y[i], y[j]).pvalue for i, j in combinations(range(k), 2)])
+    hits["anova"] += f.pvalue < 0.05
+    hits["any_pair_uncorrected"] += (p < 0.05).any()
+    hits["any_pair_bonferroni"] += (p * len(p) < 0.05).any()
+pd.Series(hits) / reps
+```
+
+:::
+
+One habit ties the lesson together. Decide the comparisons before looking at the means. A test chosen after the data have been seen, "New England against the Southwest, since they are the extremes", is a test of the largest of `r n_pairs` gaps disguised as a test of one, and its p-value is wrong by exactly the factor this lesson is about.
+
+## Practice {.beat data-beat="3 · Practice"}
+
+Fill in the blanks and press Run. The check reads the value your code returns, so make the last line the answer.
+
+```{webr}
+#| setup: true
+#| exercise:
+#|   - stats5_aov
+#|   - stats5_bonf
+library(dplyr)
+inst <- read.csv("data/institutions.csv", na.strings = c("", "NA"))
+reg <- inst |>
+  filter(level == "4-year", bach_cohort >= 30, !is.na(grad_rate_bach_6yr), !is.na(region),
+         !region %in% c("US service schools", "Outlying areas"))
+```
+
+::: {.lab-exercise data-exercise="stats5_aov"}
+
+### Retention instead of completion
+
+`reg` holds the filtered institutions. Run a one-way ANOVA of full-time retention, `retention_ft`, across `region`, and return its summary.
+
+```{webr}
+#| exercise: stats5_aov
+fit <- aov(______ ~ ______, data = reg)
+summary(fit)
+```
+
+::: {.hint exercise="stats5_aov"}
+::: {.callout-note collapse="false"}
+## Hint
+The outcome goes on the left of the tilde and the grouping column on the right, as in `t.test()`. `aov()` drops the rows with a blank outcome on its own.
+:::
+:::
+
+::: {.solution exercise="stats5_aov"}
+::: {.callout-tip collapse="false"}
+## Solution
+```r
+fit <- aov(retention_ft ~ region, data = reg)
+summary(fit)
+```
+F is about `r f_ret` and region explains about `r eta_ret`% of the variance in retention, close to its share for completion. The two rates travel together.
+:::
+:::
+
+```{webr}
+#| exercise: stats5_aov
+#| check: true
+expected <- summary(aov(retention_ft ~ region, data = reg))[[1]]
+comp <- summary(aov(grad_rate_bach_6yr ~ region, data = reg))[[1]]
+got <- if (inherits(.result, "aov")) summary(.result)[[1]] else if (inherits(.result, "summary.aov")) .result[[1]] else NULL
+f_got <- if (!is.null(got)) got[["F value"]][1] else NA
+if (!is.na(f_got) && isTRUE(abs(f_got - expected[["F value"]][1]) < 1e-6)) {
+  ss <- expected[["Sum Sq"]]
+  list(correct = TRUE, message = sprintf("Correct: F = %.1f on %d and %d degrees of freedom, and region explains %.1f%% of the variance in retention.", expected[["F value"]][1], expected[["Df"]][1], expected[["Df"]][2], 100 * ss[1] / sum(ss)))
+} else if (!is.na(f_got) && isTRUE(abs(f_got - comp[["F value"]][1]) < 1e-6)) {
+  list(correct = FALSE, message = "That is the completion ANOVA again. The outcome for this exercise is retention_ft.")
+} else if (!is.null(got)) {
+  list(correct = FALSE, message = "That is an ANOVA, but not this one. Check the formula: retention_ft ~ region.")
+} else {
+  list(correct = FALSE, message = "Not yet. The last line should be summary(fit) for an aov() model of retention_ft on region.")
+}
+```
+
+:::
+
+::: {.lab-exercise data-exercise="stats5_bonf"}
+
+### How many pairs survive?
+
+Run the `r n_pairs` pairwise t-tests of completion between regions with a Bonferroni correction, and return how many are significant at the 5% level.
+
+```{webr}
+#| exercise: stats5_bonf
+p <- pairwise.t.test(reg$grad_rate_bach_6yr, reg$region, p.adjust.method = "______")$p.value
+sum(p < ______, na.rm = TRUE)
+```
+
+::: {.hint exercise="stats5_bonf"}
+::: {.callout-note collapse="false"}
+## Hint
+The method name is `"bonferroni"`, in quotes and lower case. The level is 0.05. The `$p.value` matrix has `NA` in its upper triangle, which is why `na.rm = TRUE` is there.
+:::
+:::
+
+::: {.solution exercise="stats5_bonf"}
+::: {.callout-tip collapse="false"}
+## Solution
+```r
+p <- pairwise.t.test(reg$grad_rate_bach_6yr, reg$region, p.adjust.method = "bonferroni")$p.value
+sum(p < 0.05, na.rm = TRUE)
+```
+`r n_bonf` of `r n_pairs`, down from `r n_none` with no correction. The `r n_lost` that disappeared were never strong enough to survive being one of `r n_pairs` questions.
+:::
+:::
+
+```{webr}
+#| exercise: stats5_bonf
+#| check: true
+p_bonf <- pairwise.t.test(reg$grad_rate_bach_6yr, reg$region, p.adjust.method = "bonferroni")$p.value
+expected <- sum(p_bonf < 0.05, na.rm = TRUE)
+p_none <- pairwise.t.test(reg$grad_rate_bach_6yr, reg$region, p.adjust.method = "none")$p.value
+loose <- sum(p_none < 0.05, na.rm = TRUE)
+val <- suppressWarnings(as.numeric(unlist(.result))[1])
+if (length(val) == 1 && !is.na(val) && isTRUE(val == expected)) {
+  list(correct = TRUE, message = sprintf("Correct: %d of %d pairs survive a family-wise correction, against %d with none.", expected, sum(!is.na(p_none)), loose))
+} else if (length(val) == 1 && !is.na(val) && isTRUE(val == loose)) {
+  list(correct = FALSE, message = "That count is what no correction, or the Benjamini-Hochberg rate, gives. The exercise asks for Bonferroni, which controls the chance of any false alarm.")
+} else if (length(val) == 1 && !is.na(val) && isTRUE(val == 0)) {
+  list(correct = FALSE, message = "Zero. Check the level: the comparison is p < 0.05.")
+} else {
+  list(correct = FALSE, message = "Not yet. The answer is a single whole number: how many adjusted p-values are below 0.05.")
+}
+```
+
+:::
+
+::: {.lab-exercise data-exercise="stats5_py_f"}
+
+### The same ANOVA in Python
+
+`groups` is a list of eight NumPy arrays, one per region, holding completion rates. Run the one-way ANOVA and return the result.
+
+```{pyodide}
+#| setup: true
+#| exercise: stats5_py_f
+import numpy as np
+import pandas as pd
+from scipy import stats
+inst = pd.read_csv("data/institutions.csv")
+reg = inst[(inst["level"] == "4-year") & (inst["bach_cohort"] >= 30) & inst["grad_rate_bach_6yr"].notna()
+           & inst["region"].notna() & ~inst["region"].isin(["US service schools", "Outlying areas"])]
+groups = [g["grad_rate_bach_6yr"].to_numpy() for _, g in reg.groupby("region")]
+```
+
+```{pyodide}
+#| exercise: stats5_py_f
+stats.______(*groups)
+```
+
+::: {.hint exercise="stats5_py_f"}
+::: {.callout-note collapse="false"}
+## Hint
+The function is `f_oneway`, and the star unpacks the list so each array becomes its own argument.
+:::
+:::
+
+::: {.solution exercise="stats5_py_f"}
+::: {.callout-tip collapse="false"}
+## Solution
+```python
+stats.f_oneway(*groups)
+```
+:::
+:::
+
+```{pyodide}
+#| exercise: stats5_py_f
+#| check: true
+expected = stats.f_oneway(*groups)
+kw = stats.kruskal(*groups)
+stat = getattr(result, "statistic", None)
+if stat is not None and abs(float(stat) - expected.statistic) < 1e-6:
+    feedback = {"correct": True, "message": f"Correct: F = {expected.statistic:.1f}, the same number as the R tab, with a p-value of {expected.pvalue:.1e}."}
+elif stat is not None and abs(float(stat) - kw.statistic) < 1e-6:
+    feedback = {"correct": False, "message": "That is the Kruskal-Wallis test on ranks. The exercise asks for the ANOVA, stats.f_oneway."}
+else:
+    feedback = {"correct": False, "message": "Not yet. Expected the result of stats.f_oneway(*groups)."}
+feedback
+```
+
+:::
+
+## In your stack {.beat data-beat="4 · In your stack"}
+
+Excel runs a one-way ANOVA from a menu, and both tools can build it from group counts, means, and variances in a dozen cells. The `many-groups` sheet in [ir-lab.xlsx](data/ir-lab.xlsx) has the eight regions with every formula below in place, plus the full 8 by 8 matrix of pairwise p-values.
+
+::: {.panel-tabset group="stack"}
+
+### Excel
+
+The sheet holds the frame with region in column C and completion in column D, from row 2 down, and one row per region in the summary block from row 5.
+
+| Quantity | Formula |
+|---|---|
+| Group count | `=COUNTIF(C$2:C$`r reg_last`, G5)` |
+| Group mean | `=AVERAGEIF(C$2:C$`r reg_last`, G5, D$2:D$`r reg_last`)` |
+| Group variance | `=VAR.S(IF(C$2:C$`r reg_last` = G5, D$2:D$`r reg_last`))`, entered as an array formula |
+| Between-group SS | one row per region, `n * (mean - grand mean)^2`, summed |
+| Within-group SS | one row per region, `(n - 1) * variance`, summed |
+| F | `=(SS_between / 7) / (SS_within / (n - 8))` |
+| p-value | `=F.DIST.RT(F, 7, n - 8)` |
+| Eta squared | `=SS_between / (SS_between + SS_within)` |
+
+The check is `=DEVSQ(D2:D`r reg_last`)`, the total sum of squares, which equals the between and within sums added together. Data, Data Analysis, Anova: Single Factor writes the same table from the raw columns if each group is in its own column first.
+
+Each pairwise test is the difference in two group means over `SQRT(MS_within * (1/n_a + 1/n_b))`, and `T.DIST.2T(ABS(t), n - 8)` is its p-value; the sheet lays the `r n_pairs` of them out as a matrix. Bonferroni is `=MIN(1, p * 28)` on every cell, and `=SUMPRODUCT(--(matrix < 0.05)) / 2` counts the significant pairs, halved because the matrix holds each pair twice. There is no Tukey function; the studentized range it needs is not in Excel, so the Bonferroni count stands in for it.
+
+### Power BI
+
+::: {.ir-powerbi data-powerbi-page="distributions" data-powerbi-title="Completion distributions"}
+**Interactive report: not connected yet.** Download the [Power BI project](data/ir-lab-powerbi.zip) to explore this lesson in Power BI Desktop. The embedded report will appear here once it is connected.
+:::
+
+The ANOVA is a handful of measures over the grouping column, and `SUMMARIZE` does the per-group arithmetic:
+
+```dax
+Completion Rows =
+FILTER ( ALL ( institutions ), institutions[level] = "4-year" && institutions[bach_cohort] >= 30
+    && NOT ISBLANK ( institutions[grad_rate_bach_6yr] )
+    && NOT ( institutions[region] IN { "US service schools", "Outlying areas" } ) )
+
+SS Between =
+VAR grand = AVERAGEX ( [Completion Rows], institutions[grad_rate_bach_6yr] )
+VAR groups = SUMMARIZE ( [Completion Rows], institutions[region],
+    "n", COUNTROWS ( [Completion Rows] ), "m", AVERAGE ( institutions[grad_rate_bach_6yr] ) )
+RETURN SUMX ( groups, [n] * ( [m] - grand ) ^ 2 )
+
+SS Within =
+SUMX ( [Completion Rows],
+    ( institutions[grad_rate_bach_6yr]
+        - CALCULATE ( AVERAGE ( institutions[grad_rate_bach_6yr] ), ALLEXCEPT ( institutions, institutions[region] ) ) ) ^ 2 )
+
+F Statistic =
+VAR k = DISTINCTCOUNT ( institutions[region] )
+VAR n = COUNTROWS ( [Completion Rows] )
+RETURN DIVIDE ( [SS Between] / ( k - 1 ), [SS Within] / ( n - k ) )
+
+Eta Squared = DIVIDE ( [SS Between], [SS Between] + [SS Within] )
+```
+
+DAX has no F distribution, but it has `BETA.DIST`, and the F tail is a beta tail: with `d1 = k - 1` and `d2 = n - k`, the p-value is `1 - BETA.DIST ( d1 * F / ( d1 * F + d2 ), d1 / 2, d2 / 2, TRUE )`. A card for each measure next to a slicer on `control` reruns the whole test inside a sector, which is the quickest way to learn whether the regional pattern is a public-sector pattern.
+
+The pairwise tests are the same `T.DIST.2T` arithmetic as **Two groups**, one measure per pair, so a matrix visual with region on both rows and columns cannot fill itself; the honest visual is a table of the regions with mean, count, and standard error, sorted by mean, which shows the reader every gap and makes them ask which ones were tested before the means were seen.
+
+:::
+
+## Before you leave
+
+::: {.takeaways}
+1. **One test for the first question.** The F-test asks whether any group differs, and answers with one p-value and one 5% risk, however many groups there are.
+2. **Eta squared says how much.** Region explains `r eta2`% of the spread in completion. Significant and small can both be true, and the second word is the one that matters for a decision.
+3. **Pairs after, with a correction.** Tukey's test holds the family-wise error at 5% across all `r n_pairs` pairs. Uncorrected, `r n_pairs` questions at 5% each raise a false alarm about `r fwer_real`% of the time with nothing there to find.
+4. **Choose the correction by the cost of being wrong.** Bonferroni and Holm protect against any false alarm; Benjamini-Hochberg accepts a few in exchange for finding more. Decide the comparisons before looking at the means, and the correction is the count of what you decided.
+:::
+
+Next in this track: **Counts and proportions**, on chi-square tests and proportion intervals for categorical outcomes.

@@ -1,0 +1,863 @@
+---
+title: "Outliers and leverage"
+subtitle: "Finding the rows that move every summary, and deciding what to do with them"
+webr:
+  packages:
+    - dplyr
+    - ggplot2
+    - tidyr
+  resources:
+    - data/institutions.csv
+pyodide:
+  packages:
+    - pandas
+    - matplotlib
+    - statsmodels
+  resources:
+    - data/institutions.csv
+---
+
+{{< include ./_extensions/r-wasm/live/_knitr.qmd >}}
+
+```{r}
+#| include: false
+source("_common.R")
+four <- institutions |>
+  filter(level == "4-year", bach_cohort >= 30, !is.na(grad_rate_bach_6yr))
+n_four <- nrow(four)
+fence <- function(x) {
+  q <- quantile(x, c(0.25, 0.75), na.rm = TRUE)
+  c(lo = unname(q[1] - 1.5 * diff(q)), hi = unname(q[2] + 1.5 * diff(q)))
+}
+hc <- four$headcount
+hc_fence <- fence(hc)
+hc_out <- sum(hc > hc_fence["hi"])
+hc_z <- sum(abs((hc - mean(hc)) / sd(hc)) > 3)
+hc_rz <- sum(abs((hc - median(hc)) / mad(hc)) > 3.5)
+hc_median <- fmt(median(hc))
+hc_mean <- fmt(round(mean(hc)))
+hc_fence_hi <- fmt(round(hc_fence["hi"]))
+top <- four |> arrange(desc(headcount)) |> slice_head(n = 3)
+top1_name <- top$name[1]
+top1_hc <- fmt(top$headcount[1])
+m_hc <- lm(grad_rate_bach_6yr ~ headcount, data = four)
+h_hc <- hatvalues(m_hc)
+cd_hc <- cooks.distance(m_hc)
+top1_lev <- round(max(h_hc), 3)
+lev_ratio <- round(max(h_hc) / mean(h_hc))
+top1_cd <- round(max(cd_hc), 2)
+slope_all <- round(coef(m_hc)[2] * 1e4, 1)
+r_all <- round(cor(four$headcount, four$grad_rate_bach_6yr), 2)
+drop3 <- order(-cd_hc)[1:3]
+m_drop3 <- lm(grad_rate_bach_6yr ~ headcount, data = four[-drop3, ])
+slope_drop3 <- round(coef(m_drop3)[2] * 1e4, 1)
+r_drop3 <- round(cor(four$headcount[-drop3], four$grad_rate_bach_6yr[-drop3]), 2)
+drop10 <- order(-cd_hc)[1:10]
+slope_drop10 <- round(coef(lm(grad_rate_bach_6yr ~ headcount, data = four[-drop10, ]))[2] * 1e4, 1)
+m_log <- lm(grad_rate_bach_6yr ~ log10(headcount), data = four)
+r_log <- round(cor(log10(four$headcount), four$grad_rate_bach_6yr), 2)
+cd_log_max <- round(max(cooks.distance(m_log)), 3)
+lev_top5_share <- round(100 * sum(sort(h_hc, decreasing = TRUE)[1:5]) / sum(h_hc))
+pell <- filter(four, !is.na(pct_pell))
+m_pell <- lm(grad_rate_bach_6yr ~ pct_pell, data = pell)
+cd_pell <- cooks.distance(m_pell)
+rs_pell <- rstudent(m_pell)
+i_pell <- which.max(cd_pell)
+pell_top_name <- pell$name[i_pell]
+pell_top_pell <- pell$pct_pell[i_pell]
+pell_top_rate <- pell$grad_rate_bach_6yr[i_pell]
+pell_top_rs <- round(rs_pell[i_pell], 1)
+pell_top_cd <- round(max(cd_pell), 3)
+slope_pell <- round(coef(m_pell)[2], 2)
+slope_pell_drop10 <- round(coef(lm(grad_rate_bach_6yr ~ pct_pell, data = pell[-order(-cd_pell)[1:10], ]))[2], 2)
+pell_cd_flag <- sum(cd_pell > 4 / nrow(pell))
+pell_cutoff <- signif(4 / nrow(pell), 2)
+sf <- four$stu_fac_ratio[!is.na(four$stu_fac_ratio)]
+sf_fence <- fence(sf)
+sf_out_hi <- sum(sf > sf_fence["hi"])
+sf_fence_hi <- round(sf_fence["hi"], 1)
+sf_max <- max(sf)
+sf_max_name <- four$name[which.max(four$stu_fac_ratio)]
+sf_mean <- round(mean(sf), 1)
+sf_sd <- round(sd(sf), 1)
+sf_median <- median(sf)
+sf_mad <- round(mad(sf), 1)
+sf_w <- pmin(sf, quantile(sf, 0.99))
+sf_w_mean <- round(mean(sf_w), 1)
+sf_w_sd <- round(sd(sf_w), 1)
+sf_drop5 <- sort(sf, decreasing = TRUE)[-(1:5)]
+sf_drop5_mean <- round(mean(sf_drop5), 1)
+sf_drop5_sd <- round(sd(sf_drop5), 1)
+gr_fence <- fence(four$grad_rate_bach_6yr)
+gr_out <- sum(four$grad_rate_bach_6yr < gr_fence["lo"])
+gr_z <- sum(abs(scale(four$grad_rate_bach_6yr)) > 3)
+ol_last <- nrow(filter(four, !is.na(stu_fac_ratio), !is.na(pct_pell))) + 1
+```
+
+::: {.lesson-eyebrow}
+Explore · Lesson 5 of 6
+:::
+
+`r top1_name` reported `r top1_hc` students in 2023-24. The median four-year institution with a bachelor's cohort of at least 30 reported `r hc_median`. Regress `r v("grad_rate_bach_6yr")` on `r v("headcount")` across all `r fmt(n_four)` of them and that one row carries a leverage of `r top1_lev`, about `r lev_ratio` times the average, and a Cook's distance of `r top1_cd`. Drop it and the two rows beside it and the slope goes from `r slope_all` to `r slope_drop3` points per ten thousand students. Every mean, every standard deviation, and every fitted line in this table has a few rows like that behind it. This lesson is about finding them, telling the harmless ones from the ones that own the result, and choosing what to do without pretending the choice was not made.
+
+**You will be able to:** flag unusual values with the IQR fence and a robust z-score, explain why the ordinary z-score can miss the very rows it is meant to catch, separate an outlier in the outcome from a leverage point in the predictor, read Cook's distance, and choose among keeping, transforming, capping, and reporting both.
+
+## Watch it move {.beat data-beat="1 · Watch it move"}
+
+Each dot is a four-year institution, and the dark line is the least-squares fit. Remove the most influential institutions, ranked by Cook's distance, and watch the line move against the grey ghost of the original. The orange rings mark the three rows currently doing the most to the line. Switch on the log scale to see what a transform does to leverage, and the fences to see what the boxplot rule would have flagged.
+
+::: {.lab-anim}
+
+```{ojs}
+//| echo: false
+inst = FileAttachment("data/institutions.csv").csv({typed: true})
+olRows = inst.filter(d => d.level === "4-year" && d.bach_cohort >= 30 && d.grad_rate_bach_6yr != null)
+
+olPairs = new Map([
+  ["12-month headcount and completion", {x: "headcount", xl: "12-month headcount", per: 10000, unit: "points per 10,000 students", money: false}],
+  ["Percent Pell and completion", {x: "pct_pell", xl: "Percent of undergraduates awarded Pell", per: 1, unit: "points per Pell point", money: false}],
+  ["Student-faculty ratio and completion", {x: "stu_fac_ratio", xl: "Student-faculty ratio", per: 1, unit: "points per student per faculty member", money: false}],
+  ["Net price and completion", {x: "net_price", xl: "Average net price", per: 1000, unit: "points per $1,000", money: true}]
+])
+
+olFit = rows => {
+  const n = rows.length;
+  const mx = d3.mean(rows, d => d.xv), my = d3.mean(rows, d => d.yv);
+  let sxx = 0, sxy = 0, syy = 0;
+  for (const d of rows) { sxx += (d.xv - mx) ** 2; sxy += (d.xv - mx) * (d.yv - my); syy += (d.yv - my) ** 2; }
+  const b1 = sxy / sxx, b0 = my - b1 * mx;
+  let sse = 0;
+  const res = rows.map(d => { const e = d.yv - (b0 + b1 * d.xv); sse += e * e; return e; });
+  const s2 = sse / (n - 2);
+  const per = rows.map((d, i) => {
+    const h = 1 / n + (d.xv - mx) ** 2 / sxx;
+    return {h, cd: (res[i] ** 2 / (2 * s2)) * (h / (1 - h) ** 2), rs: res[i] / Math.sqrt(s2 * (1 - h))};
+  });
+  return {n, b0, b1, r: sxy / Math.sqrt(sxx * syy), per};
+}
+```
+
+::: {.lab-controls}
+```{ojs}
+//| echo: false
+viewof olPick = Inputs.select(olPairs, {label: "Pair"})
+viewof olRemove = Inputs.radio(new Map([["None", 0], ["1", 1], ["3", 3], ["10", 10], ["30", 30]]), {label: "Remove the most influential", value: 0})
+viewof olLog = Inputs.toggle({label: "Log scale across", value: false})
+viewof olFences = Inputs.toggle({label: "Show the 1.5 IQR fences", value: false})
+```
+:::
+
+```{ojs}
+//| echo: false
+olStats = {
+  const def = olPick;
+  const base = olRows.filter(d => d[def.x] != null && (!olLog || d[def.x] > 0))
+    .map(d => ({unitid: d.unitid, name: d.name, control: d.control, x: d[def.x], y: d.grad_rate_bach_6yr,
+                xv: olLog ? Math.log10(d[def.x]) : d[def.x], yv: d.grad_rate_bach_6yr}));
+  const full = olFit(base);
+  base.forEach((d, i) => Object.assign(d, full.per[i]));
+  const ranked = base.slice().sort((a, b) => b.cd - a.cd);
+  const removed = new Set(ranked.slice(0, olRemove).map(d => d.unitid));
+  const kept = base.filter(d => !removed.has(d.unitid));
+  const fit = olFit(kept);
+  kept.forEach((d, i) => { d.h2 = fit.per[i].h; d.cd2 = fit.per[i].cd; d.rs2 = fit.per[i].rs; });
+  const topKept = kept.slice().sort((a, b) => b.cd2 - a.cd2).slice(0, 3);
+  const fence = v => {
+    const s = v.slice().sort(d3.ascending);
+    const q1 = d3.quantileSorted(s, 0.25), q3 = d3.quantileSorted(s, 0.75);
+    return [q1 - 1.5 * (q3 - q1), q3 + 1.5 * (q3 - q1)];
+  };
+  const fx = fence(base.map(d => d.x)), fy = fence(base.map(d => d.y));
+  const outX = base.filter(d => d.x < fx[0] || d.x > fx[1]).length;
+  const outY = base.filter(d => d.y < fy[0] || d.y > fy[1]).length;
+  return {def, base, kept, removed, full, fit, topKept, fx, fy, outX, outY};
+}
+```
+
+```{ojs}
+//| echo: false
+olNode = d3.create("svg").attr("class", "lab-svg").node()
+
+olPlot = {
+  const width = 860, height = 440, margin = {top: 16, right: 20, bottom: 50, left: 62};
+  const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const dur = reduce ? 0 : 650;
+  const {def, base, kept, removed, full, fit, topKept, fx, fy} = olStats;
+  const x = d3.scaleLinear().domain(d3.extent(base, d => d.xv)).nice().range([margin.left, width - margin.right]);
+  const y = d3.scaleLinear().domain([0, 100]).range([height - margin.bottom, margin.top]);
+  const money = def.money && !olLog;
+  const logTicks = dom => {
+    const mults = dom[1] - dom[0] <= 2.5 ? [1, 2, 5] : dom[1] - dom[0] <= 4 ? [1, 3] : [1];
+    const out = [];
+    for (let e = Math.floor(dom[0]); e <= Math.ceil(dom[1]); e++) for (const m of mults) {
+      const v = e + Math.log10(m);
+      if (v >= dom[0] - 1e-9 && v <= dom[1] + 1e-9) out.push(v);
+    }
+    return out;
+  };
+  const tickFmt = olLog ? (v => d3.format("~s")(10 ** v)) : money ? d3.format("$~s") : d3.format("~f");
+  const fmtX = def.money ? d3.format("$,.0f") : def.x === "headcount" ? d3.format(",.0f") : d3.format(".1f");
+  const f3 = d3.format(".3f");
+  const clipY = v => Math.max(0, Math.min(100, v));
+  const seg = f => ({x1: x(x.domain()[0]), y1: y(clipY(f.b0 + f.b1 * x.domain()[0])), x2: x(x.domain()[1]), y2: y(clipY(f.b0 + f.b1 * x.domain()[1]))});
+  const top3 = new Set(topKept.map(d => d.unitid));
+
+  const svg = d3.select(olNode);
+  svg.attr("viewBox", [0, 0, width, height]);
+  const layer = name => { let g = svg.select(`g.${name}`); if (g.empty()) g = svg.append("g").attr("class", name); return g; };
+  const gx = layer("axis"), gy = layer("axisy"), glab = layer("labels"), gf = layer("fences"), gd = layer("dots"), gl = layer("lines"), gr = layer("rings");
+  const t = svg.transition().duration(dur).ease(d3.easeCubicInOut);
+
+  gx.attr("transform", `translate(0,${height - margin.bottom})`).transition(t)
+    .call(d3.axisBottom(x).ticks(8).tickValues(olLog ? logTicks(x.domain()) : null).tickFormat(tickFmt).tickSizeOuter(0));
+  gy.attr("transform", `translate(${margin.left},0)`).transition(t)
+    .call(d3.axisLeft(y).ticks(6).tickFormat(v => v + "%").tickSizeOuter(0));
+  glab.selectAll("text.axis-label").data([
+    {t: def.xl + (olLog ? " (log scale)" : ""), x: width - margin.right, y: height - 10, rot: null, anchor: "end"},
+    {t: "6-year bachelor's completion", x: 0, y: 0, rot: `translate(14,${margin.top}) rotate(-90)`, anchor: "end"}
+  ]).join("text").attr("class", "axis-label")
+    .attr("x", d => d.rot ? null : d.x).attr("y", d => d.rot ? null : d.y)
+    .attr("transform", d => d.rot).attr("text-anchor", d => d.anchor).text(d => d.t);
+
+  const fxv = fx.map(v => olLog ? (v > 0 ? Math.log10(v) : null) : v);
+  const fenceLines = olFences ? [
+    ...fxv.filter(v => v != null && v >= x.domain()[0] && v <= x.domain()[1]).map((v, i) => ({k: "x" + i, x1: x(v), x2: x(v), y1: y(0), y2: y(100)})),
+    ...fy.filter(v => v >= 0 && v <= 100).map((v, i) => ({k: "y" + i, x1: x(x.domain()[0]), x2: x(x.domain()[1]), y1: y(v), y2: y(v)}))
+  ] : [];
+  gf.selectAll("line").data(fenceLines, d => d.k)
+    .join(enter => enter.append("line").attr("opacity", 0), update => update, exit => exit.transition(t).attr("opacity", 0).remove())
+    .attr("stroke", "var(--lab-accent)").attr("stroke-width", 1.4).attr("stroke-dasharray", "6 4")
+    .transition(t).attr("opacity", 0.9)
+    .attr("x1", d => d.x1).attr("x2", d => d.x2).attr("y1", d => d.y1).attr("y2", d => d.y2);
+
+  gd.selectAll("circle").data(base, d => d.unitid)
+    .join(
+      enter => enter.append("circle").attr("r", 0).attr("cx", d => x(d.xv)).attr("cy", d => y(d.yv)).call(e => e.append("title")),
+      update => update,
+      exit => exit.transition(t).attr("r", 0).remove()
+    )
+    .call(sel => sel.select("title").text(d => `${d.name}\n${d.control}\n${def.xl}: ${fmtX(d.x)}\nCompletion: ${d.y}%\nLeverage ${f3(d.h)} (average ${f3(2 / base.length)})\nCook's distance ${f3(d.cd)}`))
+    .transition(t)
+    .attr("r", d => removed.has(d.unitid) ? 4.2 : 2.6)
+    .attr("cx", d => x(d.xv)).attr("cy", d => y(d.yv))
+    .attr("fill", d => removed.has(d.unitid) ? "none" : "var(--lab-primary)")
+    .attr("fill-opacity", 0.4)
+    .attr("stroke", d => removed.has(d.unitid) ? "var(--lab-accent)" : "none")
+    .attr("stroke-width", 1.6);
+
+  gr.selectAll("circle").data(topKept, d => d.unitid)
+    .join(enter => enter.append("circle").attr("opacity", 0).attr("cx", d => x(d.xv)).attr("cy", d => y(d.yv)),
+          update => update,
+          exit => exit.transition(t).attr("opacity", 0).remove())
+    .attr("r", 8).attr("fill", "none").attr("stroke", "var(--lab-accent)").attr("stroke-width", 2)
+    .transition(t).attr("opacity", 1).attr("cx", d => x(d.xv)).attr("cy", d => y(d.yv));
+
+  gl.selectAll("line").data([{k: "full", f: full, color: "#9fb3d1", w: 2.2, dash: "8 5"}, {k: "fit", f: fit, color: "var(--lab-ink)", w: 2.6, dash: null}], d => d.k)
+    .join("line")
+    .attr("stroke", d => d.color).attr("stroke-width", d => d.w).attr("stroke-dasharray", d => d.dash).attr("stroke-linecap", "round")
+    .transition(t)
+    .attr("x1", d => seg(d.f).x1).attr("y1", d => seg(d.f).y1).attr("x2", d => seg(d.f).x2).attr("y2", d => seg(d.f).y2);
+
+  return svg.node();
+}
+```
+
+```{ojs}
+//| echo: false
+olReadout = {
+  const {def, base, kept, full, fit, topKept, outX, outY} = olStats;
+  const f2 = d3.format(".2f"), f3 = d3.format(".3f"), f1 = d3.format(".1f"), fc = d3.format(",");
+  const slopeOf = f => olLog ? f.b1 : f.b1 * def.per;
+  const unit = olLog ? "points per tenfold increase" : def.unit;
+  const top = topKept[0];
+  const avgH = 2 / kept.length;
+  const cut = 4 / kept.length;
+  const pctMove = 100 * (slopeOf(fit) - slopeOf(full)) / Math.abs(slopeOf(full));
+  let hint;
+  if (olFences) {
+    hint = `${outX} institutions sit outside the fences on ${def.xl.toLowerCase()} and ${outY} on completion. A fence flags a value as unusual for its own distribution; it says nothing about whether the row moves the line, and it never says the value is wrong.`;
+  } else if (olRemove > 0) {
+    hint = `Removing ${olRemove} moved the slope by ${d3.format("+.0f")(pctMove)}%. A row whose removal moves the line is influential by definition. Whether it should be removed is a different question: these are real institutions, correctly reported.`;
+  } else if (def.x === "headcount" && olLog) {
+    hint = `On the log scale the largest Cook's distance is ${f3(top.cd2)} and the top leverage is ${f1(top.h2 / avgH)} times the average. The transform kept every row and took away their leverage, which deletion could not do.`;
+  } else if (def.x === "headcount") {
+    hint = `${top.name} alone has ${f1(top.h2 / avgH)} times the average leverage and a Cook's distance of ${f2(top.cd2)}: the line is close to being about one institution. A common flag is a Cook's distance above 4/n, ${f3(cut)} here.`;
+  } else {
+    hint = `The most influential row is ${top.name}, Cook's distance ${f3(top.cd2)} against a 4/n flag of ${f3(cut)}. Its leverage is ${f1(top.h2 / avgH)} times the average, so most of its influence comes from a large residual, not from an extreme position across.`;
+  }
+  return html`<div class="lab-readout">
+    <div><span class="k">Slope, ${unit}</span><span class="val primary">${f2(slopeOf(fit))}</span></div>
+    <div><span class="k">Slope with every row</span><span class="val">${f2(slopeOf(full))}</span></div>
+    <div><span class="k">Pearson r</span><span class="val">${f2(fit.r)}</span></div>
+    <div><span class="k">Institutions in the fit</span><span class="val">${fc(kept.length)}</span></div>
+    <div><span class="k">Largest Cook's distance</span><span class="val accent">${f3(top.cd2)}</span></div>
+    <div><span class="k">Its leverage, times the average</span><span class="val">${f1(top.h2 / avgH)}</span></div>
+  </div>
+  <p class="lab-hint">${hint} Four-year institutions with a bachelor's cohort of at least 30; rows missing the across variable are dropped.</p>`;
+}
+```
+
+:::
+
+Three things to try:
+
+1. **Headcount, nothing removed.** The slope is `r slope_all` points per ten thousand students and r is `r r_all`. Hover the far-right dot: `r top1_name`, with `r lev_ratio` times the average leverage and a Cook's distance of `r top1_cd`. The five largest institutions hold `r lev_top5_share`% of all the leverage in the fit. Remove 3 and the slope is `r slope_drop3`; remove 10 and it is `r slope_drop10`. Each removal moves the line because each remaining giant inherits the leverage. Now put them all back and switch on the log scale: r rises to `r r_log`, the largest Cook's distance falls to `r cd_log_max`, and every institution is still in the data. The transform fixed what deletion only chased.
+2. **Pell share.** The most influential row is `r pell_top_name`, with `r pell_top_pell`% Pell and a `r pell_top_rate`% completion rate: a studentized residual of `r pell_top_rs`, meaning the line misses it by almost five standard errors. Its Pell share is high, not extreme, so its leverage is ordinary; its influence comes from the residual. Remove 10 and the slope moves from `r slope_pell` to `r slope_pell_drop10`, under ten percent. The line is shared among `r fmt(nrow(pell))` rows and no single one owns it.
+3. **Fences on the student-faculty ratio.** The upper fence is `r sf_fence_hi` and `r sf_out_hi` institutions are above it, one of them `r sf_max_name` at `r sf_max`. That ratio is real. It describes an institution built differently from the others, and the fence has done its whole job by pointing at it. Then look at completion itself: `r gr_out` rows below the lower fence, none above, and not one beyond three standard deviations. A roughly symmetric variable with a floor and a ceiling produces few outliers, and the ones it has are institutions, not errors.
+
+## Do it {.beat data-beat="2 · Do it"}
+
+The cells below run in your browser. The frame is four-year institutions with a bachelor's cohort of at least 30 and a reported six-year rate, the same `r fmt(n_four)` rows as **Relationships**.
+
+::: {.panel-tabset group="language"}
+
+### R
+
+```{webr}
+#| autorun: true
+#| caption: Load, filter, and fence every variable
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+inst <- read.csv("data/institutions.csv", na.strings = c("", "NA"))
+
+four <- inst |>
+  filter(level == "4-year", bach_cohort >= 30, !is.na(grad_rate_bach_6yr))
+
+fences <- function(x) {
+  q <- quantile(x, c(0.25, 0.75))
+  c(lower = unname(q[1] - 1.5 * diff(q)), upper = unname(q[2] + 1.5 * diff(q)))
+}
+
+four |>
+  select(pct_pell, net_price, stu_fac_ratio, headcount, retention_ft, grad_rate_bach_6yr) |>
+  pivot_longer(everything(), names_to = "variable") |>
+  filter(!is.na(value)) |>
+  group_by(variable) |>
+  summarise(n = n(), mean = mean(value), median = median(value), sd = sd(value), mad = mad(value),
+            below = sum(value < fences(value)["lower"]), above = sum(value > fences(value)["upper"])) |>
+  mutate(across(c(mean, median, sd, mad), ~ round(.x, 1)))
+```
+
+The fence is the boxplot rule: anything more than one and a half interquartile ranges beyond the quartiles. It is a screen, not a verdict. Two patterns in the table are worth noticing before looking at any single row. Where the mean sits well above the median, as for headcount, the distribution has a long right tail and the fence flags a crowd. Where the standard deviation is much larger than the MAD, the median absolute deviation, the spread itself is being set by a few rows.
+
+```{webr}
+#| autorun: true
+#| caption: Who is above the headcount fence
+upper <- fences(four$headcount)["upper"]
+
+four |>
+  filter(headcount > upper) |>
+  arrange(desc(headcount)) |>
+  select(name, control, headcount, grad_rate_bach_6yr) |>
+  head(8)
+```
+
+The fence sits at `r hc_fence_hi` students, and `r hc_out` institutions are above it. The top of the list is the large online universities, which are real, correctly reported, and unlike the other `r fmt(n_four - hc_out)` in a way that no fence can decide for you. A log scale is the usual answer for a count like this: the boxplot on the second row below has no crowd of outliers because the scale matches the shape.
+
+```{webr}
+#| autorun: true
+#| caption: The same variable on two scales
+bind_rows(
+  transmute(four, scale = "Headcount", value = headcount),
+  transmute(four, scale = "Log10 of headcount", value = log10(headcount))
+) |>
+  ggplot(aes(value, "")) +
+  geom_boxplot(fill = "#e8eef8", outlier.colour = "#eb6834", outlier.alpha = 0.5, width = 0.5) +
+  facet_wrap(~ scale, scales = "free_x", ncol = 1) +
+  labs(x = NULL, y = NULL, title = "Orange dots are beyond the 1.5 IQR fence") +
+  theme_minimal(base_size = 13)
+```
+
+The z-score is the other common screen: how many standard deviations from the mean. It has a flaw that matters exactly when outliers are present. The outliers inflate the mean and the standard deviation they are judged against, so they hide themselves, which is called masking. A robust z-score uses the median and the MAD instead, neither of which a handful of rows can move.
+
+```{webr}
+#| autorun: true
+#| caption: Ordinary against robust z-scores
+z <- (four$headcount - mean(four$headcount)) / sd(four$headcount)
+robust_z <- (four$headcount - median(four$headcount)) / mad(four$headcount)
+
+c(z_beyond_3 = sum(abs(z) > 3),
+  robust_z_beyond_3.5 = sum(abs(robust_z) > 3.5),
+  beyond_fence = sum(four$headcount > upper))
+```
+
+Three screens, three counts: `r hc_z`, `r hc_rz`, and `r hc_out`. The ordinary z-score finds the fewest because the giants stretched the standard deviation to `r fmt(round(sd(hc)))` students, against a MAD of `r fmt(round(mad(hc)))`. None of the three is right. They ask different questions, and the honest report names the rule it used.
+
+A fence describes one variable. Leverage and influence describe a row's effect on a fit. Leverage depends only on how far the predictor is from its mean: a row far to the right can tilt a line whether or not it is far from it. Cook's distance combines leverage with the residual to measure how much every fitted value would change if the row were dropped.
+
+```{webr}
+#| autorun: true
+#| caption: Leverage, residual, and Cook's distance for one regression
+m <- lm(grad_rate_bach_6yr ~ headcount, data = four)
+
+diag <- four |>
+  mutate(leverage = hatvalues(m), studentized = rstudent(m), cooks = cooks.distance(m))
+
+diag |>
+  arrange(desc(cooks)) |>
+  select(name, headcount, grad_rate_bach_6yr, leverage, studentized, cooks) |>
+  head(6) |>
+  mutate(across(c(leverage, cooks), ~ round(.x, 3)), studentized = round(studentized, 2))
+```
+
+Average leverage is the number of coefficients over the number of rows, 2 / `r fmt(n_four)` here, and twice that is the usual flag. `r top1_name` is at `r lev_ratio` times the average. Its studentized residual is small, so it is not an outlier in completion; it is a leverage point that the line has bent to reach. The plot that shows both at once puts leverage across, the residual up, and Cook's distance in the size of the dot.
+
+```{webr}
+#| autorun: true
+#| caption: The influence plot
+labelled <- filter(diag, cooks > 0.1)
+
+ggplot(diag, aes(leverage, studentized, size = cooks)) +
+  geom_point(alpha = 0.35, color = "#2a78d6") +
+  geom_hline(yintercept = c(-2, 2), linetype = "dashed", color = "#5c6674") +
+  geom_vline(xintercept = 2 * 2 / nrow(four), linetype = "dashed", color = "#5c6674") +
+  geom_text(data = labelled, aes(label = name), size = 3, vjust = -1.4, color = "#14213d", show.legend = FALSE) +
+  scale_size_area(max_size = 14) +
+  labs(x = "Leverage", y = "Studentized residual", size = "Cook's distance",
+       title = "Dashed lines: twice the average leverage, and residuals beyond two") +
+  theme_minimal(base_size = 13)
+```
+
+Almost everything sits in a column at the left, below the leverage flag. The handful of dots to the right are the institutions the line is about. Whatever you decide to do with them, the first step is the same: fit the model with and without, and say how much moved.
+
+```{webr}
+#| autorun: true
+#| caption: The fit with, without, and transformed
+influential <- order(-cooks.distance(m))[1:3]
+m_without <- lm(grad_rate_bach_6yr ~ headcount, data = four[-influential, ])
+m_log <- lm(grad_rate_bach_6yr ~ log10(headcount), data = four)
+
+data.frame(
+  fit = c("Every institution", "Without the 3 most influential", "Log10 of headcount, every institution"),
+  slope_per_10k = c(coef(m)[2] * 1e4, coef(m_without)[2] * 1e4, NA),
+  r = c(cor(four$headcount, four$grad_rate_bach_6yr),
+        cor(four$headcount[-influential], four$grad_rate_bach_6yr[-influential]),
+        cor(log10(four$headcount), four$grad_rate_bach_6yr)),
+  max_cooks = c(max(cooks.distance(m)), max(cooks.distance(m_without)), max(cooks.distance(m_log)))
+) |>
+  mutate(across(where(is.numeric), ~ round(.x, 3)))
+```
+
+Dropping three rows moves the slope by more than half and leaves a new largest Cook's distance almost as big as the old one, because the next institution in line inherits the leverage. The log transform keeps every row, raises the correlation, and brings the largest Cook's distance down to `r cd_log_max`. When the outliers are a scale problem, change the scale.
+
+When they are not, there are four honest options and one dishonest one. The table works them on the student-faculty ratio, where `r sf_max_name` reports `r sf_max` students per faculty member.
+
+```{webr}
+#| autorun: true
+#| caption: Four treatments of the same variable
+sf <- four$stu_fac_ratio[!is.na(four$stu_fac_ratio)]
+cap <- quantile(sf, 0.99)
+
+data.frame(
+  treatment = c("Keep everything: mean and SD", "Drop the 5 largest", "Winsorize: cap at the 99th percentile",
+                "Keep everything: median and MAD"),
+  center = c(mean(sf), mean(sort(sf, decreasing = TRUE)[-(1:5)]), mean(pmin(sf, cap)), median(sf)),
+  spread = c(sd(sf), sd(sort(sf, decreasing = TRUE)[-(1:5)]), sd(pmin(sf, cap)), mad(sf))
+) |>
+  mutate(across(c(center, spread), ~ round(.x, 2)))
+```
+
+Five rows out of `r fmt(length(sf))` move the standard deviation by a full point and the mean by a tenth. Capping does nearly the same as dropping while keeping every institution in the count, and the median and MAD never noticed. The dishonest option is the fifth: dropping rows and not saying so. Every one of the four above can be defended in a footnote. Silence cannot.
+
+### Python
+
+```{pyodide}
+#| autorun: true
+#| caption: Load, filter, and fence every variable
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import statsmodels.api as sm
+
+inst = pd.read_csv("data/institutions.csv")
+four = inst[(inst["level"] == "4-year") & (inst["bach_cohort"] >= 30) & inst["grad_rate_bach_6yr"].notna()].copy()
+
+def fences(x):
+    q1, q3 = x.quantile([0.25, 0.75])
+    return q1 - 1.5 * (q3 - q1), q3 + 1.5 * (q3 - q1)
+
+def mad(x):
+    return 1.4826 * (x - x.median()).abs().median()
+
+rows = []
+for v in ["pct_pell", "net_price", "stu_fac_ratio", "headcount", "retention_ft", "grad_rate_bach_6yr"]:
+    x = four[v].dropna()
+    lo, hi = fences(x)
+    rows.append({"variable": v, "n": len(x), "mean": x.mean(), "median": x.median(), "sd": x.std(),
+                 "mad": mad(x), "below": int((x < lo).sum()), "above": int((x > hi).sum())})
+pd.DataFrame(rows).round(1)
+```
+
+The 1.4826 factor scales the median absolute deviation so that it estimates the standard deviation when the data are normal, which is what R's `mad()` does by default.
+
+```{pyodide}
+#| autorun: true
+#| caption: Who is above the headcount fence
+lo, upper = fences(four["headcount"])
+four[four["headcount"] > upper].sort_values("headcount", ascending=False)[["name", "control", "headcount", "grad_rate_bach_6yr"]].head(8)
+```
+
+```{pyodide}
+#| autorun: true
+#| caption: The same variable on two scales
+fig, axes = plt.subplots(2, 1, figsize=(8, 4.5))
+for ax, (label, values) in zip(axes, [("Headcount", four["headcount"]), ("Log10 of headcount", np.log10(four["headcount"]))]):
+    ax.boxplot(values, vert=False, widths=0.5, patch_artist=True,
+               boxprops=dict(facecolor="#e8eef8"), flierprops=dict(marker="o", markerfacecolor="#eb6834", markeredgecolor="none", alpha=0.5, markersize=4))
+    ax.set_title(label, loc="left", fontsize=11)
+    ax.set_yticks([])
+    ax.spines[["top", "right", "left"]].set_visible(False)
+plt.tight_layout()
+plt.show()
+```
+
+```{pyodide}
+#| autorun: true
+#| caption: Ordinary against robust z-scores
+hc = four["headcount"]
+z = (hc - hc.mean()) / hc.std()
+robust_z = (hc - hc.median()) / mad(hc)
+
+pd.Series({"z_beyond_3": int((z.abs() > 3).sum()),
+           "robust_z_beyond_3.5": int((robust_z.abs() > 3.5).sum()),
+           "beyond_fence": int((hc > upper).sum())})
+```
+
+```{pyodide}
+#| autorun: true
+#| caption: Leverage, residual, and Cook's distance for one regression
+X = sm.add_constant(four["headcount"])
+model = sm.OLS(four["grad_rate_bach_6yr"], X).fit()
+infl = model.get_influence()
+
+diag = four[["name", "headcount", "grad_rate_bach_6yr"]].copy()
+diag["leverage"] = infl.hat_matrix_diag
+diag["studentized"] = infl.resid_studentized_external
+diag["cooks"] = infl.cooks_distance[0]
+diag.sort_values("cooks", ascending=False).head(6).round(3)
+```
+
+`get_influence()` returns the same diagnostics R computes: `hat_matrix_diag` is leverage, `resid_studentized_external` is the studentized residual, and `cooks_distance` is a pair whose first element is the distance itself.
+
+```{pyodide}
+#| autorun: true
+#| caption: The influence plot
+fig, ax = plt.subplots(figsize=(8, 4.5))
+ax.scatter(diag["leverage"], diag["studentized"], s=20 + 3000 * diag["cooks"], alpha=0.35, color="#2a78d6")
+ax.axhline(2, linestyle="--", color="#5c6674")
+ax.axhline(-2, linestyle="--", color="#5c6674")
+ax.axvline(2 * 2 / len(four), linestyle="--", color="#5c6674")
+for _, r in diag[diag["cooks"] > 0.1].iterrows():
+    ax.annotate(r["name"], (r["leverage"], r["studentized"]), textcoords="offset points", xytext=(0, 12), ha="center", fontsize=8, color="#14213d")
+ax.set_xlabel("Leverage")
+ax.set_ylabel("Studentized residual")
+ax.set_title("Dot size is Cook's distance", loc="left", fontsize=11)
+ax.spines[["top", "right"]].set_visible(False)
+plt.tight_layout()
+plt.show()
+```
+
+```{pyodide}
+#| autorun: true
+#| caption: The fit with, without, and transformed
+influential = diag["cooks"].nlargest(3).index
+without = four.drop(influential)
+log_hc = np.log10(four["headcount"])
+
+def fit(x, y):
+    m = sm.OLS(y, sm.add_constant(x)).fit()
+    return m.params.iloc[1], m.get_influence().cooks_distance[0].max()
+
+slope_all, cooks_all = fit(four["headcount"], four["grad_rate_bach_6yr"])
+slope_without, cooks_without = fit(without["headcount"], without["grad_rate_bach_6yr"])
+slope_log, cooks_log = fit(log_hc, four["grad_rate_bach_6yr"])
+
+pd.DataFrame({
+    "fit": ["Every institution", "Without the 3 most influential", "Log10 of headcount, every institution"],
+    "slope_per_10k": [slope_all * 1e4, slope_without * 1e4, np.nan],
+    "r": [four["headcount"].corr(four["grad_rate_bach_6yr"]), without["headcount"].corr(without["grad_rate_bach_6yr"]),
+          log_hc.corr(four["grad_rate_bach_6yr"])],
+    "max_cooks": [cooks_all, cooks_without, cooks_log],
+}).round(3)
+```
+
+```{pyodide}
+#| autorun: true
+#| caption: Four treatments of the same variable
+sf = four["stu_fac_ratio"].dropna()
+cap = sf.quantile(0.99)
+dropped = sf.sort_values(ascending=False).iloc[5:]
+capped = sf.clip(upper=cap)
+
+pd.DataFrame({
+    "treatment": ["Keep everything: mean and SD", "Drop the 5 largest", "Winsorize: cap at the 99th percentile",
+                  "Keep everything: median and MAD"],
+    "center": [sf.mean(), dropped.mean(), capped.mean(), sf.median()],
+    "spread": [sf.std(), dropped.std(), capped.std(), mad(sf)],
+}).round(2)
+```
+
+:::
+
+The word "outlier" carries an accusation that the data rarely deserve. In IPEDS the extreme rows are usually the most interesting institutions in the table: the online giants, the yeshivas with near-perfect completion and near-total Pell eligibility, the work colleges that charge almost nothing. The question is never whether they are real. It is whether the summary you are about to publish is a statement about the sector or a statement about them, and the tools in this lesson exist to tell those two apart.
+
+## Practice {.beat data-beat="3 · Practice"}
+
+Fill in the blanks and press Run. The check reads the value your code returns, so make the last line the answer.
+
+```{webr}
+#| setup: true
+#| exercise:
+#|   - eda5_fence
+#|   - eda5_cook
+library(dplyr)
+inst <- read.csv("data/institutions.csv", na.strings = c("", "NA"))
+four <- inst |>
+  filter(level == "4-year", bach_cohort >= 30, !is.na(grad_rate_bach_6yr))
+```
+
+::: {.lab-exercise data-exercise="eda5_fence"}
+
+### Count the rows above the fence
+
+`four` holds the filtered institutions. Compute the upper fence for `headcount`, the third quartile plus one and a half times the interquartile range, and return how many institutions are above it.
+
+```{webr}
+#| exercise: eda5_fence
+q <- quantile(four$headcount, c(0.25, ______))
+upper <- q[2] + ______ * (q[2] - q[1])
+sum(four$headcount ______ upper)
+```
+
+::: {.hint exercise="eda5_fence"}
+::: {.callout-note collapse="false"}
+## Hint
+The quartiles are at 0.25 and 0.75. The multiplier in the boxplot rule is 1.5, and the count is of rows strictly greater than the fence.
+:::
+:::
+
+::: {.solution exercise="eda5_fence"}
+::: {.callout-tip collapse="false"}
+## Solution
+```r
+q <- quantile(four$headcount, c(0.25, 0.75))
+upper <- q[2] + 1.5 * (q[2] - q[1])
+sum(four$headcount > upper)
+```
+`r hc_out` institutions, about one in ten. A right-skewed count always produces a crowd above the fence, which is the scale talking, not the institutions.
+:::
+:::
+
+```{webr}
+#| exercise: eda5_fence
+#| check: true
+q_ok <- quantile(four$headcount, c(0.25, 0.75))
+upper_ok <- q_ok[2] + 1.5 * (q_ok[2] - q_ok[1])
+expected <- sum(four$headcount > upper_ok)
+three_sd <- sum(four$headcount > mean(four$headcount) + 3 * sd(four$headcount))
+wider <- sum(four$headcount > q_ok[2] + 3 * (q_ok[2] - q_ok[1]))
+val <- suppressWarnings(as.numeric(unlist(.result))[1])
+if (length(val) == 1 && !is.na(val) && isTRUE(val == expected)) {
+  list(correct = TRUE, message = sprintf("Correct: %d institutions above a fence of %s students. The fence flags a tenth of the frame, because headcount is skewed, not because a tenth of the frame is wrong.", expected, format(round(upper_ok), big.mark = ",")))
+} else if (length(val) == 1 && !is.na(val) && isTRUE(val == wider)) {
+  list(correct = FALSE, message = "That is the 3 IQR fence, the boxplot rule for extreme outliers. This exercise asks for the usual 1.5 IQR fence.")
+} else if (length(val) == 1 && !is.na(val) && isTRUE(val == three_sd)) {
+  list(correct = FALSE, message = "That is a three-standard-deviation rule. The fence is built from the quartiles, not the mean and SD.")
+} else if (length(val) == 1 && !is.na(val) && isTRUE(val == expected + sum(four$headcount == upper_ok))) {
+  list(correct = FALSE, message = "Close. The fence rule counts rows strictly above the fence, with >.")
+} else {
+  list(correct = FALSE, message = "Not yet. The answer is a single whole number: how many rows have a headcount above the upper fence.")
+}
+```
+
+:::
+
+::: {.lab-exercise data-exercise="eda5_cook"}
+
+### The most influential row
+
+Fit the simple regression of `grad_rate_bach_6yr` on `headcount` in `four` and return the largest Cook's distance among its rows.
+
+```{webr}
+#| exercise: eda5_cook
+m <- lm(______ ~ ______, data = four)
+max(______(m))
+```
+
+::: {.hint exercise="eda5_cook"}
+::: {.callout-note collapse="false"}
+## Hint
+The outcome goes on the left of the tilde. The function that returns one Cook's distance per row is `cooks.distance()`; `hatvalues()` returns leverage, which is not the same thing.
+:::
+:::
+
+::: {.solution exercise="eda5_cook"}
+::: {.callout-tip collapse="false"}
+## Solution
+```r
+m <- lm(grad_rate_bach_6yr ~ headcount, data = four)
+max(cooks.distance(m))
+```
+About `r top1_cd`, for `r top1_name`. A common flag is 4/n, which is `r signif(4 / n_four, 2)` here: this row is several hundred times over it.
+:::
+:::
+
+```{webr}
+#| exercise: eda5_cook
+#| check: true
+m_ok <- lm(grad_rate_bach_6yr ~ headcount, data = four)
+expected <- max(cooks.distance(m_ok))
+lev <- max(hatvalues(m_ok))
+m_flip <- lm(headcount ~ grad_rate_bach_6yr, data = four)
+flipped <- max(cooks.distance(m_flip))
+val <- suppressWarnings(as.numeric(unlist(.result))[1])
+if (length(val) == 1 && !is.na(val) && isTRUE(abs(val - expected) < 1e-4)) {
+  list(correct = TRUE, message = sprintf("Correct: a Cook's distance of %.2f, for %s. Drop that one row and every fitted value in the model moves.", expected, four$name[which.max(cooks.distance(m_ok))]))
+} else if (length(val) == 1 && !is.na(val) && isTRUE(abs(val - lev) < 1e-4)) {
+  list(correct = FALSE, message = "That is the largest leverage, from hatvalues(). Cook's distance combines leverage with the residual: cooks.distance().")
+} else if (length(val) == 1 && !is.na(val) && isTRUE(abs(val - flipped) < 1e-4)) {
+  list(correct = FALSE, message = "The formula is backwards. Completion is the outcome, so it goes on the left: grad_rate_bach_6yr ~ headcount.")
+} else {
+  list(correct = FALSE, message = "Not yet. The answer is a single number: the largest value of cooks.distance() for the model.")
+}
+```
+
+:::
+
+::: {.lab-exercise data-exercise="eda5_py_robust"}
+
+### Robust z-scores in Python
+
+`four` is the same frame as a DataFrame. Count the institutions whose robust z-score for `headcount`, the distance from the median in units of the scaled MAD, is beyond 3.5.
+
+```{pyodide}
+#| setup: true
+#| exercise: eda5_py_robust
+import pandas as pd
+inst = pd.read_csv("data/institutions.csv")
+four = inst[(inst["level"] == "4-year") & (inst["bach_cohort"] >= 30) & inst["grad_rate_bach_6yr"].notna()].copy()
+```
+
+```{pyodide}
+#| exercise: eda5_py_robust
+hc = four["headcount"]
+center = hc.______()
+scale = 1.4826 * (hc - center).abs().______()
+int(((hc - center).abs() / scale > 3.5).sum())
+```
+
+::: {.hint exercise="eda5_py_robust"}
+::: {.callout-note collapse="false"}
+## Hint
+Both blanks are the same method. The robust score is built from the median twice: the median of the values, and the median of the absolute distances from it.
+:::
+:::
+
+::: {.solution exercise="eda5_py_robust"}
+::: {.callout-tip collapse="false"}
+## Solution
+```python
+hc = four["headcount"]
+center = hc.median()
+scale = 1.4826 * (hc - center).abs().median()
+int(((hc - center).abs() / scale > 3.5).sum())
+```
+:::
+:::
+
+```{pyodide}
+#| exercise: eda5_py_robust
+#| check: true
+hc_ok = four["headcount"]
+med = hc_ok.median()
+expected = int(((hc_ok - med).abs() / (1.4826 * (hc_ok - med).abs().median()) > 3.5).sum())
+mean_based = int(((hc_ok - hc_ok.mean()).abs() / (1.4826 * (hc_ok - hc_ok.mean()).abs().mean()) > 3.5).sum())
+try:
+    val = int(result)
+except Exception:
+    val = None
+if val is not None and val == expected:
+    feedback = {"correct": True, "message": f"Correct: {expected} institutions, against {int(((hc_ok - hc_ok.mean()) / hc_ok.std()).abs().gt(3).sum())} by the ordinary z-score. The median and MAD do not move when the giants arrive, so they can see them."}
+elif val is not None and val == mean_based:
+    feedback = {"correct": False, "message": "That used the mean. The robust score uses the median for both the center and the spread."}
+else:
+    feedback = {"correct": False, "message": "Not yet. Expected a single whole number: how many rows have a robust z-score beyond 3.5."}
+feedback
+```
+
+:::
+
+## In your stack {.beat data-beat="4 · In your stack"}
+
+Fences and robust scores are a few cells in either tool. Leverage and Cook's distance are short formulas that neither tool ships, so the `outliers` sheet in [ir-lab.xlsx](data/ir-lab.xlsx) spells them out for the headcount regression.
+
+::: {.panel-tabset group="stack"}
+
+### Excel
+
+The sheet holds the frame with headcount in column D, the student-faculty ratio in E, Pell share in F, and completion in G, rows 2 to `r fmt(ol_last)`. Helper columns H to N carry one diagnostic each, and the panel from column P summarizes them.
+
+| Quantity | Formula |
+|---|---|
+| Quartiles | `=QUARTILE.INC(D2:D`r ol_last`, 1)` and `=QUARTILE.INC(D2:D`r ol_last`, 3)` |
+| Upper fence | `=Q3 + 1.5 * (Q3 - Q1)` |
+| Rows above it | `=COUNTIF(D2:D`r ol_last`, ">" & upper)` |
+| MAD | `=MEDIAN(ABS(D2:D`r ol_last` - MEDIAN(D2:D`r ol_last`)))`, entered as an array formula |
+| Robust z, column I | `=(D2 - MEDIAN(D$2:D$`r ol_last`)) / (1.4826 * MAD)` |
+| Leverage, column K | `=1/n + (D2 - AVERAGE(D$2:D$`r ol_last`))^2 / DEVSQ(D$2:D$`r ol_last`)` |
+| Residual, column L | completion minus `INTERCEPT` plus `SLOPE` times headcount |
+| Cook's distance, column M | `=(L2^2 / (2 * s2)) * (K2 / (1 - K2)^2)`, with `s2 = SUMSQ(L2:L`r ol_last`) / (n - 2)` |
+| Most influential row | `=INDEX(B2:B`r ol_last`, MATCH(MAX(M2:M`r ol_last`), M2:M`r ol_last`, 0))` |
+
+`STANDARDIZE` gives the ordinary z-score, and the sheet counts both scores side by side so the masking is visible: the z-score finds fewer rows than the robust score on the same column. Column N is `=LOG10(D2)`, and `SLOPE` and `CORREL` on it against column G give the transformed fit from the R tab without touching a single row.
+
+For the winsorized version of a column, `=IF(E2 > cap, cap, E2)` with the cap at `=PERCENTILE.INC(E$2:E$`r ol_last`, 0.99)` holds each value at the 99th percentile, and the panel does it inside an array `AVERAGE(IF())` and `STDEV.S(IF())` so no extra column is needed. Data, Data Analysis, Regression writes residuals and standardized residuals but not leverage or Cook's distance, which is why the sheet builds them by hand.
+
+### Power BI
+
+::: {.ir-powerbi data-powerbi-page="regression" data-powerbi-title="Pell and completion"}
+**Interactive report: not connected yet.** Download the [Power BI project](data/ir-lab-powerbi.zip) to explore this lesson in Power BI Desktop. The embedded report will appear here once it is connected.
+:::
+
+The fence is two percentiles and a filter. `PERCENTILEX.INC` takes a table, so the same filter used everywhere in these lessons goes inside it:
+
+```dax
+Headcount Upper Fence =
+VAR t =
+    FILTER ( ALL ( institutions ), institutions[level] = "4-year" && institutions[bach_cohort] >= 30 && NOT ISBLANK ( institutions[grad_rate_bach_6yr] ) )
+VAR q1 = PERCENTILEX.INC ( t, institutions[headcount], 0.25 )
+VAR q3 = PERCENTILEX.INC ( t, institutions[headcount], 0.75 )
+RETURN q3 + 1.5 * ( q3 - q1 )
+
+Above The Fence =
+CALCULATE ( COUNTROWS ( institutions ), FILTER ( institutions, institutions[headcount] > [Headcount Upper Fence] ) )
+```
+
+The robust score is a calculated column, since the median and MAD are constants over the frame. `MEDIANX` over the absolute deviations is the MAD:
+
+```dax
+Headcount Robust Z =
+VAR t = FILTER ( ALL ( institutions ), institutions[level] = "4-year" && institutions[bach_cohort] >= 30 && NOT ISBLANK ( institutions[grad_rate_bach_6yr] ) )
+VAR med = MEDIANX ( t, institutions[headcount] )
+VAR mad = 1.4826 * MEDIANX ( t, ABS ( institutions[headcount] - med ) )
+RETURN DIVIDE ( institutions[headcount] - med, mad )
+```
+
+Leverage is a second calculated column, `1 / n + ( headcount - mean ) ^ 2 / sum of squared deviations`, with the mean and the sum as `VAR`s over the same table; the residual comes from the `LINESTX` fit in **A line through the cloud**, and Cook's distance is the one-line product of the two. Put `name`, leverage, and Cook's distance in a table visual sorted descending and you have the top of the R tab's diagnostic table as a report page.
+
+Two visuals help before any formula. A **scatter chart** with `headcount` on X and `grad_rate_bach_6yr` on Y shows the leverage points at a glance, and its Analytics pane adds the trend line whose tilt they own. The **box and whisker** visual is not native, but a **Key influencers** visual set to explain high completion will surface the same handful of institutions as the segments it cannot explain.
+
+:::
+
+## Before you leave
+
+::: {.takeaways}
+1. **A fence flags; it does not decide.** The 1.5 IQR rule and the robust z-score point at rows worth reading. Whether those rows belong in a summary is a judgment about the question, and the fence cannot make it.
+2. **Use the median and MAD to find what the mean and SD hide.** Outliers stretch the very statistics an ordinary z-score compares them to. The robust score found `r hc_rz` institutions where the z-score found `r hc_z`.
+3. **Leverage is position; influence is effect.** A row far out on the predictor can tilt a line without being far from it. Cook's distance says how much the fit would change without the row, and 4/n is a reasonable place to start reading.
+4. **Transform before you delete, and report before you do either.** The log scale took the headcount giants' leverage away and kept them in the data. Whatever you choose, publish the number with and without, and name the rule.
+:::
+
+Next in this track: **The subtotal trap**, on IPEDS line and section codes, double counting, and building a clean grain.

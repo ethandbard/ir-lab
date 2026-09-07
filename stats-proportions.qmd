@@ -1,0 +1,877 @@
+---
+title: "Counts and proportions"
+subtitle: "Chi-square tests and proportion intervals for categorical outcomes"
+webr:
+  packages:
+    - dplyr
+    - ggplot2
+    - tidyr
+  resources:
+    - data/institutions.csv
+pyodide:
+  packages:
+    - pandas
+    - matplotlib
+    - scipy
+    - statsmodels
+  resources:
+    - data/institutions.csv
+---
+
+{{< include ./_extensions/r-wasm/live/_knitr.qmd >}}
+
+```{r}
+#| include: false
+source("_common.R")
+d <- institutions |> filter(!is.na(locale))
+n_d <- nrow(d)
+n_no_locale <- nrow(institutions) - n_d
+tab <- table(d$control, d$locale)
+ct <- chisq.test(tab)
+chi <- round(unname(ct$statistic), 1)
+df_chi <- unname(ct$parameter)
+cramer_v <- round(sqrt(unname(ct$statistic) / (n_d * (min(dim(tab)) - 1))), 2)
+rowp <- prop.table(tab, 1)
+fp_city <- round(100 * rowp["Private for-profit", "City"], 1)
+fp_rural <- round(100 * rowp["Private for-profit", "Rural"], 1)
+pub_city <- round(100 * rowp["Public", "City"], 1)
+pub_rural <- round(100 * rowp["Public", "Rural"], 1)
+pub_town <- round(100 * rowp["Public", "Town"], 1)
+npf_city <- round(100 * rowp["Private nonprofit", "City"], 1)
+npf_rural <- round(100 * rowp["Private nonprofit", "Rural"], 1)
+exp_pub_rural <- round(ct$expected["Public", "Rural"])
+obs_pub_rural <- tab["Public", "Rural"]
+res_pub_rural <- round(ct$stdres["Public", "Rural"], 1)
+res_fp_rural <- round(ct$stdres["Private for-profit", "Rural"], 1)
+res_pub_city <- round(ct$stdres["Public", "City"], 1)
+exp_fp_rural <- round(ct$expected["Private for-profit", "Rural"])
+obs_fp_rural <- tab["Private for-profit", "Rural"]
+n_pub <- sum(d$control == "Public")
+n_npf <- sum(d$control == "Private nonprofit")
+x_pub_rural <- sum(d$control == "Public" & d$locale == "Rural")
+x_npf_rural <- sum(d$control == "Private nonprofit" & d$locale == "Rural")
+w_pub <- prop.test(x_pub_rural, n_pub, correct = FALSE)$conf.int
+w_pub_lo <- round(100 * w_pub[1], 1)
+w_pub_hi <- round(100 * w_pub[2], 1)
+two <- prop.test(c(x_pub_rural, x_npf_rural), c(n_pub, n_npf), correct = FALSE)
+diff_pts <- round(100 * (x_pub_rural / n_pub - x_npf_rural / n_npf), 1)
+diff_lo <- round(100 * two$conf.int[1], 1)
+diff_hi <- round(100 * two$conf.int[2], 1)
+set.seed(7)
+sub60 <- replicate(200, {
+  s <- d[sample(n_d, 60), ]
+  t <- suppressWarnings(chisq.test(table(s$control, s$locale)))
+  c(t$p.value < 0.05, sqrt(unname(t$statistic) / (60 * 2)))
+})
+power60 <- round(100 * mean(sub60[1, ]))
+v60 <- round(mean(sub60[2, ]), 2)
+set.seed(3)
+null_chi <- replicate(300, unname(chisq.test(table(d$control, sample(d$locale)))$statistic))
+null_max <- round(max(null_chi), 1)
+w3 <- prop.test(3, 16, correct = FALSE)$conf.int
+w3_lo <- round(100 * w3[1]); w3_hi <- round(100 * w3[2])
+p3 <- 3 / 16
+wald3_lo <- round(100 * (p3 - 1.96 * sqrt(p3 * (1 - p3) / 16)), 1)
+wald3_hi <- round(100 * (p3 + 1.96 * sqrt(p3 * (1 - p3) / 16)), 1)
+w0_hi <- round(100 * prop.test(0, 20, correct = FALSE)$conf.int[2], 1)
+tab_tr <- table(d$tribal, d$locale)
+exp_tr <- suppressWarnings(chisq.test(tab_tr))$expected
+n_small_cells <- sum(exp_tr < 5)
+p_tr_chi <- suppressWarnings(chisq.test(tab_tr))$p.value
+p_tr_fisher <- fisher.test(tab_tr)$p.value
+n_tribal <- sum(d$tribal == "Yes")
+tribal_rural <- tab_tr["Yes", "Rural"]
+wilson <- function(x, n, z = 1.96) {
+  p <- x / n
+  centre <- (p + z^2 / (2 * n)) / (1 + z^2 / n)
+  half <- z * sqrt(p * (1 - p) / n + z^2 / (4 * n^2)) / (1 + z^2 / n)
+  c(centre - half, centre + half)
+}
+g <- institutions |>
+  filter(!is.na(grad_rate_150), grad_cohort > 0) |>
+  mutate(x = round(grad_rate_150 / 100 * grad_cohort),
+         lo = mapply(function(x, n) wilson(x, n)[1], x, grad_cohort),
+         hi = mapply(function(x, n) wilson(x, n)[2], x, grad_cohort),
+         width = 100 * (hi - lo),
+         band = cut(grad_cohort, c(0, 30, 100, 500, Inf), labels = c("under 30", "30 to 99", "100 to 499", "500 and more")))
+widths <- g |> group_by(band) |> summarise(n = n(), width = round(median(width), 1))
+width_small <- widths$width[1]
+width_big <- widths$width[4]
+n_small_cohort <- widths$n[1]
+share_small <- round(100 * mean(g$grad_cohort < 30))
+w4 <- round(100 * wilson(4, 4))
+tab_lvl <- table(d$control, d$level)
+chi_lvl <- round(unname(chisq.test(tab_lvl)$statistic))
+d_last <- n_d + 1
+```
+
+::: {.lesson-eyebrow}
+Test · Lesson 4 of 6
+:::
+
+`r fp_city`% of private for-profit institutions are in a city and `r fp_rural`% are rural; for public institutions the figures are `r pub_city`% and `r pub_rural`%. Those are proportions of counts, and every test so far in this track has needed a number to average. When the outcome is a category, a locale, a sector, a yes or a no, the questions are the same, "is the difference real, and how big is it?", and the tools are a chi-square test for a whole table and an interval for one proportion. Both are older and simpler than a t-test, and both are misused in the same two ways: reading a tiny p-value as a large effect, and trusting a proportion from a cohort of twelve.
+
+**You will be able to:** build and read a contingency table, run a chi-square test of independence and say what it tests, use standardized residuals to find which cells drive it, report Cramér's V for size, put a Wilson interval around a proportion, compare two proportions, and know when the counts are too small for any of it.
+
+## Watch it move {.beat data-beat="1 · Watch it move"}
+
+Each cell is a count of institutions: a control down the side, a locale across the top. The bar is what was observed and the dashed tick is what independence would predict from the row and column totals alone. Blue cells hold more institutions than independence predicts, orange fewer, and the chi-square statistic is the sum of every gap, squared and scaled. Shuffle the locale labels and the gaps become what chance alone produces; sample 60 institutions instead of all `r fmt(n_d)` and watch the statistic fall while the effect size stays put.
+
+::: {.lab-anim}
+
+```{ojs}
+//| echo: false
+inst = FileAttachment("data/institutions.csv").csv({typed: true})
+cpRows = inst.filter(d => d.locale != null && d.control != null)
+cpControls = ["Public", "Private nonprofit", "Private for-profit"]
+cpLocales = ["City", "Suburb", "Town", "Rural"]
+
+lgamma = x => {
+  const c = [0.99999999999980993, 676.5203681218851, -1259.1392167224028, 771.32342877765313,
+             -176.61502916214059, 12.507343278686905, -0.13857109526572012, 9.9843695780195716e-6, 1.5056327351493116e-7];
+  x -= 1;
+  let a = c[0];
+  const t = x + 7.5;
+  for (let i = 1; i < 9; i++) a += c[i] / (x + i);
+  return 0.5 * Math.log(2 * Math.PI) + (x + 0.5) * Math.log(t) - t + Math.log(a);
+}
+gammaQ = (a, x) => {
+  if (x <= 0) return 1;
+  if (x < a + 1) {
+    let sum = 1 / a, del = sum, ap = a;
+    for (let n = 1; n <= 500; n++) { ap += 1; del *= x / ap; sum += del; if (Math.abs(del) < Math.abs(sum) * 1e-14) break; }
+    return 1 - sum * Math.exp(-x + a * Math.log(x) - lgamma(a));
+  }
+  const FPMIN = 1e-300;
+  let b = x + 1 - a, c = 1 / FPMIN, d = 1 / b, h = d;
+  for (let i = 1; i <= 500; i++) {
+    const an = -i * (i - a);
+    b += 2;
+    d = an * d + b; if (Math.abs(d) < FPMIN) d = FPMIN;
+    c = b + an / c; if (Math.abs(c) < FPMIN) c = FPMIN;
+    d = 1 / d;
+    const del = d * c; h *= del;
+    if (Math.abs(del - 1) < 1e-14) break;
+  }
+  return Math.exp(-x + a * Math.log(x) - lgamma(a)) * h;
+}
+chi2P = (x, k) => gammaQ(k / 2, x / 2)
+
+cpTable = (rows, labelOf) => {
+  const n = rows.length;
+  const obs = cpControls.map(() => cpLocales.map(() => 0));
+  for (const r of rows) obs[cpControls.indexOf(r.control)][cpLocales.indexOf(labelOf(r))] += 1;
+  const rowT = obs.map(r => d3.sum(r));
+  const colT = cpLocales.map((_, j) => d3.sum(obs, r => r[j]));
+  const cells = [];
+  let chi = 0;
+  obs.forEach((r, i) => r.forEach((o, j) => {
+    const e = rowT[i] * colT[j] / n;
+    const denom = e * (1 - rowT[i] / n) * (1 - colT[j] / n);
+    const res = denom > 0 ? (o - e) / Math.sqrt(denom) : 0;
+    if (e > 0) chi += (o - e) ** 2 / e;
+    cells.push({i, j, control: cpControls[i], locale: cpLocales[j], o, e, res});
+  }));
+  const df = (cpControls.length - 1) * (cpLocales.length - 1);
+  const v = Math.sqrt(chi / (n * (Math.min(cpControls.length, cpLocales.length) - 1)));
+  return {cells, rowT, colT, n, chi, df, p: chi2P(chi, df), v};
+}
+```
+
+::: {.lab-controls}
+```{ojs}
+//| echo: false
+viewof cpSample = Inputs.radio(new Map([[`All ${d3.format(",")(cpRows.length)} institutions`, 0], ["300 at random", 300], ["60 at random", 60]]), {label: "Institutions", value: 0})
+viewof cpMode = Inputs.radio(["Real labels", "Shuffled labels"], {label: "Locale labels", value: "Real labels"})
+viewof cpDraw = Inputs.range([1, 20], {label: "Draw", step: 1, value: 1})
+```
+:::
+
+```{ojs}
+//| echo: false
+cpOne = draw => {
+  const seed = ((draw * 7919 + cpSample * 13 + (cpMode === "Real labels" ? 0 : 5)) % 10007) / 10007;
+  const shuffle = d3.shuffler(d3.randomLcg(seed));
+  const pool = cpSample ? shuffle(cpRows.slice()).slice(0, cpSample) : cpRows;
+  if (cpMode === "Real labels") return cpTable(pool, r => r.locale);
+  const labels = shuffle(pool.map(r => r.locale));
+  return cpTable(pool.map((r, i) => ({...r, shuffled: labels[i]})), r => r.shuffled);
+}
+
+cpState = {
+  const res = cpOne(cpDraw);
+  let tally = null;
+  if (cpMode !== "Real labels" || cpSample) {
+    tally = {sig: 0, maxChi: 0, meanV: 0};
+    for (let i = 1; i <= 20; i++) {
+      const r = cpOne(i);
+      if (r.p < 0.05) tally.sig += 1;
+      tally.maxChi = Math.max(tally.maxChi, r.chi);
+      tally.meanV += r.v / 20;
+    }
+  }
+  return {...res, tally, real: cpMode === "Real labels"};
+}
+```
+
+```{ojs}
+//| echo: false
+cpNode = d3.create("svg").attr("class", "lab-svg").node()
+
+cpPlot = {
+  const width = 860, margin = {top: 30, right: 16, bottom: 8, left: 150};
+  const cellW = (width - margin.left - margin.right) / cpLocales.length, cellH = 118;
+  const height = margin.top + cellH * cpControls.length + margin.bottom;
+  const {cells} = cpState;
+  const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const dur = reduce ? 0 : 550;
+  const top = d3.max(cells, c => Math.max(c.o, c.e));
+  const barMax = cellH - 40;
+  const h = v => top > 0 ? barMax * v / top : 0;
+  const fc = d3.format(","), f1 = d3.format("+.1f");
+  const fill = c => Math.abs(c.res) < 2 ? "var(--lab-muted)" : c.res > 0 ? "var(--lab-primary)" : "var(--lab-accent)";
+
+  const svg = d3.select(cpNode);
+  svg.attr("viewBox", [0, 0, width, height]);
+  const layer = name => { let g = svg.select(`g.${name}`); if (g.empty()) g = svg.append("g").attr("class", name); return g; };
+  const heads = layer("heads"), grid = layer("grid");
+  const t = svg.transition().duration(dur).ease(d3.easeCubicInOut);
+
+  heads.selectAll("text.col").data(cpLocales).join("text").attr("class", "col")
+    .attr("x", (d, j) => margin.left + cellW * (j + 0.5)).attr("y", 20).attr("text-anchor", "middle")
+    .attr("font-size", 13).attr("font-weight", 600).attr("fill", "var(--lab-ink)").text(d => d);
+  heads.selectAll("text.row").data(cpControls).join("text").attr("class", "row")
+    .attr("x", margin.left - 12).attr("y", (d, i) => margin.top + cellH * (i + 0.5)).attr("dy", "0.35em")
+    .attr("text-anchor", "end").attr("font-size", 13).attr("font-weight", 600).attr("fill", "var(--lab-ink)").text(d => d);
+
+  const cell = grid.selectAll("g.cell").data(cells, c => `${c.i}-${c.j}`)
+    .join(enter => {
+      const g = enter.append("g").attr("class", "cell");
+      g.append("rect").attr("class", "frame").attr("fill", "none").attr("stroke", "var(--lab-border, #e3e7ee)");
+      g.append("rect").attr("class", "bar").attr("rx", 2);
+      g.append("line").attr("class", "expected").attr("stroke", "var(--lab-ink)").attr("stroke-dasharray", "4 3").attr("stroke-width", 1.4);
+      g.append("text").attr("class", "obs").attr("font-size", 13).attr("font-weight", 700);
+      g.append("text").attr("class", "exp").attr("font-size", 10.5).attr("fill", "var(--lab-muted)");
+      g.append("text").attr("class", "res").attr("font-size", 11).attr("font-weight", 600);
+      return g;
+    })
+    .attr("transform", c => `translate(${margin.left + cellW * c.j},${margin.top + cellH * c.i})`);
+  const bx = cellW * 0.5 - 36, bw = 72, base = cellH - 6;
+  cell.select("rect.frame").attr("x", 2).attr("y", 2).attr("width", cellW - 4).attr("height", cellH - 4);
+  cell.select("rect.bar").attr("x", bx).attr("width", bw)
+    .transition(t).attr("y", c => base - h(c.o)).attr("height", c => h(c.o)).attr("fill", fill).attr("fill-opacity", 0.75);
+  cell.select("line.expected").attr("x1", bx - 10).attr("x2", bx + bw + 10)
+    .transition(t).attr("y1", c => base - h(c.e)).attr("y2", c => base - h(c.e));
+  cell.select("text.obs").attr("x", cellW * 0.5).attr("y", 20).attr("text-anchor", "middle").attr("fill", "var(--lab-ink)").text(c => fc(c.o));
+  cell.select("text.exp").attr("x", cellW * 0.5).attr("y", 33).attr("text-anchor", "middle").text(c => `expected ${fc(Math.round(c.e))}`);
+  cell.select("text.res").attr("x", cellW - 8).attr("y", cellH - 10).attr("text-anchor", "end").attr("fill", fill).text(c => f1(c.res));
+
+  return svg.node();
+}
+```
+
+```{ojs}
+//| echo: false
+cpReadout = {
+  const {chi, df, p, v, cells, n, tally, real} = cpState;
+  const f1 = d3.format(".1f"), f2 = d3.format(".2f"), fc = d3.format(",");
+  const pf = p < 0.001 ? (p < 1e-15 ? "< 1e-15" : d3.format(".1e")(p)) : d3.format(".3f")(p);
+  const big = cells.reduce((a, c) => Math.abs(c.res) > Math.abs(a.res) ? c : a, cells[0]);
+  let hint;
+  if (real && !cpSample) {
+    hint = `Independence would put ${fc(Math.round(big.e))} ${big.control.toLowerCase()} institutions in a ${big.locale.toLowerCase()} locale; there are ${fc(big.o)}, a standardized residual of ${f1(big.res)}. Anything beyond about 2 in either direction is a cell doing real work. Cramér's V of ${f2(v)} says the association is modest for all that the p-value is tiny.`;
+  } else if (real) {
+    hint = `A sample of ${cpSample} institutions with the real labels. Across draws 1 to 20 at this size, the test came out significant in ${tally.sig}, and the average Cramér's V was ${f2(tally.meanV)}: the size of the effect barely moves with n, but the statistic and the p-value are made of n. V also runs high in small samples, because chance gaps count toward it too.`;
+  } else if (p < 0.05) {
+    hint = `The locale labels were dealt at random and the test was fooled anyway, which happens in about one draw in twenty by design. Across draws 1 to 20, ${tally.sig} came out significant, and the largest chi-square chance produced was ${f1(tally.maxChi)}.`;
+  } else {
+    hint = `Shuffled labels: every gap between a bar and its tick is chance, and chi-square on ${df} degrees of freedom sits around ${df}. Across draws 1 to 20, ${tally.sig} came out significant and the largest chi-square was ${f1(tally.maxChi)}; the real table's is ${fc(Math.round(cpTable(cpRows, r => r.locale).chi))}.`;
+  }
+  return html`<div class="lab-readout">
+    <div><span class="k">Chi-square, ${df} df</span><span class="val primary">${f1(chi)}</span></div>
+    <div><span class="k">p-value</span><span class="val ${p < 0.05 ? "primary" : ""}">${pf}</span></div>
+    <div><span class="k">Cramér's V</span><span class="val">${f2(v)}</span></div>
+    <div><span class="k">Institutions in the table</span><span class="val">${fc(n)}</span></div>
+    <div><span class="k">Largest residual</span><span class="val accent">${big.control}, ${big.locale}: ${d3.format("+.1f")(big.res)}</span></div>
+  </div>
+  <p class="lab-hint">${hint} Residuals are adjusted standardized residuals, as R's chisq.test()$stdres reports them.</p>`;
+}
+```
+
+:::
+
+Three things to try:
+
+1. **Real labels, every institution.** Chi-square is `r chi` on `r df_chi` degrees of freedom, and the p-value is as small as the arithmetic can express. The residuals say where: public institutions are in rural areas and towns far more than independence predicts (`r fmt(obs_pub_rural)` rural against an expected `r fmt(exp_pub_rural)`, residual `r res_pub_rural`) and for-profits far less (`r obs_fp_rural` against `r exp_fp_rural`, residual `r res_fp_rural`). Cramér's V is `r cramer_v`: real, and a long way from "control determines locale".
+2. **Shuffled labels.** Chi-square drops to about `r df_chi`, the mean of a chi-square distribution with `r df_chi` degrees of freedom, and the bars sit on their ticks. Step through the draws: in 300 shuffles at build time the largest statistic chance produced was `r null_max`. The real table's `r chi` is not a near miss.
+3. **Sixty at random, real labels.** The same association, one-hundredth of the data. The test finds it in about half the draws (`r power60`% of 200 at build time) and misses it in the rest, while Cramér's V averages `r v60`, higher than the truth. Significance is a property of the sample size; the effect size is a property of the world, and small samples overstate it.
+
+## Do it {.beat data-beat="2 · Do it"}
+
+The cells below run in your browser. The frame is every institution with a locale, `r fmt(n_d)` of the `r fmt(nrow(institutions))`; `r n_no_locale` have none.
+
+::: {.panel-tabset group="language"}
+
+### R
+
+```{webr}
+#| autorun: true
+#| caption: The table, as counts and as row percentages
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+inst <- read.csv("data/institutions.csv", na.strings = c("", "NA"))
+d <- inst |> filter(!is.na(locale))
+
+tab <- table(d$control, d$locale)
+tab
+round(100 * prop.table(tab, 1), 1)
+```
+
+Row percentages are the readable form: each row adds to 100, so the rows can be compared even though the sectors are different sizes. Draw them before testing anything.
+
+```{webr}
+#| autorun: true
+#| caption: The same table as stacked bars
+d |>
+  count(control, locale) |>
+  group_by(control) |>
+  mutate(share = n / sum(n)) |>
+  ggplot(aes(share, control, fill = locale)) +
+  geom_col(width = 0.6) +
+  scale_x_continuous(labels = function(x) paste0(100 * x, "%")) +
+  scale_fill_manual(values = c(City = "#14213d", Suburb = "#2a78d6", Town = "#7fb2e8", Rural = "#eb6834")) +
+  labs(x = "Share of institutions", y = NULL, fill = NULL) +
+  theme_minimal(base_size = 13) +
+  theme(legend.position = "top")
+```
+
+The chi-square test of independence asks one question about the whole table: if control and locale had nothing to do with each other, would counts this far from the row-and-column expectation be plausible? Expected counts come from the margins alone, row total times column total over the grand total, and the statistic adds up the squared gaps, each scaled by what was expected.
+
+```{webr}
+#| autorun: true
+#| caption: The chi-square test, its expected counts, and its residuals
+ct <- chisq.test(tab)
+ct
+
+round(ct$expected)
+round(ct$stdres, 1)
+```
+
+The statistic is `r chi` on `r df_chi` degrees of freedom, (rows minus one) times (columns minus one). The standardized residuals are the useful part of the output: each is how many standard errors a cell sits from its expected count, so a value beyond about 2 marks a cell that is driving the result, and the sign says which way. Public institutions in rural areas (`r res_pub_rural`) and towns, and their scarcity in cities (`r res_pub_city`), carry most of the statistic.
+
+A p-value that small says nothing about size. Cramér's V rescales chi-square to run from 0, no association, to 1, one variable determines the other.
+
+```{webr}
+#| autorun: true
+#| caption: Cramér's V, and what the statistic looks like when the labels mean nothing
+cramers_v <- function(tab) {
+  stat <- suppressWarnings(chisq.test(tab)$statistic)
+  unname(sqrt(stat / (sum(tab) * (min(dim(tab)) - 1))))
+}
+round(cramers_v(tab), 3)
+
+set.seed(3)
+null_chi <- replicate(300, chisq.test(table(d$control, sample(d$locale)))$statistic)
+ggplot(data.frame(chi = null_chi), aes(chi)) +
+  geom_histogram(binwidth = 1, boundary = 0, fill = "#2a78d6", alpha = 0.8) +
+  stat_function(fun = function(x) 300 * dchisq(x, df = 6), color = "#14213d", linewidth = 0.8) +
+  labs(x = "Chi-square with shuffled locale labels", y = "Shuffles",
+       title = sprintf("300 shuffles never pass %.0f. The real table's statistic is %.0f.", max(null_chi), ct$statistic)) +
+  theme_minimal(base_size = 13)
+```
+
+The curve is the chi-square distribution with 6 degrees of freedom, which is what the test compares against; the shuffles show it is the right curve. V is `r cramer_v`, a modest association: knowing an institution's control tells you something about its locale and leaves most of the variation alone.
+
+The same association in a small sample shows the other half of the lesson. Sixty institutions, drawn at random, tested the same way.
+
+```{webr}
+#| autorun: true
+#| caption: Same effect, one-hundredth of the data
+set.seed(7)
+small <- replicate(200, {
+  s <- d[sample(nrow(d), 60), ]
+  t <- suppressWarnings(chisq.test(table(s$control, s$locale)))
+  c(p = t$p.value, v = cramers_v(table(s$control, s$locale)))
+})
+c(share_significant = mean(small["p", ] < 0.05), mean_v = round(mean(small["v", ]), 2), true_v = round(cramers_v(tab), 2))
+```
+
+Half the samples find the association and half miss it, and the average V among all of them is above the truth, because chance gaps inflate the statistic as much as real ones do. A report built on one sample of sixty would be right about the direction, unsure about significance, and wrong about the size.
+
+Now one proportion at a time. The share of public institutions in a rural locale is `r pub_rural`%; the interval around it comes from `prop.test()`, which uses the Wilson score interval when the continuity correction is off.
+
+```{webr}
+#| autorun: true
+#| caption: Wilson intervals for one proportion per sector
+by_control <- d |>
+  group_by(control) |>
+  summarise(n = n(), rural = sum(locale == "Rural")) |>
+  rowwise() |>
+  mutate(share = rural / n,
+         lower = prop.test(rural, n, correct = FALSE)$conf.int[1],
+         upper = prop.test(rural, n, correct = FALSE)$conf.int[2]) |>
+  ungroup()
+by_control |> mutate(across(share:upper, ~ round(100 * .x, 1)))
+
+ggplot(by_control, aes(share, control)) +
+  geom_pointrange(aes(xmin = lower, xmax = upper), color = "#2a78d6", size = 0.6) +
+  scale_x_continuous(labels = function(x) paste0(100 * x, "%"), limits = c(0, NA)) +
+  labs(x = "Share in a rural locale, with a 95% Wilson interval", y = NULL) +
+  theme_minimal(base_size = 13)
+```
+
+With two thousand institutions per sector the intervals are a few points wide. A two-sample test on the public and private nonprofit shares gives the difference an interval of its own.
+
+```{webr}
+#| autorun: true
+#| caption: Two proportions, one difference
+x <- c(public = sum(d$control == "Public" & d$locale == "Rural"),
+       nonprofit = sum(d$control == "Private nonprofit" & d$locale == "Rural"))
+n <- c(public = sum(d$control == "Public"), nonprofit = sum(d$control == "Private nonprofit"))
+prop.test(x, n, correct = FALSE)
+```
+
+Public institutions are `r diff_pts` points more likely to be rural, and the interval, `r diff_lo` to `r diff_hi` points, is the sentence to report. The test statistic is a chi-square on one degree of freedom, which is the two-by-two version of the same test as above.
+
+Small counts break the arithmetic in two places. The textbook interval, `p ± 1.96 × sqrt(p(1 − p)/n)`, falls below zero when a count is small, and the chi-square approximation needs every expected count to be at least about 5. Wilson handles the first; Fisher's exact test handles the second.
+
+```{webr}
+#| autorun: true
+#| caption: "Small counts: Wilson against the textbook interval, and Fisher against chi-square"
+wald <- function(x, n) { p <- x / n; p + c(-1, 1) * 1.96 * sqrt(p * (1 - p) / n) }
+rbind(wald_3_of_16 = wald(3, 16), wilson_3_of_16 = prop.test(3, 16, correct = FALSE)$conf.int,
+      wald_0_of_20 = wald(0, 20), wilson_0_of_20 = prop.test(0, 20, correct = FALSE)$conf.int) |> round(3)
+
+tribal <- table(d$tribal, d$locale)
+tribal
+round(suppressWarnings(chisq.test(tribal))$expected, 1)
+c(chi_square_p = suppressWarnings(chisq.test(tribal))$p.value, fisher_p = fisher.test(tribal)$p.value)
+```
+
+Three of sixteen gets a textbook interval that starts below zero and a Wilson interval from `r w3_lo`% to `r w3_hi`%; zero of twenty gets a textbook interval of exactly zero width and a Wilson interval that reaches `r w0_hi`%. The tribal-college table has `r n_small_cells` cells with an expected count under 5, and the chi-square p-value is off by twenty-five orders of magnitude from Fisher's exact answer. Both are tiny here, so the conclusion survives, but that is luck, not method. `chisq.test(simulate.p.value = TRUE)` is the third option: it shuffles, as the animation does, and needs no approximation.
+
+The place this matters most in IR is not a table of institutions but a rate at one of them. A completion rate is a proportion of a cohort, and the cohort is often small.
+
+```{webr}
+#| autorun: true
+#| caption: How wide is the interval around a completion rate?
+wilson <- function(x, n, z = 1.96) {
+  p <- x / n
+  centre <- (p + z^2 / (2 * n)) / (1 + z^2 / n)
+  half <- z * sqrt(p * (1 - p) / n + z^2 / (4 * n^2)) / (1 + z^2 / n)
+  c(centre - half, centre + half)
+}
+
+rates <- inst |>
+  filter(!is.na(grad_rate_150), grad_cohort > 0) |>
+  mutate(completers = round(grad_rate_150 / 100 * grad_cohort),
+         width = 100 * mapply(function(x, n) diff(wilson(x, n)), completers, grad_cohort),
+         cohort = cut(grad_cohort, c(0, 30, 100, 500, Inf), labels = c("under 30", "30 to 99", "100 to 499", "500 and more")))
+
+rates |> group_by(cohort) |> summarise(institutions = n(), median_interval_width = round(median(width), 1))
+round(100 * wilson(4, 4))
+```
+
+The median institution with a cohort under 30, `r n_small_cohort` of them, reports a rate whose 95% interval is `r width_small` points wide; with a cohort of 500 or more it is `r width_big`. A 100% rate on a cohort of four has an interval from `r w4[1]`% to 100%. That is the number to put beside any small-cohort rate in a ranking, and the reason **The shape of a rate** told you to look at `r v("grad_cohort")` first.
+
+### Python
+
+```{pyodide}
+#| autorun: true
+#| caption: The table, as counts and as row percentages
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from scipy import stats
+from statsmodels.stats.proportion import proportion_confint, proportions_ztest, confint_proportions_2indep
+
+inst = pd.read_csv("data/institutions.csv")
+d = inst[inst["locale"].notna()].copy()
+controls = ["Public", "Private nonprofit", "Private for-profit"]
+locales = ["City", "Suburb", "Town", "Rural"]
+
+tab = pd.crosstab(d["control"], d["locale"]).loc[controls, locales]
+print(tab)
+(100 * tab.div(tab.sum(axis=1), axis=0)).round(1)
+```
+
+```{pyodide}
+#| autorun: true
+#| caption: The same table as stacked bars
+share = tab.div(tab.sum(axis=1), axis=0)
+fig, ax = plt.subplots(figsize=(8, 3.2))
+left = np.zeros(len(controls))
+for loc, col in zip(locales, ["#14213d", "#2a78d6", "#7fb2e8", "#eb6834"]):
+    ax.barh(controls, share[loc], left=left, color=col, label=loc, height=0.6)
+    left += share[loc].to_numpy()
+ax.set_xlim(0, 1)
+ax.xaxis.set_major_formatter(lambda x, _: f"{x:.0%}")
+ax.set_xlabel("Share of institutions")
+ax.legend(ncol=4, loc="upper center", bbox_to_anchor=(0.5, 1.18), frameon=False)
+ax.spines[["top", "right"]].set_visible(False)
+plt.tight_layout()
+plt.show()
+```
+
+```{pyodide}
+#| autorun: true
+#| caption: The chi-square test, its expected counts, and its residuals
+res = stats.chi2_contingency(tab)
+print(f"chi-square = {res.statistic:.1f} on {res.dof} df, p = {res.pvalue:.1e}")
+
+expected = pd.DataFrame(res.expected_freq, index=tab.index, columns=tab.columns)
+print(expected.round(0))
+
+n = tab.to_numpy().sum()
+row_share = tab.sum(axis=1).to_numpy()[:, None] / n
+col_share = tab.sum(axis=0).to_numpy()[None, :] / n
+stdres = (tab - expected) / np.sqrt(expected * (1 - row_share) * (1 - col_share))
+stdres.round(1)
+```
+
+`chi2_contingency` returns the statistic, the p-value, the degrees of freedom, and the expected counts. The adjusted standardized residuals are computed by hand and match R's `$stdres`.
+
+```{pyodide}
+#| autorun: true
+#| caption: Cramér's V, and what the statistic looks like when the labels mean nothing
+def cramers_v(t):
+    t = np.asarray(t)
+    chi = stats.chi2_contingency(t, correction=False).statistic
+    return np.sqrt(chi / (t.sum() * (min(t.shape) - 1)))
+
+print(f"Cramér's V = {cramers_v(tab):.3f}")
+
+rng = np.random.default_rng(3)
+ctrl = d["control"].to_numpy()
+loc = d["locale"].to_numpy()
+null_chi = [stats.chi2_contingency(pd.crosstab(ctrl, rng.permutation(loc))).statistic for _ in range(300)]
+
+fig, ax = plt.subplots(figsize=(8, 4))
+ax.hist(null_chi, bins=np.arange(0, 26), color="#2a78d6", alpha=0.8)
+xs = np.linspace(0, 25, 200)
+ax.plot(xs, 300 * stats.chi2.pdf(xs, 6), color="#14213d")
+ax.set_xlabel("Chi-square with shuffled locale labels")
+ax.set_ylabel("Shuffles")
+ax.set_title(f"300 shuffles never pass {max(null_chi):.0f}. The real table's statistic is {res.statistic:.0f}.", loc="left", fontsize=11)
+ax.spines[["top", "right"]].set_visible(False)
+plt.tight_layout()
+plt.show()
+```
+
+```{pyodide}
+#| autorun: true
+#| caption: Same effect, one-hundredth of the data
+rng = np.random.default_rng(7)
+ps, vs = [], []
+for _ in range(200):
+    s = d.sample(60, random_state=int(rng.integers(1e9)))
+    t = pd.crosstab(s["control"], s["locale"])
+    ps.append(stats.chi2_contingency(t).pvalue)
+    vs.append(cramers_v(t))
+print(f"share significant = {np.mean(np.array(ps) < 0.05):.2f}, mean V = {np.mean(vs):.2f}, true V = {cramers_v(tab):.2f}")
+```
+
+```{pyodide}
+#| autorun: true
+#| caption: Wilson intervals for one proportion per sector
+by_control = d.groupby("control").agg(n=("locale", "size"), rural=("locale", lambda s: (s == "Rural").sum())).loc[controls]
+lo, hi = proportion_confint(by_control["rural"], by_control["n"], method="wilson")
+by_control["share"] = by_control["rural"] / by_control["n"]
+by_control["lower"], by_control["upper"] = lo, hi
+print((by_control[["share", "lower", "upper"]] * 100).round(1))
+
+fig, ax = plt.subplots(figsize=(8, 2.8))
+ax.errorbar(by_control["share"], range(3), xerr=[by_control["share"] - lo, hi - by_control["share"]],
+            fmt="o", color="#2a78d6", capsize=3)
+ax.set_yticks(range(3), controls)
+ax.set_xlim(0, None)
+ax.xaxis.set_major_formatter(lambda x, _: f"{x:.0%}")
+ax.set_xlabel("Share in a rural locale, with a 95% Wilson interval")
+ax.spines[["top", "right"]].set_visible(False)
+plt.tight_layout()
+plt.show()
+```
+
+```{pyodide}
+#| autorun: true
+#| caption: Two proportions, one difference
+x = by_control.loc[["Public", "Private nonprofit"], "rural"].to_numpy()
+nn = by_control.loc[["Public", "Private nonprofit"], "n"].to_numpy()
+z, p = proportions_ztest(x, nn)
+lo2, hi2 = confint_proportions_2indep(x[0], nn[0], x[1], nn[1])
+print(f"difference = {100 * (x[0] / nn[0] - x[1] / nn[1]):.1f} points, 95% interval {100 * lo2:.1f} to {100 * hi2:.1f}, z = {z:.1f}, p = {p:.1e}")
+```
+
+`statsmodels` builds the interval for the difference with Newcombe's method, which is the Wilson idea applied to two proportions, so the limits differ from R's `prop.test()` in the second decimal. The z statistic squared is the chi-square that R reports.
+
+```{pyodide}
+#| autorun: true
+#| caption: "Small counts: Wilson against the textbook interval, and Fisher against chi-square"
+for x0, n0 in [(3, 16), (0, 20)]:
+    wald = proportion_confint(x0, n0, method="normal")
+    wilson = proportion_confint(x0, n0, method="wilson")
+    print(f"{x0} of {n0}: textbook {wald[0]:.3f} to {wald[1]:.3f}, Wilson {wilson[0]:.3f} to {wilson[1]:.3f}")
+
+tribal = pd.crosstab(d["tribal"], d["locale"]).loc[["No", "Yes"], locales]
+print(tribal)
+tr = stats.chi2_contingency(tribal)
+print("expected:\n", pd.DataFrame(tr.expected_freq, index=tribal.index, columns=tribal.columns).round(1))
+two_by_two = pd.crosstab(d["tribal"], d["locale"] == "Rural")
+print(f"chi-square p = {tr.pvalue:.1e}; Fisher (rural against not rural) p = {stats.fisher_exact(two_by_two).pvalue:.1e}")
+```
+
+SciPy's `fisher_exact` takes a two-by-two table, so the locales are collapsed to rural against everything else; R's `fisher.test()` handles the full two-by-four table.
+
+```{pyodide}
+#| autorun: true
+#| caption: How wide is the interval around a completion rate?
+rates = inst[inst["grad_rate_150"].notna() & (inst["grad_cohort"] > 0)].copy()
+rates["completers"] = (rates["grad_rate_150"] / 100 * rates["grad_cohort"]).round()
+lo, hi = proportion_confint(rates["completers"], rates["grad_cohort"], method="wilson")
+rates["width"] = 100 * (hi - lo)
+rates["cohort"] = pd.cut(rates["grad_cohort"], [0, 30, 100, 500, np.inf], labels=["under 30", "30 to 99", "100 to 499", "500 and more"])
+print(rates.groupby("cohort", observed=True)["width"].agg(institutions="size", median_interval_width="median").round(1))
+print("4 of 4:", np.round(100 * np.array(proportion_confint(4, 4, method="wilson"))))
+```
+
+:::
+
+One habit for the road. Report a proportion with its interval and its denominator, "`r pub_rural`% of `r fmt(n_pub)` public institutions, interval `r w_pub_lo` to `r w_pub_hi`", and report a table with its effect size next to its p-value. The p-value says whether the pattern could be chance; V and the interval say whether it is worth a paragraph.
+
+## Practice {.beat data-beat="3 · Practice"}
+
+Fill in the blanks and press Run. The check reads the value your code returns, so make the last line the answer.
+
+```{webr}
+#| setup: true
+#| exercise:
+#|   - stats6_chisq
+#|   - stats6_wilson
+library(dplyr)
+inst <- read.csv("data/institutions.csv", na.strings = c("", "NA"))
+d <- inst |> filter(!is.na(locale))
+```
+
+::: {.lab-exercise data-exercise="stats6_chisq"}
+
+### Control and level
+
+`d` holds the institutions with a locale. Test whether control and level, `level`, are independent, and return the test result.
+
+```{webr}
+#| exercise: stats6_chisq
+chisq.test(table(d$control, d$______))
+```
+
+::: {.hint exercise="stats6_chisq"}
+::: {.callout-note collapse="false"}
+## Hint
+The second column is `level`, which takes the values 4-year, 2-year, and less than 2-year. `table()` builds the counts and `chisq.test()` does the rest.
+:::
+:::
+
+::: {.solution exercise="stats6_chisq"}
+::: {.callout-tip collapse="false"}
+## Solution
+```r
+chisq.test(table(d$control, d$level))
+```
+Chi-square is about `r fmt(chi_lvl)`, four times the control-by-locale statistic, because for-profit institutions are overwhelmingly less-than-two-year and nonprofits overwhelmingly four-year. Look at `$stdres` to see it.
+:::
+:::
+
+```{webr}
+#| exercise: stats6_chisq
+#| check: true
+expected <- chisq.test(table(d$control, d$level))$statistic
+locale_stat <- chisq.test(table(d$control, d$locale))$statistic
+got <- if (inherits(.result, "htest")) .result$statistic else NA
+if (!is.na(got) && isTRUE(abs(got - expected) < 1e-6)) {
+  list(correct = TRUE, message = sprintf("Correct: chi-square = %.0f on %d degrees of freedom. Control and level are far from independent.", expected, chisq.test(table(d$control, d$level))$parameter))
+} else if (!is.na(got) && isTRUE(abs(got - locale_stat) < 1e-6)) {
+  list(correct = FALSE, message = "That is the control-by-locale table from the lesson. The exercise asks about level.")
+} else if (!is.na(got)) {
+  list(correct = FALSE, message = "That is a test, but not this one. The table should be control against level, in that order.")
+} else {
+  list(correct = FALSE, message = "Not yet. The last line should be chisq.test() on table(d$control, d$level) so the result is returned.")
+}
+```
+
+:::
+
+::: {.lab-exercise data-exercise="stats6_wilson"}
+
+### An interval for one share
+
+Return the 95% Wilson interval for the share of public institutions located in a town.
+
+```{webr}
+#| exercise: stats6_wilson
+x <- sum(d$control == "Public" & d$locale == "______")
+n <- sum(d$control == "Public")
+prop.test(x, n, correct = ______)$conf.int
+```
+
+::: {.hint exercise="stats6_wilson"}
+::: {.callout-note collapse="false"}
+## Hint
+The locale value is `"Town"`, in quotes. `prop.test()` gives the Wilson score interval when `correct = FALSE`; with the continuity correction on it gives a slightly wider variant.
+:::
+:::
+
+::: {.solution exercise="stats6_wilson"}
+::: {.callout-tip collapse="false"}
+## Solution
+```r
+x <- sum(d$control == "Public" & d$locale == "Town")
+n <- sum(d$control == "Public")
+prop.test(x, n, correct = FALSE)$conf.int
+```
+About `r pub_town`%, with an interval two points either side: `r fmt(n_pub)` institutions is a lot of denominator.
+:::
+:::
+
+```{webr}
+#| exercise: stats6_wilson
+#| check: true
+x <- sum(d$control == "Public" & d$locale == "Town")
+n <- sum(d$control == "Public")
+expected <- as.numeric(prop.test(x, n, correct = FALSE)$conf.int)
+corrected <- as.numeric(prop.test(x, n, correct = TRUE)$conf.int)
+rural <- as.numeric(prop.test(sum(d$control == "Public" & d$locale == "Rural"), n, correct = FALSE)$conf.int)
+val <- suppressWarnings(as.numeric(unlist(.result)))
+if (length(val) == 2 && all(!is.na(val)) && isTRUE(all(abs(val - expected) < 1e-6))) {
+  list(correct = TRUE, message = sprintf("Correct: %.1f%% of public institutions are in a town, interval %.1f%% to %.1f%%.", 100 * x / n, 100 * expected[1], 100 * expected[2]))
+} else if (length(val) == 2 && all(!is.na(val)) && isTRUE(all(abs(val - corrected) < 1e-6))) {
+  list(correct = FALSE, message = "That is the continuity-corrected interval, a little wider. The exercise asks for the plain Wilson interval: correct = FALSE.")
+} else if (length(val) == 2 && all(!is.na(val)) && isTRUE(all(abs(val - rural) < 1e-6))) {
+  list(correct = FALSE, message = "That is the rural share from the lesson. The exercise asks about towns.")
+} else {
+  list(correct = FALSE, message = "Not yet. The result should be the two-number conf.int from prop.test() for public institutions in a town.")
+}
+```
+
+:::
+
+::: {.lab-exercise data-exercise="stats6_py_chi2"}
+
+### The same test in Python
+
+`d` holds the institutions with a locale. Build the control-by-level table with `pd.crosstab` and return the chi-square test result.
+
+```{pyodide}
+#| setup: true
+#| exercise: stats6_py_chi2
+import pandas as pd
+from scipy import stats
+inst = pd.read_csv("data/institutions.csv")
+d = inst[inst["locale"].notna()]
+```
+
+```{pyodide}
+#| exercise: stats6_py_chi2
+stats.chi2_contingency(pd.crosstab(d["control"], d["______"]))
+```
+
+::: {.hint exercise="stats6_py_chi2"}
+::: {.callout-note collapse="false"}
+## Hint
+The column is `level`. `chi2_contingency` takes the table and returns the statistic, the p-value, the degrees of freedom, and the expected counts.
+:::
+:::
+
+::: {.solution exercise="stats6_py_chi2"}
+::: {.callout-tip collapse="false"}
+## Solution
+```python
+stats.chi2_contingency(pd.crosstab(d["control"], d["level"]))
+```
+:::
+:::
+
+```{pyodide}
+#| exercise: stats6_py_chi2
+#| check: true
+expected = stats.chi2_contingency(pd.crosstab(d["control"], d["level"]))
+locale_stat = stats.chi2_contingency(pd.crosstab(d["control"], d["locale"])).statistic
+stat = getattr(result, "statistic", None)
+if stat is not None and abs(float(stat) - expected.statistic) < 1e-6:
+    feedback = {"correct": True, "message": f"Correct: chi-square = {expected.statistic:.0f} on {expected.dof} degrees of freedom, the same number as the R tab."}
+elif stat is not None and abs(float(stat) - locale_stat) < 1e-6:
+    feedback = {"correct": False, "message": "That is the control-by-locale table from the lesson. The exercise asks about level."}
+else:
+    feedback = {"correct": False, "message": "Not yet. Expected the result of stats.chi2_contingency on pd.crosstab(d[\"control\"], d[\"level\"])."}
+feedback
+```
+
+:::
+
+## In your stack {.beat data-beat="4 · In your stack"}
+
+Counts are the one thing every tool does well; the test and the interval are a dozen cells of arithmetic on top. The `proportions` sheet in [ir-lab.xlsx](data/ir-lab.xlsx) has the control-by-locale table with every formula below in place, plus the Wilson block and the two-proportion block.
+
+::: {.panel-tabset group="stack"}
+
+### Excel
+
+The observed table is a `COUNTIFS` grid on the Institutions table, and everything else refers to it.
+
+| Quantity | Formula |
+|---|---|
+| Observed cell | `=COUNTIFS(Institutions[control], $B5, Institutions[locale], C$4)` |
+| Expected cell | `=row total * column total / grand total` |
+| Chi-square | `=SUMPRODUCT((observed - expected)^2 / expected)` |
+| p-value | `=CHISQ.DIST.RT(chi_square, (rows - 1) * (columns - 1))`, or `=CHISQ.TEST(observed, expected)` in one step |
+| Cramér's V | `=SQRT(chi_square / (n * (MIN(rows, columns) - 1)))` |
+| Standardized residual | `=(O - E) / SQRT(E * (1 - row total / n) * (1 - column total / n))` |
+| Wilson interval | centre `=(p + z^2/(2n)) / (1 + z^2/n)`, half-width `=z * SQRT(p(1-p)/n + z^2/(4n^2)) / (1 + z^2/n)`, with `z = NORM.S.INV(0.975)` |
+| Two proportions | pooled `p = (x1 + x2)/(n1 + n2)`, `z = (p1 - p2) / SQRT(p(1-p)(1/n1 + 1/n2))`, p-value `=2 * (1 - NORM.S.DIST(ABS(z), TRUE))` |
+
+`CHISQ.TEST` returns the p-value directly from the two ranges and is the quickest check that the hand-built version is right. A PivotTable with control on rows and locale on columns produces the observed table in one drag, and "Show values as % of row total" produces the row percentages; the expected counts and the test still need the formulas. There is no Fisher's exact test in Excel; for a table with small expected counts, collapse categories until every expected count clears 5, or take the question to R.
+
+### Power BI
+
+::: {.ir-powerbi data-powerbi-page="overview" data-powerbi-title="Institution overview"}
+**Interactive report: not connected yet.** Download the [Power BI project](data/ir-lab-powerbi.zip) to explore this lesson in Power BI Desktop. The embedded report will appear here once it is connected.
+:::
+
+A matrix visual with `control` on rows and `locale` on columns and a count of rows in the values is the observed table. The test is four measures that walk the same grid:
+
+```dax
+Observed = COUNTROWS ( institutions )
+
+Expected =
+VAR n = CALCULATE ( COUNTROWS ( institutions ), ALL ( institutions[control], institutions[locale] ) )
+VAR rowTotal = CALCULATE ( COUNTROWS ( institutions ), ALL ( institutions[locale] ) )
+VAR colTotal = CALCULATE ( COUNTROWS ( institutions ), ALL ( institutions[control] ) )
+RETURN DIVIDE ( rowTotal * colTotal, n )
+
+Chi Square =
+SUMX (
+    CROSSJOIN ( VALUES ( institutions[control] ), VALUES ( institutions[locale] ) ),
+    VAR o = [Observed]
+    VAR e = [Expected]
+    RETURN DIVIDE ( ( o - e ) ^ 2, e )
+)
+
+Chi Square p =
+VAR df = ( DISTINCTCOUNT ( institutions[control] ) - 1 ) * ( DISTINCTCOUNT ( institutions[locale] ) - 1 )
+RETURN CHISQ.DIST.RT ( [Chi Square], df )
+```
+
+Put `[Observed]` and `[Expected]` side by side in the matrix and a third measure, `[Observed] - [Expected]`, with conditional colour, is the residual picture from the animation. `CHISQ.DIST.RT`, `NORM.S.INV`, and `NORM.S.DIST` are all in DAX, so the Wilson interval is a measure too: with `x = [Observed]` for the cell and `n` the row total, the centre and half-width are the same two expressions as the Excel column. A slicer on `state` reruns the whole test inside one state, which is where the counts get small and the residuals get noisy, and a card showing `[Expected]` at its minimum is the warning light for that.
+
+:::
+
+## Before you leave
+
+::: {.takeaways}
+1. **A contingency table is tested all at once.** Chi-square compares every cell to what the margins predict and returns one p-value. It says a pattern exists, not where or how large.
+2. **Residuals say where, V says how much.** Standardized residuals beyond about 2 mark the cells doing the work. Cramér's V of `r cramer_v` for control and locale is real and modest, and the p-value is silent on the difference.
+3. **Sample size makes the statistic, not the effect.** Sixty institutions find this association half the time and overstate its size when they do. `r fmt(n_d)` find it always. The world did not change between the two.
+4. **Use Wilson, and check the expected counts.** The textbook interval fails at small counts and at rates near 0 or 100%; Wilson does not. When an expected count is under 5, use Fisher's exact test or a shuffle. A rate on a cohort of four has a 50-point interval, and it should be reported with it.
+:::
+
+Next in this track: **A line through the cloud**, simple linear regression: least squares, residuals, and reading a coefficient.

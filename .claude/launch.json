@@ -1,0 +1,29 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "site",
+      "runtimeExecutable": "quarto",
+      "runtimeArgs": [
+        "preview",
+        "--no-browser",
+        "--no-watch-inputs",
+        "--port",
+        "4321"
+      ],
+      "port": 4321
+    },
+    {
+      "name": "static",
+      "runtimeExecutable": "python",
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "4322",
+        "-d",
+        "_site"
+      ],
+      "port": 4322
+    }
+  ]
+}

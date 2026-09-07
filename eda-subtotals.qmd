@@ -1,0 +1,730 @@
+---
+title: "The subtotal trap"
+subtitle: "IPEDS LINE and SECTION codes, double counting, and building a clean grain"
+webr:
+  packages:
+    - dplyr
+    - ggplot2
+    - tidyr
+  resources:
+    - data/fall_enrollment_2023.csv
+    - data/fall_enrollment_codes.csv
+    - data/institutions.csv
+pyodide:
+  packages:
+    - pandas
+    - matplotlib
+  resources:
+    - data/fall_enrollment_2023.csv
+    - data/fall_enrollment_codes.csv
+    - data/institutions.csv
+---
+
+{{< include ./_extensions/r-wasm/live/_knitr.qmd >}}
+
+```{r}
+#| include: false
+source("_common.R")
+lines <- read_csv("data/fall_enrollment_2023.csv", show_col_types = FALSE)
+codes <- read_csv("data/fall_enrollment_codes.csv", show_col_types = FALSE)
+labeled <- lines |> inner_join(codes, by = c("efalevel", "line", "section", "lstudy"))
+n_rows <- nrow(lines)
+n_inst <- n_distinct(lines$unitid)
+n_codes <- nrow(codes)
+n_detail_codes <- sum(codes$kind == "Detail")
+n_sub_codes <- sum(codes$kind == "Subtotal")
+per <- labeled |>
+  group_by(unitid) |>
+  summarise(rows = n(), every_row = sum(eftotlt), sections = sum(eftotlt[section %in% 1:2]),
+            form = sum(eftotlt[line != 99]), detail = sum(eftotlt[kind == "Detail"]),
+            total = sum(eftotlt[kind == "Grand total"]), n_detail = sum(kind == "Detail"))
+stopifnot(all(per$detail == per$total))
+rows_min <- min(per$rows)
+rows_med <- median(per$rows)
+rows_max <- max(per$rows)
+n_full <- sum(per$rows == rows_max)
+nat_every <- sum(per$every_row)
+nat_sections <- sum(per$sections)
+nat_form <- sum(per$form)
+nat_total <- sum(per$total)
+mult_every <- round(nat_every / nat_total, 1)
+mult_sections <- round(nat_sections / nat_total, 1)
+mult_form <- round(nat_form / nat_total, 1)
+mult_min <- round(min(per$every_row / per$total), 1)
+mult_max <- round(max(per$every_row / per$total), 1)
+pt_share <- round(100 * sum(labeled$eftotlt[labeled$efalevel == 41]) / nat_total, 1)
+ft_first <- sum(labeled$eftotlt[labeled$efalevel == 24])
+share_first <- round(100 * sum(labeled$eftotlt[labeled$efalevel == 4]) / nat_total, 1)
+share_grad <- round(100 * sum(labeled$eftotlt[labeled$efalevel == 12]) / nat_total, 1)
+ex_ids <- c(100654, 110699, 183026, 433387)
+ex <- per |> inner_join(select(institutions, unitid, name), by = "unitid")
+aamu <- ex[ex$unitid == 100654, ]
+ucsf <- ex[ex$unitid == 110699, ]
+snhu <- ex[ex$unitid == 183026, ]
+wgu <- ex[ex$unitid == 433387, ]
+n_no_ft <- sum(!per$unitid %in% lines$unitid[lines$efalevel == 21])
+n_no_pt <- sum(!per$unitid %in% lines$unitid[lines$efalevel == 41])
+n_grad_only <- sum(!per$unitid %in% lines$unitid[lines$efalevel == 2])
+n_ug_only <- sum(!per$unitid %in% lines$unitid[lines$efalevel == 12])
+by_level <- labeled |>
+  filter(kind == "Detail") |>
+  group_by(unitid) |>
+  summarise(pt = sum(eftotlt[attendance == "Part-time"]) / sum(eftotlt)) |>
+  inner_join(select(institutions, unitid, level), by = "unitid") |>
+  group_by(level) |>
+  summarise(median_pt = round(100 * median(pt)))
+pt_2yr <- by_level$median_pt[by_level$level == "2-year"]
+pt_4yr <- by_level$median_pt[by_level$level == "4-year"]
+n_missing_ef <- sum(!institutions$unitid %in% lines$unitid)
+ex_rows <- labeled |>
+  filter(unitid %in% ex_ids) |>
+  inner_join(select(institutions, unitid, name), by = "unitid") |>
+  arrange(unitid, efalevel) |>
+  select(unitid, name, efalevel, line, section, lstudy, kind, attendance, level, category, label, eftotlt)
+ojs_define(stRows = ex_rows,
+           stNational = list(every = nat_every, sections = nat_sections, form = nat_form,
+                             detail = nat_total, total = nat_total, institutions = n_inst))
+```
+
+::: {.lesson-eyebrow}
+Explore · Lesson 6 of 6
+:::
+
+The IPEDS fall enrollment file for 2023 has `r fmt(n_rows)` rows for `r fmt(n_inst)` institutions. Add up its headcount column and you get `r fmt(nat_every)` students. There were `r fmt(nat_total)`. The file is not wrong and nothing in it is duplicated by mistake: it holds the survey form the way it was filled in, ten detail lines per institution and every subtotal that can be made from them, and it tells you which is which with three code columns. Every long IPEDS file works this way, and every IR office has a story about the year someone summed one without looking. This lesson is about looking.
+
+**You will be able to:** read the `EFALEVEL`, `LINE`, `SECTION`, and `LSTUDY` codes, tell a detail line from a subtotal, filter a long file to one clean grain before adding anything, and prove the grain is right with a check that costs one line.
+
+## Watch it move {.beat data-beat="1 · Watch it move"}
+
+The list is one institution's rows, in file order, with a bar for each headcount. Pick a rule for which rows to add and they stack into the tower on the right, against a dashed line at the total the institution actually reported. Adding every row stacks the same students about eight times over. Only one rule gets the tower to the line, and it is not the one that looks safest.
+
+::: {.lab-anim}
+
+```{ojs}
+//| echo: false
+stAll = transpose(stRows)
+stInstitutions = new Map(d3.groups(stAll, d => d.name).map(([name, rows]) => [name, rows]))
+stRules = new Map([
+  ["Every row", r => true],
+  ["Full-time and part-time sections (SECTION 1 or 2)", r => r.section === 1 || r.section === 2],
+  ["Rows that were on the survey form (LINE is not 99)", r => r.line !== 99],
+  ["Detail lines only", r => r.kind === "Detail"],
+  ["The grand-total line (LINE 29)", r => r.line === 29]
+])
+stLabel = d => {
+  if (d.kind === "Grand total") return "All students, total";
+  const level = d.level === "All" ? "" : `, ${d.level.toLowerCase()}`;
+  const cat = d.category === d.level ? "" : `, ${d.category.toLowerCase()}`;
+  return `${d.attendance}${level}${cat}`;
+}
+stNationalByRule = new Map([
+  ["Every row", stNational.every],
+  ["Full-time and part-time sections (SECTION 1 or 2)", stNational.sections],
+  ["Rows that were on the survey form (LINE is not 99)", stNational.form],
+  ["Detail lines only", stNational.detail],
+  ["The grand-total line (LINE 29)", stNational.total]
+])
+```
+
+::: {.lab-controls}
+```{ojs}
+//| echo: false
+viewof stName = Inputs.radio(Array.from(stInstitutions.keys()), {label: "Institution", value: "Alabama A & M University"})
+viewof stRule = Inputs.radio(Array.from(stRules.keys()), {label: "Rows to add", value: "Every row"})
+```
+:::
+
+```{ojs}
+//| echo: false
+stState = {
+  const rows = stInstitutions.get(stName);
+  const keep = stRules.get(stRule);
+  const picked = rows.map((r, i) => ({...r, i, on: keep(r)}));
+  const total = rows.find(r => r.line === 29).eftotlt;
+  const sum = d3.sum(picked.filter(r => r.on), r => r.eftotlt);
+  const maxSum = d3.sum(rows, r => r.eftotlt);
+  return {rows: picked, total, sum, maxSum, n: picked.filter(r => r.on).length};
+}
+```
+
+```{ojs}
+//| echo: false
+stNode = d3.create("svg").attr("class", "lab-svg").node()
+
+stPlot = {
+  const width = 860, rowH = 15, margin = {top: 30, right: 24, bottom: 20, left: 12};
+  const {rows, total, sum, maxSum} = stState;
+  const listW = 470, barX = 300, barW = 150;
+  const towerX = 640, towerW = 120;
+  const height = margin.top + rowH * 27 + margin.bottom;
+  const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const dur = reduce ? 0 : 500;
+  const color = {"Detail": "var(--lab-primary)", "Subtotal": "var(--lab-accent)", "Grand total": "var(--lab-ink)"};
+  const fc = d3.format(",");
+  const xBar = d3.scaleLinear().domain([0, total]).range([0, barW]);
+  const yTower = d3.scaleLinear().domain([0, maxSum]).range([height - margin.bottom, margin.top]);
+
+  const svg = d3.select(stNode);
+  svg.attr("viewBox", [0, 0, width, height]);
+  const layer = name => { let g = svg.select(`g.${name}`); if (g.empty()) g = svg.append("g").attr("class", name); return g; };
+  const head = layer("head"), list = layer("list"), tower = layer("tower"), marks = layer("marks");
+  const t = svg.transition().duration(dur).ease(d3.easeCubicInOut);
+
+  head.selectAll("text").data([
+    {x: margin.left, y: 18, text: "EFALEVEL · LINE · what the row is", anchor: "start"},
+    {x: barX, y: 18, text: "headcount in the row", anchor: "start"},
+    {x: towerX + towerW / 2, y: 18, text: "rows added up", anchor: "middle"}
+  ]).join("text").attr("x", d => d.x).attr("y", d => d.y).attr("text-anchor", d => d.anchor)
+    .attr("font-size", 11).attr("font-weight", 600).attr("fill", "var(--lab-muted)").text(d => d.text);
+
+  const row = list.selectAll("g.row").data(rows, d => d.efalevel)
+    .join(enter => {
+      const g = enter.append("g").attr("class", "row");
+      g.append("rect").attr("class", "swatch").attr("width", 8).attr("height", 8).attr("rx", 1.5);
+      g.append("text").attr("class", "label").attr("font-size", 11).attr("dy", "0.32em");
+      g.append("rect").attr("class", "bar").attr("height", 8).attr("rx", 1.5);
+      g.append("text").attr("class", "n").attr("font-size", 10).attr("dy", "0.32em").attr("fill", "var(--lab-muted)");
+      return g;
+    })
+    .attr("transform", d => `translate(0,${margin.top + d.i * rowH + rowH / 2})`);
+  row.select("rect.swatch").attr("x", margin.left).attr("y", -4).attr("fill", d => color[d.kind]);
+  row.select("text.label").attr("x", margin.left + 14).attr("fill", "var(--lab-ink)")
+    .text(d => `${d.efalevel} · ${d.line} · ${stLabel(d)}`);
+  row.select("rect.bar").attr("x", barX).attr("y", -4).attr("fill", d => color[d.kind]).attr("width", d => Math.max(1, xBar(d.eftotlt)));
+  row.select("text.n").attr("x", d => barX + Math.max(1, xBar(d.eftotlt)) + 4).text(d => fc(d.eftotlt));
+  row.transition(t).attr("opacity", d => d.on ? 1 : 0.28);
+
+  let y0 = 0;
+  const stack = rows.filter(r => r.on).map(r => { const s = {...r, y0, y1: y0 + r.eftotlt}; y0 += r.eftotlt; return s; });
+  tower.selectAll("rect").data(stack, d => d.efalevel)
+    .join(
+      enter => enter.append("rect").attr("x", towerX).attr("width", towerW).attr("fill", d => color[d.kind])
+        .attr("stroke", "var(--lab-bg, #fff)").attr("stroke-width", 1)
+        .attr("y", yTower(0)).attr("height", 0)
+        .call(e => e.append("title")),
+      update => update,
+      exit => exit.transition(t).attr("y", yTower(0)).attr("height", 0).remove()
+    )
+    .call(sel => sel.select("title").text(d => `${d.label}\n${fc(d.eftotlt)}`))
+    .transition(t).delay((d, i) => reduce ? 0 : i * 25)
+    .attr("y", d => yTower(d.y1)).attr("height", d => Math.max(0, yTower(d.y0) - yTower(d.y1)))
+    .attr("fill-opacity", 0.85);
+
+  marks.selectAll("line.total").data([total]).join("line").attr("class", "total")
+    .attr("x1", towerX - 40).attr("x2", towerX + towerW + 10)
+    .attr("stroke", "var(--lab-ink)").attr("stroke-dasharray", "5 4").attr("stroke-width", 1.4)
+    .transition(t).attr("y1", d => yTower(d)).attr("y2", d => yTower(d));
+  marks.selectAll("text.total").data([total]).join("text").attr("class", "total")
+    .attr("x", towerX - 44).attr("text-anchor", "end").attr("font-size", 11).attr("fill", "var(--lab-ink)")
+    .text(d => `reported total ${fc(d)}`)
+    .transition(t).attr("y", d => yTower(d) + 4);
+  marks.selectAll("text.sum").data([sum]).join("text").attr("class", "sum")
+    .attr("x", towerX + towerW / 2).attr("text-anchor", "middle").attr("font-size", 12).attr("font-weight", 700)
+    .attr("fill", sum === total ? "var(--lab-primary)" : "var(--lab-accent)")
+    .text(d => fc(d))
+    .transition(t).attr("y", d => yTower(d) - 6);
+
+  return svg.node();
+}
+```
+
+```{ojs}
+//| echo: false
+stReadout = {
+  const {rows, total, sum, n} = stState;
+  const fc = d3.format(","), f1 = d3.format(".1f");
+  const nat = stNationalByRule.get(stRule);
+  const mult = sum / total;
+  let hint;
+  if (stRule === "Every row") {
+    hint = `Every subtotal in the file is a student counted again. This institution has ${rows.length} rows, ${rows.filter(r => r.kind === "Detail").length} of them detail lines, and the rest are sums of those lines at some level.`;
+  } else if (stRule.startsWith("Full-time")) {
+    hint = `Dropping the all-students section removes the biggest subtotals, but each section still carries its own totals: full-time total, full-time undergraduate, full-time degree-seeking, and so on down. Every student is still in about four rows.`;
+  } else if (stRule.startsWith("Rows that were")) {
+    hint = `LINE 99 marks rows IPEDS generated after the fact, so keeping the form's own lines feels safe. The form has subtotals of its own, though, and their LINE codes look like any other: 6, 8, 14, 20, 22, 28, and the grand total 29.`;
+  } else if (stRule === "Detail lines only") {
+    hint = `Ten kinds of row, each a student counted once: full-time and part-time, by first-time, transfer-in, continuing, non-degree, and graduate. This is the grain to keep. The tower meets the line at every one of the ${fc(stNational.institutions)} institutions.`;
+  } else {
+    hint = `One row per institution, already added up by IPEDS. Right, and useless the moment you want anything but the total: no full-time share, no first-time count, nothing to split by level.`;
+  }
+  return html`<div class="lab-readout">
+    <div><span class="k">Rows added</span><span class="val">${n} of ${rows.length}</span></div>
+    <div><span class="k">Sum of the headcount column</span><span class="val ${sum === total ? "primary" : "accent"}">${fc(sum)}</span></div>
+    <div><span class="k">Reported total (LINE 29)</span><span class="val">${fc(total)}</span></div>
+    <div><span class="k">Times the real headcount</span><span class="val ${mult === 1 ? "primary" : "accent"}">${f1(mult)}×</span></div>
+    <div><span class="k">Same rule, all ${fc(stNational.institutions)} institutions</span><span class="val ${nat === stNational.total ? "primary" : "accent"}">${fc(nat)}</span></div>
+    <div><span class="k">Students there actually were</span><span class="val">${fc(stNational.total)}</span></div>
+  </div>
+  <p class="lab-hint">${hint}</p>`;
+}
+```
+
+:::
+
+Three things to try:
+
+1. **Every row, any institution.** `r aamu$name` reported `r fmt(aamu$total)` students on `r aamu$rows` rows; adding the rows gives `r fmt(aamu$every_row)`, `r round(aamu$every_row / aamu$total, 1)` times too many. Across the country the same rule gives `r fmt(nat_every)` for `r fmt(nat_total)` real students, `r mult_every` times over. The multiple is not a constant, because institutions with fewer kinds of student have fewer subtotal rows: it runs from `r mult_min` at the sparsest institutions to `r mult_max` at the fullest.
+2. **The two rules that look careful.** Keeping only the full-time and part-time sections still leaves `r mult_sections` students for every real one. Keeping only rows that were on the form leaves `r mult_form`. Both drop some subtotals and keep others, which is worse than dropping none, because the number that comes out looks plausible.
+3. **`r ucsf$name`.** A campus with only full-time graduate students has `r ucsf$rows` rows: the grand total, the graduate subtotal, the full-time subtotal, and one detail line. Every rule but "every row" lands close, and "detail lines only" lands exactly, with `r ucsf$n_detail` row. The rule that works is the one that works whatever the institution happens to report.
+
+## Do it {.beat data-beat="2 · Do it"}
+
+The cells below run in your browser on the file as IPEDS ships it, minus the race and sex columns: one row per institution and `EFALEVEL` code, with the `LINE`, `SECTION`, and `LSTUDY` codes and the total headcount `EFTOTLT`. A second, small file says what each code means. The `r n_missing_ef` institutions in the directory with no fall enrollment rows are not in it.
+
+::: {.panel-tabset group="language"}
+
+### R
+
+```{webr}
+#| autorun: true
+#| caption: The file as shipped, and one institution in full
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+lines <- read.csv("data/fall_enrollment_2023.csv")
+codes <- read.csv("data/fall_enrollment_codes.csv")
+
+c(rows = nrow(lines), institutions = length(unique(lines$unitid)), code_combinations = nrow(codes))
+
+lines |>
+  filter(unitid == 100654) |>
+  inner_join(codes, by = c("efalevel", "line", "section", "lstudy")) |>
+  select(efalevel, line, section, lstudy, kind, attendance, level, category, eftotlt)
+```
+
+Read the codes as a tree. `SECTION` is the branch: 1 for full-time students, 2 for part-time, 3 for the two added together. `LSTUDY` is the next split: 1 undergraduate, 3 graduate, 4 both. `LINE` is where the row sat on the paper form, and 99 means it was never on the form at all; IPEDS derived it. `EFALEVEL` numbers the leaves and every node above them in one code, which is why one column is enough to filter on once you know which values are leaves.
+
+```{webr}
+#| autorun: true
+#| caption: Add the column three ways
+per <- lines |>
+  inner_join(codes, by = c("efalevel", "line", "section", "lstudy")) |>
+  group_by(unitid) |>
+  summarise(rows = n(),
+            every_row = sum(eftotlt),
+            sections_only = sum(eftotlt[section %in% 1:2]),
+            detail_only = sum(eftotlt[kind == "Detail"]),
+            reported = sum(eftotlt[line == 29]))
+
+per |>
+  summarise(across(every_row:reported, sum)) |>
+  mutate(across(everything(), ~ round(.x / reported, 2), .names = "{.col}_x"))
+```
+
+The detail lines reproduce the reported total to the student, nationally and, as the next cell shows, at every institution. The multiple for "every row" varies with how many kinds of student an institution has, which is the tell: a wrong total that depends on the shape of the form is a total that counted the form.
+
+```{webr}
+#| autorun: true
+#| caption: The check, then how far off the naive sum is at each institution
+c(institutions = nrow(per), detail_matches_reported = sum(per$detail_only == per$reported))
+
+ggplot(per, aes(every_row / reported)) +
+  geom_histogram(binwidth = 0.25, boundary = 0, fill = "#2a78d6", alpha = 0.85) +
+  labs(x = "Sum of every row, as a multiple of the reported total", y = "Institutions",
+       title = "Nobody is off by a constant. The multiple depends on how many subtotal rows the institution has.") +
+  theme_minimal(base_size = 13)
+```
+
+Now build the grain to keep: one row per institution, attendance, and category, from the detail lines only. Everything downstream, every share and every join, starts from this table and not from the file.
+
+```{webr}
+#| autorun: true
+#| caption: The clean grain, and the national picture from it
+grain <- lines |>
+  inner_join(codes, by = c("efalevel", "line", "section", "lstudy")) |>
+  filter(kind == "Detail") |>
+  select(unitid, attendance, category, headcount = eftotlt)
+
+c(rows = nrow(grain), per_institution_at_most = max(table(grain$unitid)))
+
+grain |>
+  count(attendance, category, wt = headcount, name = "students") |>
+  pivot_wider(names_from = attendance, values_from = students) |>
+  mutate(All = `Full-time` + `Part-time`) |>
+  arrange(desc(All))
+```
+
+Ten rows at most, fewer where a category is empty, because IPEDS omits the row rather than writing a zero. The national table is a sum of leaves, so the `All` column is honest arithmetic and adds to `r fmt(nat_total)`. Shares come from the same table.
+
+```{webr}
+#| autorun: true
+#| caption: Shares per institution, and a cross-check against the subtotal rows
+inst <- read.csv("data/institutions.csv", na.strings = c("", "NA"))
+
+shares <- grain |>
+  group_by(unitid) |>
+  summarise(total = sum(headcount),
+            part_time = sum(headcount[attendance == "Part-time"]) / total,
+            first_time = sum(headcount[category == "First-time"]) / total,
+            graduate = sum(headcount[category == "Graduate"]) / total) |>
+  inner_join(select(inst, unitid, name, control, level), by = "unitid")
+
+shares |> arrange(desc(total)) |> select(name, total, part_time, first_time, graduate) |> head(6) |>
+  mutate(across(part_time:graduate, ~ round(100 * .x, 1)))
+
+# The subtotal rows are not useless: they are the answer key for the grain.
+subtotal_pt <- lines |> filter(efalevel == 41) |> select(unitid, pt_subtotal = eftotlt)
+shares |>
+  left_join(subtotal_pt, by = "unitid") |>
+  mutate(pt_subtotal = coalesce(pt_subtotal, 0L)) |>
+  summarise(institutions = n(), agree = sum(round(part_time * total) == pt_subtotal))
+```
+
+The subtotal rows earn their place once you stop adding them: each is a total IPEDS computed for you, and a grain that reproduces every one of them is a grain you can trust. With the grain built, the exploratory questions from the rest of this track come for free.
+
+```{webr}
+#| autorun: true
+#| caption: Part-time share by level, a question the file could not answer as shipped
+ggplot(shares, aes(part_time, level)) +
+  geom_boxplot(fill = "#e8eef8", color = "#14213d", outlier.size = 0.8, outlier.alpha = 0.4) +
+  scale_x_continuous(labels = function(x) paste0(round(100 * x), "%")) +
+  labs(x = "Part-time share of fall enrollment", y = NULL) +
+  theme_minimal(base_size = 13)
+```
+
+The median two-year institution is `r pt_2yr`% part-time and the median four-year institution `r pt_4yr`%. Every other long IPEDS file has the same structure under different names: `GRTYPE` in the graduation-rate file, `CIPCODE` 99 and `MAJORNUM` in completions, `EFFYLEV` in 12-month enrollment. The move is the same each time: find the dictionary, mark the leaves, filter, and check the leaves against a total the file already holds.
+
+### Python
+
+```{pyodide}
+#| autorun: true
+#| caption: The file as shipped, and one institution in full
+import pandas as pd
+import matplotlib.pyplot as plt
+
+lines = pd.read_csv("data/fall_enrollment_2023.csv")
+codes = pd.read_csv("data/fall_enrollment_codes.csv")
+keys = ["efalevel", "line", "section", "lstudy"]
+labeled = lines.merge(codes, on=keys)
+
+print(f"{len(lines):,} rows, {lines['unitid'].nunique():,} institutions, {len(codes)} code combinations")
+labeled.loc[labeled["unitid"] == 100654, keys + ["kind", "attendance", "level", "category", "eftotlt"]]
+```
+
+```{pyodide}
+#| autorun: true
+#| caption: Add the column three ways
+g = labeled.groupby("unitid")
+per = pd.DataFrame({
+    "rows": g.size(),
+    "every_row": g["eftotlt"].sum(),
+    "sections_only": labeled[labeled["section"].isin([1, 2])].groupby("unitid")["eftotlt"].sum(),
+    "detail_only": labeled[labeled["kind"] == "Detail"].groupby("unitid")["eftotlt"].sum(),
+    "reported": labeled[labeled["line"] == 29].groupby("unitid")["eftotlt"].sum(),
+}).fillna(0)
+
+national = per[["every_row", "sections_only", "detail_only", "reported"]].sum()
+pd.DataFrame({"students": national, "times_reported": (national / national["reported"]).round(2)})
+```
+
+```{pyodide}
+#| autorun: true
+#| caption: The check, then how far off the naive sum is at each institution
+print(f"{len(per):,} institutions, detail lines match the reported total at {(per['detail_only'] == per['reported']).sum():,}")
+
+fig, ax = plt.subplots(figsize=(8, 4))
+ax.hist(per["every_row"] / per["reported"], bins=[x / 4 for x in range(16, 42)], color="#2a78d6", alpha=0.85)
+ax.set_xlabel("Sum of every row, as a multiple of the reported total")
+ax.set_ylabel("Institutions")
+ax.set_title("The multiple depends on how many subtotal rows the institution has", loc="left", fontsize=11)
+ax.spines[["top", "right"]].set_visible(False)
+plt.tight_layout()
+plt.show()
+```
+
+```{pyodide}
+#| autorun: true
+#| caption: The clean grain, and the national picture from it
+grain = (labeled[labeled["kind"] == "Detail"]
+         .loc[:, ["unitid", "attendance", "category", "eftotlt"]]
+         .rename(columns={"eftotlt": "headcount"}))
+print(f"{len(grain):,} rows, at most {grain.groupby('unitid').size().max()} per institution")
+
+table = grain.pivot_table(index="category", columns="attendance", values="headcount", aggfunc="sum")
+table["All"] = table["Full-time"] + table["Part-time"]
+table.sort_values("All", ascending=False)
+```
+
+```{pyodide}
+#| autorun: true
+#| caption: Shares per institution, and a cross-check against the subtotal rows
+inst = pd.read_csv("data/institutions.csv")
+tot = grain.groupby("unitid")["headcount"].sum()
+shares = pd.DataFrame({
+    "total": tot,
+    "part_time": grain[grain["attendance"] == "Part-time"].groupby("unitid")["headcount"].sum() / tot,
+    "first_time": grain[grain["category"] == "First-time"].groupby("unitid")["headcount"].sum() / tot,
+    "graduate": grain[grain["category"] == "Graduate"].groupby("unitid")["headcount"].sum() / tot,
+}).fillna(0).reset_index().merge(inst[["unitid", "name", "control", "level"]], on="unitid")
+
+print(shares.sort_values("total", ascending=False).head(6)[["name", "total", "part_time", "first_time", "graduate"]].round(3).to_string(index=False))
+
+pt_subtotal = lines[lines["efalevel"] == 41].set_index("unitid")["eftotlt"]
+agree = ((shares["part_time"] * shares["total"]).round() == shares["unitid"].map(pt_subtotal).fillna(0)).sum()
+print(f"part-time share reproduces the part-time subtotal row at {agree:,} of {len(shares):,} institutions")
+```
+
+```{pyodide}
+#| autorun: true
+#| caption: Part-time share by level, a question the file could not answer as shipped
+levels = ["Less than 2-year", "2-year", "4-year"]
+fig, ax = plt.subplots(figsize=(8, 3.6))
+ax.boxplot([shares.loc[shares["level"] == l, "part_time"] for l in levels], vert=False,
+           medianprops=dict(color="#14213d"), flierprops=dict(markersize=3, alpha=0.4))
+ax.set_yticks([1, 2, 3], levels)
+ax.set_xlabel("Part-time share of fall enrollment")
+ax.xaxis.set_major_formatter(lambda x, _: f"{x:.0%}")
+ax.spines[["top", "right"]].set_visible(False)
+plt.tight_layout()
+plt.show()
+```
+
+:::
+
+One more habit. When a long file has a total row, keep it in a separate table as the answer key, filter the rest to leaves, and make the first line of every script a comparison of the two. It costs nothing, and it is the difference between a grain you built and a grain you hope you built.
+
+## Practice {.beat data-beat="3 · Practice"}
+
+Fill in the blanks and press Run. The check reads the value your code returns, so make the last line the answer.
+
+```{webr}
+#| setup: true
+#| exercise:
+#|   - eda6_total
+#|   - eda6_part_time
+library(dplyr)
+lines <- read.csv("data/fall_enrollment_2023.csv")
+codes <- read.csv("data/fall_enrollment_codes.csv")
+labeled <- inner_join(lines, codes, by = c("efalevel", "line", "section", "lstudy"))
+```
+
+::: {.lab-exercise data-exercise="eda6_total"}
+
+### Count every student once
+
+`labeled` is the enrollment file joined to the codes, so every row has a `kind`. Return the fall 2023 headcount of all institutions in the file, computed from the rows that count each student exactly once.
+
+```{webr}
+#| exercise: eda6_total
+labeled |>
+  filter(kind == "______") |>
+  summarise(students = sum(eftotlt)) |>
+  pull(students)
+```
+
+::: {.hint exercise="eda6_total"}
+::: {.callout-note collapse="false"}
+## Hint
+`kind` takes three values: `"Detail"`, `"Subtotal"`, and `"Grand total"`. Two of them give the right national number; only one of them is a grain you could split further.
+:::
+:::
+
+::: {.solution exercise="eda6_total"}
+::: {.callout-tip collapse="false"}
+## Solution
+```r
+labeled |>
+  filter(kind == "Detail") |>
+  summarise(students = sum(eftotlt)) |>
+  pull(students)
+```
+`r fmt(nat_total)` students. `"Grand total"` returns the same number from one row per institution, which is fine for a total and useless for anything else.
+:::
+:::
+
+```{webr}
+#| exercise: eda6_total
+#| check: true
+expected <- sum(labeled$eftotlt[labeled$kind == "Detail"])
+every <- sum(labeled$eftotlt)
+sections <- sum(labeled$eftotlt[labeled$section %in% 1:2])
+form <- sum(labeled$eftotlt[labeled$line != 99])
+subtotals <- sum(labeled$eftotlt[labeled$kind == "Subtotal"])
+val <- suppressWarnings(as.numeric(unlist(.result))[1])
+if (length(val) == 1 && !is.na(val) && isTRUE(val == expected)) {
+  list(correct = TRUE, message = sprintf("Correct: %s students in fall 2023, and the same number comes from the grand-total rows alone.", format(expected, big.mark = ",")))
+} else if (length(val) == 1 && !is.na(val) && isTRUE(val == every)) {
+  list(correct = FALSE, message = "That is every row added up, which counts each student about eight times. Filter on kind first.")
+} else if (length(val) == 1 && !is.na(val) && isTRUE(val == subtotals)) {
+  list(correct = FALSE, message = "Those are the subtotal rows, which are sums of the detail rows at several levels at once. The students are counted once in the detail rows.")
+} else if (length(val) == 1 && !is.na(val) && (isTRUE(val == sections) || isTRUE(val == form))) {
+  list(correct = FALSE, message = "Closer, but that rule keeps some subtotals and drops others. Use the kind column.")
+} else {
+  list(correct = FALSE, message = "Not yet. The answer is a single number, the sum of eftotlt over the rows that count each student once.")
+}
+```
+
+:::
+
+::: {.lab-exercise data-exercise="eda6_part_time"}
+
+### The part-time share
+
+Using the detail rows only, return the share of fall 2023 enrollment that is part-time, as a number between 0 and 1.
+
+```{webr}
+#| exercise: eda6_part_time
+detail <- labeled |> filter(kind == "Detail")
+sum(detail$eftotlt[detail$______ == "Part-time"]) / sum(detail$eftotlt)
+```
+
+::: {.hint exercise="eda6_part_time"}
+::: {.callout-note collapse="false"}
+## Hint
+The column that says full-time or part-time is `attendance`. `section == 2` says the same thing in code form, and within the detail rows the two agree.
+:::
+:::
+
+::: {.solution exercise="eda6_part_time"}
+::: {.callout-tip collapse="false"}
+## Solution
+```r
+detail <- labeled |> filter(kind == "Detail")
+sum(detail$eftotlt[detail$attendance == "Part-time"]) / sum(detail$eftotlt)
+```
+About `r pt_share`%. The part-time subtotal rows, `efalevel == 41`, add to the same numerator: that is the cross-check.
+:::
+:::
+
+```{webr}
+#| exercise: eda6_part_time
+#| check: true
+detail <- labeled[labeled$kind == "Detail", ]
+expected <- sum(detail$eftotlt[detail$attendance == "Part-time"]) / sum(detail$eftotlt)
+unfiltered <- sum(labeled$eftotlt[labeled$section == 2]) / sum(labeled$eftotlt)
+val <- suppressWarnings(as.numeric(unlist(.result))[1])
+if (length(val) == 1 && !is.na(val) && isTRUE(abs(val - expected) < 1e-6)) {
+  list(correct = TRUE, message = sprintf("Correct: %.1f%% of fall enrollment is part-time, and the part-time subtotal rows give the same numerator.", 100 * expected))
+} else if (length(val) == 1 && !is.na(val) && isTRUE(abs(val - unfiltered) < 1e-6)) {
+  list(correct = FALSE, message = "That ratio was taken over every row, subtotals included. Filter to the detail rows before dividing.")
+} else if (length(val) == 1 && !is.na(val) && isTRUE(abs(val - (1 - expected)) < 1e-6)) {
+  list(correct = FALSE, message = "That is the full-time share. The exercise asks for part-time.")
+} else if (length(val) == 1 && !is.na(val) && (val > 1 || val < 0)) {
+  list(correct = FALSE, message = "A share cannot be outside 0 and 1. Check that both the numerator and the denominator come from the same detail rows.")
+} else {
+  list(correct = FALSE, message = "Not yet. The answer is a single number between 0 and 1: part-time headcount over all headcount, both from the detail rows.")
+}
+```
+
+:::
+
+::: {.lab-exercise data-exercise="eda6_py_grain"}
+
+### The grain in Python
+
+`labeled` is the enrollment file merged with the codes. Keep the detail rows and return the national headcount for every combination of attendance and category, as a Series with a two-level index.
+
+```{pyodide}
+#| setup: true
+#| exercise: eda6_py_grain
+import pandas as pd
+lines = pd.read_csv("data/fall_enrollment_2023.csv")
+codes = pd.read_csv("data/fall_enrollment_codes.csv")
+labeled = lines.merge(codes, on=["efalevel", "line", "section", "lstudy"])
+```
+
+```{pyodide}
+#| exercise: eda6_py_grain
+grain = labeled[labeled["kind"] == "______"]
+grain.groupby(["______", "______"])["eftotlt"].sum()
+```
+
+::: {.hint exercise="eda6_py_grain"}
+::: {.callout-note collapse="false"}
+## Hint
+The kind to keep is `"Detail"`, and the two grouping columns are `attendance` and `category`, in that order.
+:::
+:::
+
+::: {.solution exercise="eda6_py_grain"}
+::: {.callout-tip collapse="false"}
+## Solution
+```python
+grain = labeled[labeled["kind"] == "Detail"]
+grain.groupby(["attendance", "category"])["eftotlt"].sum()
+```
+Ten numbers that add to `r fmt(nat_total)`. Any other `kind` gives a table whose total is a multiple of that.
+:::
+:::
+
+```{pyodide}
+#| exercise: eda6_py_grain
+#| check: true
+detail = labeled[labeled["kind"] == "Detail"]
+expected = detail.groupby(["attendance", "category"])["eftotlt"].sum()
+total = int(labeled.loc[labeled["line"] == 29, "eftotlt"].sum())
+ok = False
+try:
+    got = result.sort_index()
+    ok = isinstance(got, pd.Series) and got.index.nlevels == 2 and got.sort_index().equals(expected.sort_index())
+except Exception:
+    ok = False
+if ok:
+    feedback = {"correct": True, "message": f"Correct: ten cells that add to {total:,}, each student counted once."}
+elif isinstance(result, pd.Series) and int(result.sum()) > total:
+    feedback = {"correct": False, "message": f"The cells add to {int(result.sum()):,}, more than the {total:,} students there were. Subtotal rows are in the grain."}
+elif isinstance(result, pd.Series) and int(result.sum()) == total:
+    feedback = {"correct": False, "message": "The total is right but the grouping is not. Group by attendance and category, in that order."}
+else:
+    feedback = {"correct": False, "message": "Not yet. Expected a Series from groupby([\"attendance\", \"category\"])[\"eftotlt\"].sum() on the detail rows."}
+feedback
+```
+
+:::
+
+## In your stack {.beat data-beat="4 · In your stack"}
+
+The trap lives most comfortably in a PivotTable, where dragging `eftotlt` into Values sums every row without asking. The `subtotals` sheet in [ir-lab.xlsx](data/ir-lab.xlsx) holds every enrollment row for the institutions in one state, Rhode Island, next to the codes table, with the lookups and the three sums built.
+
+::: {.panel-tabset group="stack"}
+
+### Excel
+
+The sheet has the rows in columns A to G (`unitid`, `name`, `efalevel`, `line`, `section`, `lstudy`, `eftotlt`) and the codes table in columns W to AE. Three lookup columns turn codes into words, and the sums use them.
+
+| Quantity | Formula |
+|---|---|
+| Kind of row | `=INDEX($AD$2:$AD$28, MATCH(C2, $W$2:$W$28, 0))` |
+| Attendance | `=INDEX($AA$2:$AA$28, MATCH(C2, $W$2:$W$28, 0))` |
+| Category | `=INDEX($AC$2:$AC$28, MATCH(C2, $W$2:$W$28, 0))` |
+| Every row, one institution | `=SUMIF($A:$A, unitid, $G:$G)` |
+| Reported total | `=SUMIFS($G:$G, $A:$A, unitid, $D:$D, 29)` |
+| Detail lines | `=SUMIFS($G:$G, $A:$A, unitid, $H:$H, "Detail")` |
+| Grain cell | `=SUMIFS($G:$G, $H:$H, "Detail", $I:$I, attendance, $J:$J, category)` |
+
+The grain block is a two-by-five `SUMIFS` grid of attendance against category with row and column totals, and its corner equals the sum of the reported totals: that cell is the check. In a PivotTable, put `Kind` in the Filters area and set it to Detail before anything goes into Values; in Power Query, merge the codes table on the four code columns and filter `kind` to Detail as the first step, so the trap is closed before the data reaches a sheet.
+
+### Power BI
+
+::: {.ir-powerbi data-powerbi-page="overview" data-powerbi-title="Institution overview"}
+**Interactive report: not connected yet.** Download the [Power BI project](data/ir-lab-powerbi.zip) to explore this lesson in Power BI Desktop. The embedded report will appear here once it is connected.
+:::
+
+Load the enrollment file and the codes file as two tables and relate them on `efalevel`, which is unique in the codes table. A card with `SUM ( lines[eftotlt] )` shows `r fmt(nat_every)`, and the fix is a measure that filters through the relationship:
+
+```dax
+Students =
+CALCULATE ( SUM ( lines[eftotlt] ), codes[kind] = "Detail" )
+
+Reported Total =
+CALCULATE ( SUM ( lines[eftotlt] ), lines[line] = 29 )
+
+Grain Check =
+[Students] - [Reported Total]
+```
+
+`Grain Check` belongs on the report as a card that should read zero under every slicer. Put `codes[attendance]` on the columns of a matrix and `codes[category]` on the rows with `[Students]` in the values and the matrix is the clean grain; its grand total is the reported total because the measure never sees a subtotal row. Never use the raw column in a visual: a measure with the filter baked in is the only way to make sure nobody, including you next year, sums the form.
+
+:::
+
+## Before you leave
+
+::: {.takeaways}
+1. **A long IPEDS file is a form, not a table.** Rows are detail lines and the subtotals made from them, and the code columns say which is which. Read the dictionary before the data.
+2. **Filter to the leaves, then add.** The detail lines count each student once. Every subtotal you keep is a student counted again, and the multiple depends on the shape of the form, so it never looks like an obvious error.
+3. **Rules that drop some subtotals are worse than none.** "Only the sections" and "only what was on the form" each give a plausible, wrong number. The only safe rule names the leaves.
+4. **The subtotals are the answer key.** Keep the reported totals aside and compare your grain to them in the first line of every script. `r fmt(n_inst)` of `r fmt(n_inst)` institutions agree here, and they should.
+:::
+
+This is the last lesson in the Explore track. The Test track picks up where it leaves off: **Sampling and uncertainty** takes a statistic from a clean table and asks how much it would move if the data were collected again.

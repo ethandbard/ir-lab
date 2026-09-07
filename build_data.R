@@ -4,9 +4,15 @@
 #   Rscript build_data.R
 #
 # Output:
-#   data/institutions.csv   one row per institution, ~45 columns
-#   data/variables.csv      every column above with its IPEDS source and label
-#   data/ir-lab.xlsx        the same table plus worked Excel sheets per lesson
+#   data/institutions.csv            one row per institution, ~45 columns
+#   data/variables.csv               every column above with its IPEDS source and label
+#   data/fall_enrollment_2023.csv    ef2023a as shipped: every line and subtotal row
+#   data/fall_enrollment_codes.csv   what each EFALEVEL, LINE, SECTION, LSTUDY code means
+#   data/enrollment_history.csv      fall headcount per institution, 2013 to 2023
+#   data/ir-lab.xlsx                 the same tables plus worked Excel sheets per lesson
+#
+# The history needs EF2013A to EF2022A in ../ipeds/data/raw; fetch_history.R
+# downloads them.
 
 suppressPackageStartupMessages({
   library(dplyr)
@@ -169,6 +175,93 @@ institutions <- inst |>
 
 write_csv(institutions, file.path("data", "institutions.csv"), na = "")
 
+# ---- Fall enrollment as shipped (the subtotal trap) --------------------
+# ef2023a keeps the survey form's structure: ten detail lines per institution
+# (full-time and part-time by first-time, transfer-in, continuing, non-degree,
+# and graduate) plus every subtotal IPEDS derives from them. The lesson works
+# on the file as it comes, so the extract keeps the codes and the total count.
+
+ef <- ipeds_read("ef2023a", dir = ipeds_dir)
+
+fall_lines <- ef |>
+  filter(unitid %in% institutions$unitid) |>
+  select(unitid, efalevel, line, section, lstudy, eftotlt) |>
+  arrange(unitid, efalevel)
+
+write_csv(fall_lines, file.path("data", "fall_enrollment_2023.csv"), na = "")
+
+fall_codes <- tribble(
+  ~efalevel, ~line, ~section, ~lstudy, ~attendance, ~level, ~category, ~kind, ~label,
+  1, 29, 3, 4, "All", "All", "Total", "Grand total", "All students total",
+  2, 99, 3, 1, "All", "Undergraduate", "Undergraduate total", "Subtotal", "All students, Undergraduate total",
+  3, 99, 3, 1, "All", "Undergraduate", "Degree-seeking total", "Subtotal", "All students, Undergraduate, Degree/certificate-seeking total",
+  4, 99, 3, 1, "All", "Undergraduate", "First-time", "Subtotal", "All students, Undergraduate, Degree/certificate-seeking, First-time",
+  5, 99, 3, 1, "All", "Undergraduate", "Other degree-seeking", "Subtotal", "All students, Undergraduate, Other degree/certificate-seeking",
+  19, 99, 3, 1, "All", "Undergraduate", "Transfer-in", "Subtotal", "All students, Undergraduate, Other degree/certificate-seeking, Transfer-ins",
+  20, 99, 3, 1, "All", "Undergraduate", "Continuing", "Subtotal", "All students, Undergraduate, Other degree/certificate-seeking, Continuing",
+  11, 99, 3, 1, "All", "Undergraduate", "Non-degree", "Subtotal", "All students, Undergraduate, Non-degree/certificate-seeking",
+  12, 99, 3, 3, "All", "Graduate", "Graduate", "Subtotal", "All students, Graduate",
+  21, 14, 1, 4, "Full-time", "All", "Total", "Subtotal", "Full-time students total",
+  22, 8, 1, 1, "Full-time", "Undergraduate", "Undergraduate total", "Subtotal", "Full-time students, Undergraduate total",
+  23, 6, 1, 1, "Full-time", "Undergraduate", "Degree-seeking total", "Subtotal", "Full-time students, Undergraduate, Degree/certificate-seeking total",
+  24, 1, 1, 1, "Full-time", "Undergraduate", "First-time", "Detail", "Full-time students, Undergraduate, Degree/certificate-seeking, First-time",
+  25, 99, 1, 1, "Full-time", "Undergraduate", "Other degree-seeking", "Subtotal", "Full-time students, Undergraduate, Other degree/certificate-seeking",
+  39, 2, 1, 1, "Full-time", "Undergraduate", "Transfer-in", "Detail", "Full-time students, Undergraduate, Other degree/certificate-seeking, Transfer-ins",
+  40, 3, 1, 1, "Full-time", "Undergraduate", "Continuing", "Detail", "Full-time students, Undergraduate, Other degree/certificate-seeking, Continuing",
+  31, 7, 1, 1, "Full-time", "Undergraduate", "Non-degree", "Detail", "Full-time students, Undergraduate, Non-degree/certificate-seeking",
+  32, 11, 1, 3, "Full-time", "Graduate", "Graduate", "Detail", "Full-time students, Graduate",
+  41, 28, 2, 4, "Part-time", "All", "Total", "Subtotal", "Part-time students total",
+  42, 22, 2, 1, "Part-time", "Undergraduate", "Undergraduate total", "Subtotal", "Part-time students, Undergraduate total",
+  43, 20, 2, 1, "Part-time", "Undergraduate", "Degree-seeking total", "Subtotal", "Part-time students, Undergraduate, Degree/certificate-seeking total",
+  44, 15, 2, 1, "Part-time", "Undergraduate", "First-time", "Detail", "Part-time students, Undergraduate, Degree/certificate-seeking, First-time",
+  45, 99, 2, 1, "Part-time", "Undergraduate", "Other degree-seeking", "Subtotal", "Part-time students, Undergraduate, Other degree/certificate-seeking",
+  59, 16, 2, 1, "Part-time", "Undergraduate", "Transfer-in", "Detail", "Part-time students, Undergraduate, Other degree/certificate-seeking, Transfer-ins",
+  60, 17, 2, 1, "Part-time", "Undergraduate", "Continuing", "Detail", "Part-time students, Undergraduate, Other degree/certificate-seeking, Continuing",
+  51, 21, 2, 1, "Part-time", "Undergraduate", "Non-degree", "Detail", "Part-time students, Undergraduate, Non-degree/certificate-seeking",
+  52, 25, 2, 3, "Part-time", "Graduate", "Graduate", "Detail", "Part-time students, Graduate"
+)
+
+# Every code combination in the file must be in the lookup, and the ten detail
+# lines must add up to the grand total at every institution.
+stopifnot(nrow(anti_join(distinct(fall_lines, efalevel, line, section, lstudy), fall_codes,
+                         by = c("efalevel", "line", "section", "lstudy"))) == 0)
+detail_check <- fall_lines |>
+  inner_join(select(fall_codes, efalevel, kind), by = "efalevel") |>
+  group_by(unitid) |>
+  summarise(detail = sum(eftotlt[kind == "Detail"]), total = sum(eftotlt[kind == "Grand total"]))
+stopifnot(all(detail_check$detail == detail_check$total))
+
+write_csv(fall_codes, file.path("data", "fall_enrollment_codes.csv"))
+
+# ---- Fall enrollment history (Next fall) ------------------------------
+# One row per institution and fall term, 2013 to 2023, from the EF{year}A
+# files. EFALEVEL 1 is the all-students total, 2 the undergraduate total, and
+# 4 first-time degree-seeking undergraduates (full-time and part-time).
+# Institutions not in the 2023-24 directory are left out, so the history is
+# the survivors' history: closures and mergers before 2023 are not in it.
+
+years <- 2013:2023
+have_year <- vapply(years, function(y) {
+  length(list.files(ipeds_dir, pattern = sprintf("^ef%da(_rv)?[.]csv$", y), ignore.case = TRUE)) > 0
+}, logical(1))
+if (!all(have_year)) {
+  stop("Missing fall enrollment files for ", paste(years[!have_year], collapse = ", "),
+       ". Run: Rscript fetch_history.R")
+}
+
+history <- bind_rows(lapply(years, function(y) {
+  ipeds_read(sprintf("ef%da", y), dir = ipeds_dir) |>
+    filter(efalevel %in% c(1, 2, 4)) |>
+    select(unitid, efalevel, eftotlt) |>
+    pivot_wider(names_from = efalevel, values_from = eftotlt, names_prefix = "l") |>
+    transmute(unitid, year = y, total = l1, undergrad = l2, first_time = l4)
+})) |>
+  filter(unitid %in% institutions$unitid) |>
+  arrange(unitid, year)
+
+write_csv(history, file.path("data", "enrollment_history.csv"), na = "")
+cat("enrollment_history.csv:", nrow(history), "rows,", n_distinct(history$unitid), "institutions\n")
+
 # ---- Variable dictionary ----------------------------------------------
 
 variables <- tribble(
@@ -230,7 +323,8 @@ cat("institutions.csv:", nrow(institutions), "rows x", ncol(institutions), "cols
 
 if (requireNamespace("openxlsx", quietly = TRUE)) {
   source("build_workbook.R")
-  build_workbook(institutions, variables, file.path("data", "ir-lab.xlsx"))
+  build_workbook(institutions, variables, file.path("data", "ir-lab.xlsx"),
+                 lines = fall_lines, codes = fall_codes, history = history)
   cat("ir-lab.xlsx written\n")
 } else {
   cat("openxlsx not installed; skipped ir-lab.xlsx\n")

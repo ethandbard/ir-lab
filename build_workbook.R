@@ -2,13 +2,22 @@
 # lesson, built with plain Excel formulas so the "In your stack" tabs can point
 # at real cells. Called from build_data.R.
 
-build_workbook <- function(institutions, variables, path) {
+build_workbook <- function(institutions, variables, path, lines = NULL, codes = NULL, history = NULL) {
   library(openxlsx)
+
+  # The three extracts beyond the institution table. build_data.R passes them
+  # in; run on its own, the function reads them from the data folder.
+  read_extract <- function(x, file) {
+    if (is.null(x)) read.csv(file.path(dirname(path), file), na.strings = c("", "NA")) else as.data.frame(x)
+  }
+  lines <- read_extract(lines, "fall_enrollment_2023.csv")
+  codes <- read_extract(codes, "fall_enrollment_codes.csv")
+  history <- read_extract(history, "enrollment_history.csv")
 
   # Functions added to Excel after 2007 must be stored with the _xlfn. prefix
   # or Excel and LibreOffice show #NAME? until the cell is re-entered.
   writeFormula <- function(wb, sheet, x, ...) {
-    x <- gsub("(?<![A-Za-z._])(STDEV\\.S|STDEV\\.P|VAR\\.S|VAR\\.P|MINIFS|MAXIFS|PERCENTILE\\.INC|PERCENTILE\\.EXC|CONCAT|IFS|XLOOKUP|CONFIDENCE\\.T|T\\.INV\\.2T|T\\.DIST\\.2T|T\\.DIST\\.RT|T\\.DIST|T\\.TEST|NORM\\.S\\.DIST|RANK\\.AVG)\\(",
+    x <- gsub("(?<![A-Za-z._])(STDEV\\.S|STDEV\\.P|VAR\\.S|VAR\\.P|MINIFS|MAXIFS|PERCENTILE\\.INC|PERCENTILE\\.EXC|QUARTILE\\.INC|CONCAT|IFS|XLOOKUP|CONFIDENCE\\.T|T\\.INV\\.2T|T\\.DIST\\.2T|T\\.DIST\\.RT|T\\.DIST|T\\.TEST|F\\.DIST\\.RT|F\\.DIST|CHISQ\\.DIST\\.RT|CHISQ\\.TEST|NORM\\.S\\.INV|NORM\\.S\\.DIST|RANK\\.AVG)\\(",
               "_xlfn.\\1(", x, perl = TRUE)
     openxlsx::writeFormula(wb, sheet, x, ...)
   }
@@ -31,10 +40,13 @@ build_workbook <- function(institutions, variables, path) {
     "One row per U.S. institution from the IPEDS 2023-24 collection.",
     "The sheet 'institutions' is an Excel Table named Institutions, so formulas can use",
     "structured references such as Institutions[grad_rate_bach_6yr].",
-    "Each lesson sheet works its method with ordinary Excel formulas on the same data."
+    "Each lesson sheet works its method with ordinary Excel formulas on the same data.",
+    "Three sheets carry their own tables: subtotals (every fall 2023 enrollment row for Rhode Island, with the",
+    "IPEDS codes beside them), proportions (counts from the institutions sheet), and forecast (fall headcount",
+    "2013 to 2023, one row per institution with a complete history)."
   ), startRow = 2)
   addStyle(wb, "read-me", note, rows = 2, cols = 1)
-  setRowHeights(wb, "read-me", rows = 2, heights = 48)
+  setRowHeights(wb, "read-me", rows = 2, heights = 84)
   writeData(wb, "read-me", as.data.frame(variables), startRow = 4, headerStyle = hdr)
   addStyle(wb, "read-me", mono, rows = 5:(4 + nrow(variables)), cols = 1:3, gridExpand = TRUE)
   setColWidths(wb, "read-me", cols = 1:4, widths = c(22, 12, 28, 80))
@@ -1036,6 +1048,644 @@ build_workbook <- function(institutions, variables, path) {
   setRowHeights(wb, ws, rows = rr + 16, heights = 60)
   setColWidths(wb, ws, cols = 1:20, widths = c(9, 40, 18, 9, 10, 10, 10, 10, 10, 10, 8, 10, 12, 3, 44, 12, 12, 12, 14, 16))
   freezePane(wb, ws, firstActiveRow = 2)
+
+  # ---- outliers -------------------------------------------------------
+  # Fences, ordinary and robust z-scores, then leverage and Cook's distance
+  # for the regression of completion on headcount, one helper column each,
+  # and a winsorized summary of the student-faculty ratio in the panel.
+  ol <- institutions |>
+    dplyr::filter(level == "4-year", bach_cohort >= 30, !is.na(grad_rate_bach_6yr),
+                  !is.na(stu_fac_ratio), !is.na(pct_pell)) |>
+    dplyr::select(unitid, name, control, headcount, stu_fac_ratio, pct_pell, grad_rate_bach_6yr) |>
+    as.data.frame()
+  n <- nrow(ol)
+  last <- n + 1
+  rows <- 2:last
+  addWorksheet(wb, "outliers")
+  ws <- "outliers"
+  writeData(wb, ws, ol, startRow = 1, startCol = 1, headerStyle = hdr)
+  writeData(wb, ws, t(c("z_headcount", "robust_z_headcount", "above_fence", "leverage", "residual",
+                        "cooks_distance", "log_headcount")), startRow = 1, startCol = 8, colNames = FALSE)
+  addStyle(wb, ws, hdr, rows = 1, cols = 8:14)
+  writeFormula(wb, ws, sprintf("=STANDARDIZE(D%d,AVERAGE(D$2:D$%d),STDEV.S(D$2:D$%d))", rows, last, last),
+               startRow = 2, startCol = 8)
+  writeFormula(wb, ws, sprintf("=(D%d-MEDIAN(D$2:D$%d))/(1.4826*$Q$9)", rows, last), startRow = 2, startCol = 9)
+  writeFormula(wb, ws, sprintf("=IF(D%d>$Q$8,1,0)", rows), startRow = 2, startCol = 10)
+  writeFormula(wb, ws, sprintf("=1/$Q$4+(D%d-AVERAGE(D$2:D$%d))^2/DEVSQ(D$2:D$%d)", rows, last, last),
+               startRow = 2, startCol = 11)
+  writeFormula(wb, ws, sprintf("=G%d-($Q$14+$Q$15*D%d)", rows, rows), startRow = 2, startCol = 12)
+  writeFormula(wb, ws, sprintf("=(L%d^2/(2*$Q$17))*(K%d/(1-K%d)^2)", rows, rows, rows), startRow = 2, startCol = 13)
+  writeFormula(wb, ws, sprintf("=LOG10(D%d)", rows), startRow = 2, startCol = 14)
+  addStyle(wb, ws, num2, rows = rows, cols = c(8, 9, 12, 14), gridExpand = TRUE)
+  addStyle(wb, ws, createStyle(numFmt = "0.0000"), rows = rows, cols = c(11, 13), gridExpand = TRUE)
+
+  writeData(wb, ws, "Outliers and leverage", startRow = 1, startCol = 16)
+  addStyle(wb, ws, title, rows = 1, cols = 16)
+  writeData(wb, ws, paste(
+    "4-year institutions with a bachelor's cohort of at least 30 and a value in every column here.",
+    "Columns H to N score headcount (D): the ordinary z-score, the robust z-score built from the median and",
+    "the MAD, a fence flag, then leverage, residual, and Cook's distance for the regression of completion (G)",
+    "on headcount. The MAD, AVERAGE(IF()), and STDEV.S(IF()) cells are array formulas."
+  ), startRow = 2, startCol = 16)
+  addStyle(wb, ws, note, rows = 2, cols = 16)
+  mergeCells(wb, ws, cols = 16:21, rows = 2)
+  setRowHeights(wb, ws, rows = 2, heights = 60)
+  writeData(wb, ws, t(c("Fences and scores for headcount", "Value")), startRow = 3, startCol = 16, colNames = FALSE)
+  addStyle(wb, ws, hdr, rows = 3, cols = 16:17)
+  ol_labels <- c("Institutions (n)", "First quartile", "Third quartile", "Lower fence", "Upper fence",
+                 "MAD (median absolute deviation)", "Rows above the upper fence", "Rows with |z| > 3",
+                 "Rows with robust |z| > 3.5")
+  ol_forms <- c(
+    sprintf("=COUNT(D2:D%d)", last),
+    sprintf("=QUARTILE.INC(D2:D%d,1)", last),
+    sprintf("=QUARTILE.INC(D2:D%d,3)", last),
+    "=Q5-1.5*(Q6-Q5)",
+    "=Q6+1.5*(Q6-Q5)",
+    sprintf("=MEDIAN(ABS(D2:D%d-MEDIAN(D2:D%d)))", last, last),
+    "=COUNTIF(D2:D%d,\">\"&Q8)",
+    sprintf("=SUMPRODUCT(--(ABS(H2:H%d)>3))", last),
+    sprintf("=SUMPRODUCT(--(ABS(I2:I%d)>3.5))", last)
+  )
+  ol_forms[7] <- sprintf(ol_forms[7], last)
+  writeData(wb, ws, ol_labels, startRow = 4, startCol = 16)
+  for (i in seq_along(ol_forms)) writeFormula(wb, ws, ol_forms[i], startRow = 3 + i, startCol = 17, array = (i == 6))
+  addStyle(wb, ws, createStyle(numFmt = "#,##0"), rows = 4:12, cols = 17, gridExpand = TRUE)
+
+  writeData(wb, ws, t(c("Regression of completion on headcount", "Value")), startRow = 13, startCol = 16, colNames = FALSE)
+  addStyle(wb, ws, hdr, rows = 13, cols = 16:17)
+  lev_labels <- c("Intercept", "Slope (points per student)", "Sum of squared residuals", "Residual variance (s squared)",
+                  "Largest Cook's distance", "Most influential institution", "Its leverage", "Average leverage (2 / n)",
+                  "Cook's distance flag (4 / n)", "Rows over the flag")
+  lev_forms <- c(
+    sprintf("=INTERCEPT(G2:G%d,D2:D%d)", last, last),
+    sprintf("=SLOPE(G2:G%d,D2:D%d)", last, last),
+    sprintf("=SUMSQ(L2:L%d)", last),
+    "=Q16/(Q4-2)",
+    sprintf("=MAX(M2:M%d)", last),
+    sprintf("=INDEX(B2:B%d,MATCH(Q18,M2:M%d,0))", last, last),
+    sprintf("=INDEX(K2:K%d,MATCH(Q18,M2:M%d,0))", last, last),
+    "=2/Q4",
+    "=4/Q4",
+    sprintf("=COUNTIF(M2:M%d,\">\"&Q22)", last)
+  )
+  writeData(wb, ws, lev_labels, startRow = 14, startCol = 16)
+  for (i in seq_along(lev_forms)) writeFormula(wb, ws, lev_forms[i], startRow = 13 + i, startCol = 17)
+  addStyle(wb, ws, createStyle(numFmt = "0.0000"), rows = c(14, 15, 17, 18, 20, 21, 22), cols = 17, gridExpand = TRUE)
+  addStyle(wb, ws, createStyle(numFmt = "#,##0"), rows = c(16, 23), cols = 17, gridExpand = TRUE)
+
+  writeData(wb, ws, t(c("Transform instead of delete", "Value")), startRow = 24, startCol = 16, colNames = FALSE)
+  addStyle(wb, ws, hdr, rows = 24, cols = 16:17)
+  writeData(wb, ws, c("r, headcount and completion", "r, log10 headcount and completion",
+                      "Slope on log10 headcount (points per tenfold)"), startRow = 25, startCol = 16)
+  writeFormula(wb, ws, sprintf("=CORREL(D2:D%d,G2:G%d)", last, last), startRow = 25, startCol = 17)
+  writeFormula(wb, ws, sprintf("=CORREL(N2:N%d,G2:G%d)", last, last), startRow = 26, startCol = 17)
+  writeFormula(wb, ws, sprintf("=SLOPE(G2:G%d,N2:N%d)", last, last), startRow = 27, startCol = 17)
+  addStyle(wb, ws, createStyle(numFmt = "0.000"), rows = 25:27, cols = 17, gridExpand = TRUE)
+
+  writeData(wb, ws, t(c("Four treatments of the student-faculty ratio (E)", "Value")), startRow = 29, startCol = 16, colNames = FALSE)
+  addStyle(wb, ws, hdr, rows = 29, cols = 16:17)
+  win_labels <- c("99th percentile (the cap)", "Mean, every row", "SD, every row", "Mean, capped at the 99th percentile",
+                  "SD, capped at the 99th percentile", "Median, every row", "MAD, every row")
+  win_forms <- c(
+    sprintf("=PERCENTILE.INC(E2:E%d,0.99)", last),
+    sprintf("=AVERAGE(E2:E%d)", last),
+    sprintf("=STDEV.S(E2:E%d)", last),
+    sprintf("=AVERAGE(IF(E2:E%d>Q30,Q30,E2:E%d))", last, last),
+    sprintf("=STDEV.S(IF(E2:E%d>Q30,Q30,E2:E%d))", last, last),
+    sprintf("=MEDIAN(E2:E%d)", last),
+    sprintf("=1.4826*MEDIAN(ABS(E2:E%d-MEDIAN(E2:E%d)))", last, last)
+  )
+  writeData(wb, ws, win_labels, startRow = 30, startCol = 16)
+  for (i in seq_along(win_forms)) writeFormula(wb, ws, win_forms[i], startRow = 29 + i, startCol = 17, array = i %in% c(4, 5, 7))
+  addStyle(wb, ws, num2, rows = 30:36, cols = 17, gridExpand = TRUE)
+  writeData(wb, ws, paste(
+    "Dropping rows is a fifth treatment, and the only one this sheet does not do: whatever you choose,",
+    "report the statistic with and without, and name the rule. Data > Data Analysis > Regression writes",
+    "residuals but not leverage or Cook's distance."
+  ), startRow = 38, startCol = 16)
+  addStyle(wb, ws, note, rows = 38, cols = 16)
+  mergeCells(wb, ws, cols = 16:21, rows = 38)
+  setRowHeights(wb, ws, rows = 38, heights = 48)
+  setColWidths(wb, ws, cols = 1:21, widths = c(9, 40, 18, 10, 9, 9, 10, 10, 10, 9, 10, 10, 12, 10, 3, 44, 14, 3, 3, 3, 3))
+  freezePane(wb, ws, firstActiveRow = 2)
+
+  # ---- many-groups ----------------------------------------------------
+  # One-way ANOVA of completion across the eight mainland regions from the
+  # per-group counts, means, and variances, then the pairwise t-test matrix
+  # with the pooled within-group variance and its Bonferroni version.
+  mg <- institutions |>
+    dplyr::filter(level == "4-year", bach_cohort >= 30, !is.na(grad_rate_bach_6yr), !is.na(region),
+                  !region %in% c("US service schools", "Outlying areas")) |>
+    dplyr::select(unitid, name, region, grad_rate_bach_6yr, retention_ft) |>
+    as.data.frame()
+  n <- nrow(mg)
+  last <- n + 1
+  region_means <- tapply(mg$grad_rate_bach_6yr, mg$region, mean)
+  regions <- names(sort(region_means, decreasing = TRUE))
+  k <- length(regions)
+  addWorksheet(wb, "many-groups")
+  ws <- "many-groups"
+  writeData(wb, ws, mg, startRow = 1, startCol = 1, headerStyle = hdr)
+  addStyle(wb, ws, num1, rows = 2:last, cols = 4:5, gridExpand = TRUE)
+
+  writeData(wb, ws, "Many groups: one-way ANOVA of 6-year completion by region", startRow = 1, startCol = 7)
+  addStyle(wb, ws, title, rows = 1, cols = 7)
+  writeData(wb, ws, paste(
+    "Region is column C and completion is column D. Each region row below has its count, mean, and variance",
+    "(an array VAR.S(IF()) formula), and the sums of squares come from those rows: between is n times the squared",
+    "gap from the grand mean, within is (n - 1) times the variance. F.DIST.RT turns F into a p-value."
+  ), startRow = 2, startCol = 7)
+  addStyle(wb, ws, note, rows = 2, cols = 7)
+  mergeCells(wb, ws, cols = 7:16, rows = 2)
+  setRowHeights(wb, ws, rows = 2, heights = 48)
+  writeData(wb, ws, t(c("Region", "n", "Mean", "Variance", "SS within", "SS between")), startRow = 4, startCol = 7, colNames = FALSE)
+  addStyle(wb, ws, hdr, rows = 4, cols = 7:12)
+  writeData(wb, ws, regions, startRow = 5, startCol = 7)
+  for (i in seq_len(k)) {
+    r <- 4 + i
+    writeFormula(wb, ws, sprintf("=COUNTIF($C$2:$C$%d,G%d)", last, r), startRow = r, startCol = 8)
+    writeFormula(wb, ws, sprintf("=AVERAGEIF($C$2:$C$%d,G%d,$D$2:$D$%d)", last, r, last), startRow = r, startCol = 9)
+    writeFormula(wb, ws, sprintf("=VAR.S(IF($C$2:$C$%d=G%d,$D$2:$D$%d))", last, r, last), startRow = r, startCol = 10, array = TRUE)
+    writeFormula(wb, ws, sprintf("=(H%d-1)*J%d", r, r), startRow = r, startCol = 11)
+    writeFormula(wb, ws, sprintf("=H%d*(I%d-$H$15)^2", r, r), startRow = r, startCol = 12)
+  }
+  g_last <- 4 + k
+  addStyle(wb, ws, num1, rows = 5:g_last, cols = 9:10, gridExpand = TRUE)
+  addStyle(wb, ws, createStyle(numFmt = "#,##0"), rows = 5:g_last, cols = 11:12, gridExpand = TRUE)
+
+  writeData(wb, ws, t(c("ANOVA", "Value")), startRow = 14, startCol = 7, colNames = FALSE)
+  addStyle(wb, ws, hdr, rows = 14, cols = 7:8)
+  an_labels <- c("Grand mean", "Institutions", "Groups", "SS between", "SS within", "SS total (check: between + within)",
+                 "df between", "df within", "MS between", "MS within", "F", "p-value", "Eta squared", "Within-group SD")
+  an_forms <- c(
+    sprintf("=AVERAGE(D2:D%d)", last),
+    sprintf("=COUNT(D2:D%d)", last),
+    sprintf("=COUNTA(G5:G%d)", g_last),
+    sprintf("=SUM(L5:L%d)", g_last),
+    sprintf("=SUM(K5:K%d)", g_last),
+    sprintf("=DEVSQ(D2:D%d)", last),
+    "=H17-1",
+    "=H16-H17",
+    "=H18/H21",
+    "=H19/H22",
+    "=H23/H24",
+    "=F.DIST.RT(H25,H21,H22)",
+    "=H18/(H18+H19)",
+    "=SQRT(H24)"
+  )
+  writeData(wb, ws, an_labels, startRow = 15, startCol = 7)
+  for (i in seq_along(an_forms)) writeFormula(wb, ws, an_forms[i], startRow = 14 + i, startCol = 8)
+  addStyle(wb, ws, num2, rows = c(15, 23, 24, 25, 28), cols = 8, gridExpand = TRUE)
+  addStyle(wb, ws, createStyle(numFmt = "#,##0"), rows = c(16:22), cols = 8, gridExpand = TRUE)
+  addStyle(wb, ws, createStyle(numFmt = "0.00E+00"), rows = 26, cols = 8)
+  addStyle(wb, ws, createStyle(numFmt = "0.0%"), rows = 27, cols = 8)
+
+  # Pairwise matrix: pooled-variance t-tests, as R's pairwise.t.test() does.
+  pm <- 31
+  writeData(wb, ws, "Pairwise p-values, pooled within-group variance (diagonal set to 1)", startRow = pm - 1, startCol = 7)
+  addStyle(wb, ws, hdr, rows = pm - 1, cols = 7:(8 + k))
+  writeData(wb, ws, t(regions), startRow = pm, startCol = 8, colNames = FALSE)
+  writeData(wb, ws, regions, startRow = pm + 1, startCol = 7)
+  addStyle(wb, ws, hdr, rows = pm, cols = 7:(7 + k))
+  bm <- pm + k + 3
+  writeData(wb, ws, "The same p-values after Bonferroni (times the number of pairs, capped at 1)", startRow = bm - 1, startCol = 7)
+  addStyle(wb, ws, hdr, rows = bm - 1, cols = 7:(8 + k))
+  writeData(wb, ws, t(regions), startRow = bm, startCol = 8, colNames = FALSE)
+  writeData(wb, ws, regions, startRow = bm + 1, startCol = 7)
+  addStyle(wb, ws, hdr, rows = bm, cols = 7:(7 + k))
+  n_pairs <- k * (k - 1) / 2
+  for (i in seq_len(k)) for (j in seq_len(k)) {
+    ri <- 4 + i; rj <- 4 + j
+    cell_col <- 7 + j
+    if (i == j) {
+      writeData(wb, ws, 1, startRow = pm + i, startCol = cell_col)
+      writeData(wb, ws, 1, startRow = bm + i, startCol = cell_col)
+    } else {
+      writeFormula(wb, ws, sprintf("=T.DIST.2T(ABS((I%d-I%d)/SQRT($H$24*(1/H%d+1/H%d))),$H$22)", ri, rj, ri, rj),
+                   startRow = pm + i, startCol = cell_col)
+      writeFormula(wb, ws, sprintf("=MIN(1,%s%d*%d)", int2col(cell_col), pm + i, n_pairs), startRow = bm + i, startCol = cell_col)
+    }
+  }
+  addStyle(wb, ws, createStyle(numFmt = "0.000"), rows = c((pm + 1):(pm + k), (bm + 1):(bm + k)), cols = 8:(7 + k), gridExpand = TRUE)
+  cnt <- bm + k + 2
+  writeData(wb, ws, c("Pairs", "Pairs significant at 0.05, no correction", "Pairs significant at 0.05, Bonferroni"),
+            startRow = cnt, startCol = 7)
+  writeData(wb, ws, n_pairs, startRow = cnt, startCol = 8)
+  writeFormula(wb, ws, sprintf("=SUMPRODUCT(--(%s%d:%s%d<0.05))/2", int2col(8), pm + 1, int2col(7 + k), pm + k), startRow = cnt + 1, startCol = 8)
+  writeFormula(wb, ws, sprintf("=SUMPRODUCT(--(%s%d:%s%d<0.05))/2", int2col(8), bm + 1, int2col(7 + k), bm + k), startRow = cnt + 2, startCol = 8)
+  writeData(wb, ws, paste(
+    "Each cell is the two-sided p-value of a t-test between two region means using MS within as the shared variance",
+    "and df within, which matches R's pairwise.t.test(). Tukey's HSD needs the studentized range distribution,",
+    "which Excel does not have. Data > Data Analysis > Anova: Single Factor writes the ANOVA table from one column per group."
+  ), startRow = cnt + 4, startCol = 7)
+  addStyle(wb, ws, note, rows = cnt + 4, cols = 7)
+  mergeCells(wb, ws, cols = 7:16, rows = cnt + 4)
+  setRowHeights(wb, ws, rows = cnt + 4, heights = 60)
+  setColWidths(wb, ws, cols = 1:16, widths = c(9, 40, 16, 10, 10, 3, 34, 12, rep(11, 8)))
+  freezePane(wb, ws, firstActiveRow = 2)
+
+  # ---- classify -------------------------------------------------------
+  # Two-predictor logistic regression (Pell share and retention) fitted on
+  # the training rows, seeded with the maximum-likelihood coefficients, a
+  # threshold cell driving the flag column, and the confusion matrix, rates,
+  # and AUC scored on the test block.
+  cl <- institutions |>
+    dplyr::filter(level == "4-year", bach_cohort >= 30,
+                  carnegie %in% c("Doctoral", "Master's", "Baccalaureate", "Special focus")) |>
+    dplyr::mutate(log_headcount = log10(headcount)) |>
+    dplyr::select(unitid, name, control, locale, carnegie, hbcu, pct_pell, net_price, stu_fac_ratio,
+                  log_headcount, pct_any_grant, pct_women_ug, pct_white_ug, pct_black_ug, pct_hispanic_ug,
+                  pct_asian_ug, pct_intl_ug, retention_ft, grad_rate_bach_6yr) |>
+    tidyr::drop_na() |>
+    dplyr::mutate(split = ifelse(unitid %% 10 < 7, "train", "test")) |>
+    dplyr::arrange(split == "test", unitid) |>
+    dplyr::select(unitid, name, control, pct_pell, retention_ft, grad_rate_bach_6yr, split) |>
+    as.data.frame()
+  cl_fit <- glm(I(grad_rate_bach_6yr < 50) ~ pct_pell + retention_ft, family = binomial,
+                data = cl[cl$split == "train", ])
+  n <- nrow(cl)
+  last <- n + 1
+  n_train <- sum(cl$split == "train")
+  tr_last <- n_train + 1
+  te_first <- n_train + 2
+  cl$split <- NULL
+  addWorksheet(wb, "classify")
+  ws <- "classify"
+  writeData(wb, ws, cl, startRow = 1, startCol = 1, headerStyle = hdr)
+  writeData(wb, ws, t(c("low", "split", "probability", "log-likelihood", "flag", "rank (test rows)")),
+            startRow = 1, startCol = 7, colNames = FALSE)
+  addStyle(wb, ws, hdr, rows = 1, cols = 7:12)
+  rows <- 2:last
+  writeFormula(wb, ws, sprintf("=IF(F%d<50,1,0)", rows), startRow = 2, startCol = 7)
+  writeFormula(wb, ws, sprintf("=IF(MOD(A%d,10)<7,\"train\",\"test\")", rows), startRow = 2, startCol = 8)
+  writeFormula(wb, ws, sprintf("=1/(1+EXP(-($O$4+$O$5*D%d+$O$6*E%d)))", rows, rows), startRow = 2, startCol = 9)
+  writeFormula(wb, ws, sprintf("=G%d*LN(I%d)+(1-G%d)*LN(1-I%d)", 2:tr_last, 2:tr_last, 2:tr_last, 2:tr_last),
+               startRow = 2, startCol = 10)
+  writeFormula(wb, ws, sprintf("=IF(I%d>=$O$9,1,0)", rows), startRow = 2, startCol = 11)
+  writeFormula(wb, ws, sprintf("=RANK.AVG(I%d,I$%d:I$%d,1)", te_first:last, te_first, last), startRow = te_first, startCol = 12)
+  addStyle(wb, ws, createStyle(numFmt = "0.000"), rows = rows, cols = 9:10, gridExpand = TRUE)
+
+  writeData(wb, ws, "Predict a yes or no", startRow = 1, startCol = 14)
+  addStyle(wb, ws, title, rows = 1, cols = 14)
+  writeData(wb, ws, paste(
+    "Outcome: 6-year completion under 50% (column G). Training rows (last digit of unitid 0-6) are rows 2 to", tr_last,
+    "and the test rows follow. The coefficients below are the maximum-likelihood fit on the training rows;",
+    "Solver (maximize O7 by changing O4:O6, GRG Nonlinear) reaches them from 0, 0, 0. Every count from row 10 down",
+    "scores the test rows only, and changing the threshold in O9 moves all of them."
+  ), startRow = 2, startCol = 14)
+  addStyle(wb, ws, note, rows = 2, cols = 14)
+  mergeCells(wb, ws, cols = 14:20, rows = 2)
+  setRowHeights(wb, ws, rows = 2, heights = 72)
+  writeData(wb, ws, c("Intercept", "Pell coefficient (per point)", "Retention coefficient (per point)",
+                      "Log-likelihood on training rows (maximize)"), startRow = 4, startCol = 14)
+  writeData(wb, ws, unname(coef(cl_fit)[1]), startRow = 4, startCol = 15)
+  writeData(wb, ws, unname(coef(cl_fit)[2]), startRow = 5, startCol = 15)
+  writeData(wb, ws, unname(coef(cl_fit)[3]), startRow = 6, startCol = 15)
+  writeFormula(wb, ws, sprintf("=SUM(J2:J%d)", tr_last), startRow = 7, startCol = 15)
+  addStyle(wb, ws, createStyle(numFmt = "0.0000"), rows = 4:6, cols = 15, gridExpand = TRUE)
+  addStyle(wb, ws, num1, rows = 7, cols = 15)
+  writeData(wb, ws, "Threshold: flag when the probability is at least", startRow = 9, startCol = 14)
+  writeData(wb, ws, 0.5, startRow = 9, startCol = 15)
+  addStyle(wb, ws, createStyle(numFmt = "0.00", fgFill = "#fff3e8"), rows = 9, cols = 15)
+  te <- function(col) sprintf("%s%d:%s%d", col, te_first, col, last)
+  cm_labels <- c("Test rows", "Low-completion rows among them", "True positives (caught)", "False positives (false alarms)",
+                 "False negatives (missed)", "True negatives", "Accuracy", "Precision", "Recall", "Specificity",
+                 "Flagged", "AUC (rank formula)")
+  cm_forms <- c(
+    sprintf("=COUNT(%s)", te("G")),
+    sprintf("=SUM(%s)", te("G")),
+    sprintf("=SUMPRODUCT((%s=1)*(%s=1))", te("K"), te("G")),
+    sprintf("=SUMPRODUCT((%s=1)*(%s=0))", te("K"), te("G")),
+    sprintf("=SUMPRODUCT((%s=0)*(%s=1))", te("K"), te("G")),
+    sprintf("=SUMPRODUCT((%s=0)*(%s=0))", te("K"), te("G")),
+    "=(O12+O15)/O10",
+    "=O12/(O12+O13)",
+    "=O12/(O12+O14)",
+    "=O15/(O15+O13)",
+    "=O12+O13",
+    sprintf("=(SUMPRODUCT(%s,%s)-O11*(O11+1)/2)/(O11*(O10-O11))", te("L"), te("G"))
+  )
+  writeData(wb, ws, cm_labels, startRow = 10, startCol = 14)
+  for (i in seq_along(cm_forms)) writeFormula(wb, ws, cm_forms[i], startRow = 9 + i, startCol = 15)
+  addStyle(wb, ws, createStyle(numFmt = "0.0%"), rows = 16:19, cols = 15, gridExpand = TRUE)
+  addStyle(wb, ws, createStyle(numFmt = "0.000"), rows = 21, cols = 15)
+
+  writeData(wb, ws, t(c("Threshold", "Caught", "False alarms", "Missed", "Left alone", "Precision", "Recall", "Flagged")),
+            startRow = 24, startCol = 14, colNames = FALSE)
+  addStyle(wb, ws, hdr, rows = 24, cols = 14:21)
+  ths <- seq(0.1, 0.9, by = 0.1)
+  writeData(wb, ws, ths, startRow = 25, startCol = 14)
+  for (i in seq_along(ths)) {
+    r <- 24 + i
+    writeFormula(wb, ws, sprintf("=SUMPRODUCT((%s>=N%d)*(%s=1))", te("I"), r, te("G")), startRow = r, startCol = 15)
+    writeFormula(wb, ws, sprintf("=SUMPRODUCT((%s>=N%d)*(%s=0))", te("I"), r, te("G")), startRow = r, startCol = 16)
+    writeFormula(wb, ws, sprintf("=SUMPRODUCT((%s<N%d)*(%s=1))", te("I"), r, te("G")), startRow = r, startCol = 17)
+    writeFormula(wb, ws, sprintf("=SUMPRODUCT((%s<N%d)*(%s=0))", te("I"), r, te("G")), startRow = r, startCol = 18)
+    writeFormula(wb, ws, sprintf("=O%d/(O%d+P%d)", r, r, r), startRow = r, startCol = 19)
+    writeFormula(wb, ws, sprintf("=O%d/(O%d+Q%d)", r, r, r), startRow = r, startCol = 20)
+    writeFormula(wb, ws, sprintf("=O%d+P%d", r, r), startRow = r, startCol = 21)
+  }
+  th_last <- 24 + length(ths)
+  addStyle(wb, ws, createStyle(numFmt = "0.0"), rows = 25:th_last, cols = 14, gridExpand = TRUE)
+  addStyle(wb, ws, createStyle(numFmt = "0.0%"), rows = 25:th_last, cols = 19:20, gridExpand = TRUE)
+  writeData(wb, ws, paste(
+    "Recall falls and precision rises as the threshold climbs; the model never changes, only the line through its",
+    "probabilities. The AUC uses the rank of each test probability (column L): the sum of the ranks of the low-completion",
+    "rows, corrected for their own count, over the number of low-and-not-low pairs."
+  ), startRow = th_last + 2, startCol = 14)
+  addStyle(wb, ws, note, rows = th_last + 2, cols = 14)
+  mergeCells(wb, ws, cols = 14:21, rows = th_last + 2)
+  setRowHeights(wb, ws, rows = th_last + 2, heights = 60)
+  setColWidths(wb, ws, cols = 1:21, widths = c(9, 40, 18, 9, 10, 10, 6, 8, 11, 13, 6, 14, 3, 44, 12, 12, 10, 11, 10, 10, 10))
+  freezePane(wb, ws, firstActiveRow = 2)
+
+  # ---- subtotals ------------------------------------------------------
+  # Every fall 2023 enrollment row for one state's institutions, as IPEDS
+  # ships them, with the codes table beside them. INDEX/MATCH lookups turn
+  # the codes into words, and the sums show every row against the detail
+  # lines and the reported total, institution by institution and in all.
+  ri_ids <- institutions$unitid[institutions$state == "RI"]
+  st <- lines |>
+    dplyr::filter(unitid %in% ri_ids) |>
+    dplyr::inner_join(dplyr::select(institutions, unitid, name), by = "unitid") |>
+    dplyr::arrange(unitid, efalevel) |>
+    dplyr::select(unitid, name, efalevel, line, section, lstudy, eftotlt) |>
+    as.data.frame()
+  n <- nrow(st)
+  last <- n + 1
+  ws <- "subtotals"
+  addWorksheet(wb, ws)
+  writeData(wb, ws, st, startRow = 1, startCol = 1, headerStyle = hdr)
+  writeData(wb, ws, t(c("kind", "attendance", "category")), startRow = 1, startCol = 8, colNames = FALSE)
+  addStyle(wb, ws, hdr, rows = 1, cols = 8:10)
+  rows <- 2:last
+  writeFormula(wb, ws, sprintf("=INDEX($AD$2:$AD$28,MATCH(C%d,$W$2:$W$28,0))", rows), startRow = 2, startCol = 8)
+  writeFormula(wb, ws, sprintf("=INDEX($AA$2:$AA$28,MATCH(C%d,$W$2:$W$28,0))", rows), startRow = 2, startCol = 9)
+  writeFormula(wb, ws, sprintf("=INDEX($AC$2:$AC$28,MATCH(C%d,$W$2:$W$28,0))", rows), startRow = 2, startCol = 10)
+  cd <- codes[, c("efalevel", "line", "section", "lstudy", "attendance", "level", "category", "kind", "label")]
+  writeData(wb, ws, as.data.frame(cd), startRow = 1, startCol = 23, headerStyle = hdr)
+  addStyle(wb, ws, mono, rows = 2:28, cols = 23:26, gridExpand = TRUE)
+
+  insts <- unique(st[, c("unitid", "name")])
+  k <- nrow(insts)
+  writeData(wb, ws, "The subtotal trap: every fall 2023 enrollment row for Rhode Island", startRow = 1, startCol = 12)
+  addStyle(wb, ws, title, rows = 1, cols = 12)
+  writeData(wb, ws, paste(
+    "Columns A to G are the rows as IPEDS ships them; H to J look each row's EFALEVEL up in the codes table in",
+    "columns W to AE. Every row adds the same students several times over; the detail lines add each student",
+    "once and reproduce the reported total (LINE 29). The grain block below is a SUMIFS grid on the lookup columns."
+  ), startRow = 2, startCol = 12)
+  addStyle(wb, ws, note, rows = 2, cols = 12)
+  mergeCells(wb, ws, cols = 12:21, rows = 2)
+  setRowHeights(wb, ws, rows = 2, heights = 60)
+  writeData(wb, ws, t(c("Institution", "unitid", "Rows", "Every row", "Reported total (LINE 29)", "Detail lines",
+                        "Times the real headcount")), startRow = 4, startCol = 12, colNames = FALSE)
+  addStyle(wb, ws, hdr, rows = 4, cols = 12:18)
+  writeData(wb, ws, insts$name, startRow = 5, startCol = 12)
+  writeData(wb, ws, insts$unitid, startRow = 5, startCol = 13)
+  for (i in seq_len(k)) {
+    r <- 4 + i
+    writeFormula(wb, ws, sprintf("=COUNTIF($A$2:$A$%d,M%d)", last, r), startRow = r, startCol = 14)
+    writeFormula(wb, ws, sprintf("=SUMIF($A$2:$A$%d,M%d,$G$2:$G$%d)", last, r, last), startRow = r, startCol = 15)
+    writeFormula(wb, ws, sprintf("=SUMIFS($G$2:$G$%d,$A$2:$A$%d,M%d,$D$2:$D$%d,29)", last, last, r, last), startRow = r, startCol = 16)
+    writeFormula(wb, ws, sprintf("=SUMIFS($G$2:$G$%d,$A$2:$A$%d,M%d,$H$2:$H$%d,\"Detail\")", last, last, r, last), startRow = r, startCol = 17)
+    writeFormula(wb, ws, sprintf("=O%d/P%d", r, r), startRow = r, startCol = 18)
+  }
+  tot <- 5 + k
+  writeData(wb, ws, "All institutions", startRow = tot, startCol = 12)
+  for (cc in 14:17) writeFormula(wb, ws, sprintf("=SUM(%s5:%s%d)", int2col(cc), int2col(cc), tot - 1), startRow = tot, startCol = cc)
+  writeFormula(wb, ws, sprintf("=O%d/P%d", tot, tot), startRow = tot, startCol = 18)
+  addStyle(wb, ws, createStyle(numFmt = "#,##0"), rows = 5:tot, cols = 14:17, gridExpand = TRUE)
+  addStyle(wb, ws, num1, rows = 5:tot, cols = 18, gridExpand = TRUE)
+  addStyle(wb, ws, createStyle(textDecoration = "bold"), rows = tot, cols = 12:18, gridExpand = TRUE)
+
+  gr <- tot + 3
+  writeData(wb, ws, "The clean grain: detail lines by attendance and category", startRow = gr - 1, startCol = 12)
+  addStyle(wb, ws, hdr, rows = gr - 1, cols = 12:15)
+  writeData(wb, ws, t(c("Category", "Full-time", "Part-time", "All")), startRow = gr, startCol = 12, colNames = FALSE)
+  addStyle(wb, ws, hdr, rows = gr, cols = 12:15)
+  cats <- c("First-time", "Transfer-in", "Continuing", "Non-degree", "Graduate")
+  writeData(wb, ws, cats, startRow = gr + 1, startCol = 12)
+  for (i in seq_along(cats)) {
+    r <- gr + i
+    for (cc in 13:14) {
+      writeFormula(wb, ws, sprintf("=SUMIFS($G$2:$G$%d,$H$2:$H$%d,\"Detail\",$I$2:$I$%d,%s$%d,$J$2:$J$%d,$L%d)",
+                                   last, last, last, int2col(cc), gr, last, r), startRow = r, startCol = cc)
+    }
+    writeFormula(wb, ws, sprintf("=M%d+N%d", r, r), startRow = r, startCol = 15)
+  }
+  gt <- gr + length(cats) + 1
+  writeData(wb, ws, "All", startRow = gt, startCol = 12)
+  for (cc in 13:15) writeFormula(wb, ws, sprintf("=SUM(%s%d:%s%d)", int2col(cc), gr + 1, int2col(cc), gt - 1), startRow = gt, startCol = cc)
+  writeData(wb, ws, "Check: grain total minus the reported totals (0 when the grain is right)", startRow = gt + 1, startCol = 12)
+  writeFormula(wb, ws, sprintf("=O%d-P%d", gt, tot), startRow = gt + 1, startCol = 15)
+  addStyle(wb, ws, createStyle(numFmt = "#,##0"), rows = (gr + 1):(gt + 1), cols = 13:15, gridExpand = TRUE)
+  addStyle(wb, ws, createStyle(textDecoration = "bold"), rows = gt, cols = 12:15, gridExpand = TRUE)
+  setColWidths(wb, ws, cols = 1:31, widths = c(9, 36, 9, 6, 8, 7, 9, 11, 11, 20, 3, 40, 9, 8, 12, 14, 12, 12, 3, 3, 3, 3,
+                                              9, 6, 8, 7, 11, 14, 20, 11, 70))
+  freezePane(wb, ws, firstActiveRow = 2)
+
+  # ---- proportions ----------------------------------------------------
+  # Control by locale as a COUNTIFS grid on the Institutions table, the
+  # expected counts from the margins, the chi-square statistic and its
+  # p-value three ways, adjusted residuals, and Wilson and two-proportion
+  # blocks on the rural column.
+  ws <- "proportions"
+  addWorksheet(wb, ws)
+  controls <- c("Public", "Private nonprofit", "Private for-profit")
+  locales <- c("City", "Suburb", "Town", "Rural")
+  writeData(wb, ws, "Counts and proportions: control by locale", startRow = 1, startCol = 2)
+  addStyle(wb, ws, title, rows = 1, cols = 2)
+  writeData(wb, ws, paste(
+    "The observed table counts the Institutions table with COUNTIFS. Expected counts are row total times column",
+    "total over the grand total. Chi-square is the sum of (O - E)^2 / E, its p-value comes from CHISQ.DIST.RT and,",
+    "in one step, CHISQ.TEST. Residuals are adjusted standardized residuals, matching R's chisq.test()$stdres."
+  ), startRow = 2, startCol = 2)
+  addStyle(wb, ws, note, rows = 2, cols = 2)
+  mergeCells(wb, ws, cols = 2:17, rows = 2)
+  setRowHeights(wb, ws, rows = 2, heights = 48)
+  block <- function(top, label, cell_formula) {
+    writeData(wb, ws, t(c(label, locales, if (identical(label, "Observed")) "Total")), startRow = top, startCol = 2, colNames = FALSE)
+    addStyle(wb, ws, hdr, rows = top, cols = 2:(if (identical(label, "Observed")) 7 else 6))
+    writeData(wb, ws, controls, startRow = top + 1, startCol = 2)
+    for (i in 1:3) for (j in 1:4) {
+      writeFormula(wb, ws, cell_formula(top + i, int2col(2 + j), i, j), startRow = top + i, startCol = 2 + j)
+    }
+  }
+  block(4, "Observed", function(r, col, i, j) sprintf("=COUNTIFS(Institutions[control],$B%d,Institutions[locale],%s$4)", r, col))
+  for (i in 1:3) writeFormula(wb, ws, sprintf("=SUM(C%d:F%d)", 4 + i, 4 + i), startRow = 4 + i, startCol = 7)
+  writeData(wb, ws, "Total", startRow = 8, startCol = 2)
+  for (j in 3:7) writeFormula(wb, ws, sprintf("=SUM(%s5:%s7)", int2col(j), int2col(j)), startRow = 8, startCol = j)
+  addStyle(wb, ws, createStyle(textDecoration = "bold"), rows = 8, cols = 2:7, gridExpand = TRUE)
+  block(10, "Expected", function(r, col, i, j) sprintf("=$G%d*%s$8/$G$8", 4 + i, col))
+  block(15, "(O - E)^2 / E", function(r, col, i, j) sprintf("=(%s%d-%s%d)^2/%s%d", col, 4 + i, col, 10 + i, col, 10 + i))
+  block(20, "Adjusted residual", function(r, col, i, j) sprintf("=(%s%d-%s%d)/SQRT(%s%d*(1-$G%d/$G$8)*(1-%s$8/$G$8))", col, 4 + i, col, 10 + i, col, 10 + i, 4 + i, col))
+  addStyle(wb, ws, num1, rows = 11:13, cols = 3:6, gridExpand = TRUE)
+  addStyle(wb, ws, num1, rows = 16:18, cols = 3:6, gridExpand = TRUE)
+  addStyle(wb, ws, num1, rows = 21:23, cols = 3:6, gridExpand = TRUE)
+
+  writeData(wb, ws, t(c("Test", "Value")), startRow = 4, startCol = 9, colNames = FALSE)
+  addStyle(wb, ws, hdr, rows = 4, cols = 9:10)
+  test_labels <- c("Institutions (n)", "Rows", "Columns", "Degrees of freedom", "Chi-square", "p-value (CHISQ.DIST.RT)",
+                   "p-value (CHISQ.TEST)", "Cramer's V", "Largest absolute residual")
+  test_forms <- c("=G8", "=COUNTA(B5:B7)", "=COUNTA(C4:F4)", "=(J6-1)*(J7-1)", "=SUM(C16:F18)", "=CHISQ.DIST.RT(J9,J8)",
+                  "=CHISQ.TEST(C5:F7,C11:F13)", "=SQRT(J9/(J5*(MIN(J6,J7)-1)))", "=MAX(ABS(C21:F23))")
+  writeData(wb, ws, test_labels, startRow = 5, startCol = 9)
+  for (i in seq_along(test_forms)) writeFormula(wb, ws, test_forms[i], startRow = 4 + i, startCol = 10, array = i == length(test_forms))
+  addStyle(wb, ws, createStyle(numFmt = "#,##0"), rows = 5, cols = 10)
+  addStyle(wb, ws, num1, rows = c(9, 13), cols = 10, gridExpand = TRUE)
+  addStyle(wb, ws, createStyle(numFmt = "0.00E+00"), rows = 10:11, cols = 10, gridExpand = TRUE)
+  addStyle(wb, ws, createStyle(numFmt = "0.000"), rows = 12, cols = 10)
+
+  writeData(wb, ws, "Wilson 95% interval for the share of each control in a rural locale", startRow = 15, startCol = 9)
+  addStyle(wb, ws, hdr, rows = 15, cols = 9:17)
+  writeData(wb, ws, t(c("Control", "x (rural)", "n", "Share", "z", "Centre", "Half-width", "Lower", "Upper")),
+            startRow = 16, startCol = 9, colNames = FALSE)
+  addStyle(wb, ws, hdr, rows = 16, cols = 9:17)
+  writeData(wb, ws, controls, startRow = 17, startCol = 9)
+  for (i in 1:3) {
+    r <- 16 + i
+    writeFormula(wb, ws, sprintf("=F%d", 4 + i), startRow = r, startCol = 10)
+    writeFormula(wb, ws, sprintf("=G%d", 4 + i), startRow = r, startCol = 11)
+    writeFormula(wb, ws, sprintf("=J%d/K%d", r, r), startRow = r, startCol = 12)
+    writeFormula(wb, ws, "=NORM.S.INV(0.975)", startRow = r, startCol = 13)
+    writeFormula(wb, ws, sprintf("=(L%d+M%d^2/(2*K%d))/(1+M%d^2/K%d)", r, r, r, r, r), startRow = r, startCol = 14)
+    writeFormula(wb, ws, sprintf("=M%d*SQRT(L%d*(1-L%d)/K%d+M%d^2/(4*K%d^2))/(1+M%d^2/K%d)", r, r, r, r, r, r, r, r), startRow = r, startCol = 15)
+    writeFormula(wb, ws, sprintf("=N%d-O%d", r, r), startRow = r, startCol = 16)
+    writeFormula(wb, ws, sprintf("=N%d+O%d", r, r), startRow = r, startCol = 17)
+  }
+  addStyle(wb, ws, createStyle(numFmt = "0.0%"), rows = 17:19, cols = c(12, 14:17), gridExpand = TRUE)
+  addStyle(wb, ws, num2, rows = 17:19, cols = 13, gridExpand = TRUE)
+
+  writeData(wb, ws, "Two proportions: public against private nonprofit, rural share", startRow = 22, startCol = 9)
+  addStyle(wb, ws, hdr, rows = 22, cols = 9:10)
+  two_labels <- c("x1 (public, rural)", "n1 (public)", "x2 (nonprofit, rural)", "n2 (nonprofit)", "p1", "p2", "Difference",
+                  "Pooled p", "z", "p-value (two-sided)", "Lower (95%)", "Upper (95%)")
+  two_forms <- c("=F5", "=G5", "=F6", "=G6", "=J23/J24", "=J25/J26", "=J27-J28", "=(J23+J25)/(J24+J26)",
+                 "=J29/SQRT(J30*(1-J30)*(1/J24+1/J26))", "=2*(1-NORM.S.DIST(ABS(J31),TRUE))",
+                 "=J29-1.96*SQRT(J27*(1-J27)/J24+J28*(1-J28)/J26)", "=J29+1.96*SQRT(J27*(1-J27)/J24+J28*(1-J28)/J26)")
+  writeData(wb, ws, two_labels, startRow = 23, startCol = 9)
+  for (i in seq_along(two_forms)) writeFormula(wb, ws, two_forms[i], startRow = 22 + i, startCol = 10)
+  addStyle(wb, ws, createStyle(numFmt = "0.0%"), rows = c(27:30, 33:34), cols = 10, gridExpand = TRUE)
+  addStyle(wb, ws, num2, rows = 31, cols = 10)
+  addStyle(wb, ws, createStyle(numFmt = "0.00E+00"), rows = 32, cols = 10)
+  writeData(wb, ws, paste(
+    "The difference's interval is the Wald form that R's prop.test() reports without a continuity correction; z squared",
+    "is the chi-square that prop.test() prints. There is no Fisher's exact test in Excel: when an expected count is",
+    "under 5, collapse categories until every cell clears it, or take the question to R."
+  ), startRow = 36, startCol = 9)
+  addStyle(wb, ws, note, rows = 36, cols = 9)
+  mergeCells(wb, ws, cols = 9:17, rows = 36)
+  setRowHeights(wb, ws, rows = 36, heights = 48)
+  setColWidths(wb, ws, cols = 1:17, widths = c(3, 20, 10, 10, 10, 10, 10, 3, 30, 12, 10, 10, 8, 10, 11, 10, 10))
+
+  # ---- forecast -------------------------------------------------------
+  # One row per institution with a fall headcount in every year 2013 to
+  # 2023, six one-formula forecasts for fall 2023 made from the years to
+  # 2022, their absolute percentage errors, and the medians by method and
+  # by size that the lesson reports. The block at the right scores any
+  # one institution and gives its 2024 forecast an empirical interval.
+  yrs <- 2013:2023
+  hc <- history |>
+    dplyr::filter(!is.na(total), total > 0) |>
+    dplyr::group_by(unitid) |>
+    dplyr::filter(dplyr::n() == length(yrs)) |>
+    dplyr::ungroup()
+  fw <- hc |>
+    dplyr::select(unitid, year, total) |>
+    tidyr::pivot_wider(names_from = year, values_from = total, names_prefix = "fall_") |>
+    dplyr::inner_join(dplyr::select(institutions, unitid, name), by = "unitid") |>
+    dplyr::select(unitid, name, dplyr::everything()) |>
+    dplyr::arrange(unitid) |>
+    as.data.frame()
+  n <- nrow(fw)
+  last <- n + 1
+  ws <- "forecast"
+  addWorksheet(wb, ws)
+  writeData(wb, ws, fw, startRow = 1, startCol = 1, headerStyle = hdr)
+  method_names <- c("Last value", "Mean of last three", "Drift", "Half the last change", "Trend, last five years", "Trend, all years")
+  writeData(wb, ws, t(c(method_names, paste("APE:", method_names), "Change 2022 to 2023")), startRow = 1, startCol = 14, colNames = FALSE)
+  addStyle(wb, ws, hdr, rows = 1, cols = 14:26)
+  rows <- 2:last
+  writeFormula(wb, ws, sprintf("=L%d", rows), startRow = 2, startCol = 14)
+  writeFormula(wb, ws, sprintf("=AVERAGE(J%d:L%d)", rows, rows), startRow = 2, startCol = 15)
+  writeFormula(wb, ws, sprintf("=L%d+(L%d-C%d)/9", rows, rows, rows), startRow = 2, startCol = 16)
+  writeFormula(wb, ws, sprintf("=L%d+0.5*(L%d-K%d)", rows, rows, rows), startRow = 2, startCol = 17)
+  writeFormula(wb, ws, sprintf("=TREND(H%d:L%d,{1,2,3,4,5},6)", rows, rows), startRow = 2, startCol = 18)
+  writeFormula(wb, ws, sprintf("=TREND(C%d:L%d,{1,2,3,4,5,6,7,8,9,10},11)", rows, rows), startRow = 2, startCol = 19)
+  for (m in seq_along(method_names)) {
+    fc_col <- int2col(13 + m)
+    writeFormula(wb, ws, sprintf("=ABS(%s%d-$M%d)/$M%d", fc_col, rows, rows, rows), startRow = 2, startCol = 19 + m)
+  }
+  writeFormula(wb, ws, sprintf("=M%d/L%d-1", rows, rows), startRow = 2, startCol = 26)
+  addStyle(wb, ws, createStyle(numFmt = "#,##0"), rows = rows, cols = 3:19, gridExpand = TRUE)
+  addStyle(wb, ws, createStyle(numFmt = "0.0%"), rows = rows, cols = 20:26, gridExpand = TRUE)
+
+  writeData(wb, ws, "Next fall: six forecasts for fall 2023, scored", startRow = 1, startCol = 28)
+  addStyle(wb, ws, title, rows = 1, cols = 28)
+  writeData(wb, ws, paste(
+    "Columns C to M are fall headcount 2013 to 2023. Each forecast in N to S uses the years to 2022 only, and its",
+    "absolute percentage error against column M sits in T to Y. The medians below are the lesson's scores for the",
+    "2022 origin; the lesson pools six origins, so its numbers differ a little. The interval block uses the",
+    "2022-to-2023 changes at institutions in the same size band (the lesson pools all ten years of changes)."
+  ), startRow = 2, startCol = 28)
+  addStyle(wb, ws, note, rows = 2, cols = 28)
+  mergeCells(wb, ws, cols = 28:32, rows = 2)
+  setRowHeights(wb, ws, rows = 2, heights = 84)
+  writeData(wb, ws, t(c("Method", "Median APE", "Mean APE")), startRow = 4, startCol = 28, colNames = FALSE)
+  addStyle(wb, ws, hdr, rows = 4, cols = 28:30)
+  writeData(wb, ws, method_names, startRow = 5, startCol = 28)
+  for (m in seq_along(method_names)) {
+    ape_col <- int2col(19 + m)
+    writeFormula(wb, ws, sprintf("=MEDIAN(%s$2:%s$%d)", ape_col, ape_col, last), startRow = 4 + m, startCol = 29)
+    writeFormula(wb, ws, sprintf("=AVERAGE(%s$2:%s$%d)", ape_col, ape_col, last), startRow = 4 + m, startCol = 30)
+  }
+  addStyle(wb, ws, createStyle(numFmt = "0.0%"), rows = 5:10, cols = 29:30, gridExpand = TRUE)
+
+  writeData(wb, ws, t(c("Fall 2022 headcount", "From", "Below", "Median APE, last value", "Institutions")), startRow = 12, startCol = 28, colNames = FALSE)
+  addStyle(wb, ws, hdr, rows = 12, cols = 28:32)
+  bands <- data.frame(label = c("under 500", "500 to 1,999", "2,000 to 9,999", "10,000 and more"),
+                      lo = c(0, 500, 2000, 10000), hi = c(500, 2000, 10000, 1e9))
+  writeData(wb, ws, bands$label, startRow = 13, startCol = 28)
+  writeData(wb, ws, bands$lo, startRow = 13, startCol = 29)
+  writeData(wb, ws, bands$hi, startRow = 13, startCol = 30)
+  for (i in seq_len(nrow(bands))) {
+    r <- 12 + i
+    writeFormula(wb, ws, sprintf("=MEDIAN(IF(($L$2:$L$%d>=AC%d)*($L$2:$L$%d<AD%d),$T$2:$T$%d))", last, r, last, r, last),
+                 startRow = r, startCol = 31, array = TRUE)
+    writeFormula(wb, ws, sprintf("=COUNTIFS($L$2:$L$%d,\">=\"&AC%d,$L$2:$L$%d,\"<\"&AD%d)", last, r, last, r), startRow = r, startCol = 32)
+  }
+  addStyle(wb, ws, createStyle(numFmt = "0.0%"), rows = 13:16, cols = 31, gridExpand = TRUE)
+  addStyle(wb, ws, createStyle(numFmt = "#,##0"), rows = 13:16, cols = c(29, 30, 32), gridExpand = TRUE)
+
+  writeData(wb, ws, t(c("One institution", "Value")), startRow = 19, startCol = 28, colNames = FALSE)
+  addStyle(wb, ws, hdr, rows = 19, cols = 28:29)
+  one_labels <- c("unitid (type any from column A)", "Name", "Fall 2023", "Size band from", "Size band below",
+                  "10th percentile of change in the band", "90th percentile of change in the band",
+                  "Forecast for fall 2024 (last value)", "Lower (80% interval)", "Upper (80% interval)")
+  one_forms <- c(
+    NA,
+    sprintf("=INDEX($B$2:$B$%d,MATCH(AC20,$A$2:$A$%d,0))", last, last),
+    sprintf("=INDEX($M$2:$M$%d,MATCH(AC20,$A$2:$A$%d,0))", last, last),
+    "=IF(AC22<500,0,IF(AC22<2000,500,IF(AC22<10000,2000,10000)))",
+    "=IF(AC22<500,500,IF(AC22<2000,2000,IF(AC22<10000,10000,1E+9)))",
+    sprintf("=PERCENTILE.INC(IF(($L$2:$L$%d>=AC23)*($L$2:$L$%d<AC24),$Z$2:$Z$%d),0.1)", last, last, last),
+    sprintf("=PERCENTILE.INC(IF(($L$2:$L$%d>=AC23)*($L$2:$L$%d<AC24),$Z$2:$Z$%d),0.9)", last, last, last),
+    "=AC22",
+    "=ROUND(AC27*(1+AC25),0)",
+    "=ROUND(AC27*(1+AC26),0)"
+  )
+  writeData(wb, ws, one_labels, startRow = 20, startCol = 28)
+  writeData(wb, ws, 135717, startRow = 20, startCol = 29)
+  addStyle(wb, ws, createStyle(fgFill = "#fff3e8"), rows = 20, cols = 29)
+  for (i in seq_along(one_forms)) {
+    if (is.na(one_forms[i])) next
+    writeFormula(wb, ws, one_forms[i], startRow = 19 + i, startCol = 29, array = i %in% c(6, 7))
+  }
+  addStyle(wb, ws, createStyle(numFmt = "#,##0"), rows = c(22:24, 27:29), cols = 29, gridExpand = TRUE)
+  addStyle(wb, ws, createStyle(numFmt = "0.0%"), rows = 25:26, cols = 29, gridExpand = TRUE)
+  setColWidths(wb, ws, cols = 1:32, widths = c(9, 40, rep(9, 11), rep(12, 6), rep(9, 6), 10, 3, 40, 12, 12, 20, 12))
+  freezePane(wb, ws, firstActiveRow = 2, firstActiveCol = 3)
 
   saveWorkbook(wb, path, overwrite = TRUE)
 }

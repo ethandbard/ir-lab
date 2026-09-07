@@ -1,0 +1,978 @@
+---
+title: "Next fall"
+subtitle: "Forecasting enrollment from a short history without fooling yourself"
+webr:
+  packages:
+    - dplyr
+    - ggplot2
+    - tidyr
+  resources:
+    - data/enrollment_history.csv
+    - data/institutions.csv
+pyodide:
+  packages:
+    - pandas
+    - matplotlib
+  resources:
+    - data/enrollment_history.csv
+    - data/institutions.csv
+---
+
+{{< include ./_extensions/r-wasm/live/_knitr.qmd >}}
+
+```{r}
+#| include: false
+source("_common.R")
+library(tidyr)
+hist <- read_csv("data/enrollment_history.csv", show_col_types = FALSE)
+years <- 2013:2023
+n_hist_inst <- n_distinct(hist$unitid)
+complete <- hist |>
+  group_by(unitid) |>
+  filter(n() == length(years), all(!is.na(total)), all(total > 0)) |>
+  ungroup()
+n_complete <- n_distinct(complete$unitid)
+wide <- complete |>
+  select(unitid, year, total) |>
+  pivot_wider(names_from = year, values_from = total, names_prefix = "y") |>
+  inner_join(select(institutions, unitid, name, control, level), by = "unitid")
+Y <- as.matrix(wide[, paste0("y", years)])
+nat <- colSums(Y)
+nat_2013 <- nat[["y2013"]]
+nat_2019 <- nat[["y2019"]]
+nat_2022 <- nat[["y2022"]]
+nat_2023 <- nat[["y2023"]]
+nat_drop <- round(100 * (1 - nat_2022 / nat_2019), 1)
+trend_next <- function(M, k) {
+  # Least-squares line through the last k columns of M, one row at a time,
+  # evaluated one step past the end. Identical to lm(y ~ x) row by row.
+  M <- M[, (ncol(M) - k + 1):ncol(M), drop = FALSE]
+  x <- seq_len(k)
+  xbar <- mean(x)
+  slope <- (M %*% (x - xbar)) / sum((x - xbar)^2)
+  rowMeans(M) + slope * (k + 1 - xbar)
+}
+methods <- c("Last value", "Mean of last three", "Drift", "Half the last change", "Trend, last five years", "Trend, all years")
+forecast_all <- function(M) {
+  n <- ncol(M)
+  last <- M[, n]
+  cbind(
+    `Last value` = last,
+    `Mean of last three` = rowMeans(M[, (n - 2):n]),
+    `Drift` = last + (last - M[, 1]) / (n - 1),
+    `Half the last change` = last + 0.5 * (last - M[, n - 1]),
+    `Trend, last five years` = as.numeric(trend_next(M, 5)),
+    `Trend, all years` = as.numeric(trend_next(M, n))
+  )
+}
+origins <- 2017:2022
+bench <- bind_rows(lapply(origins, function(o) {
+  M <- Y[, seq_len(o - 2012), drop = FALSE]
+  fc <- forecast_all(M)
+  actual <- Y[, o - 2012 + 1]
+  bind_rows(lapply(colnames(fc), function(m) {
+    tibble(unitid = wide$unitid, origin = o, method = m, forecast = fc[, m], actual = actual, last = M[, ncol(M)])
+  }))
+})) |>
+  mutate(ape = abs(forecast - actual) / actual, pct_err = (forecast - actual) / actual)
+overall <- bench |> group_by(method) |> summarise(median_ape = median(ape)) |> arrange(median_ape)
+ape_of <- function(m) round(100 * overall$median_ape[overall$method == m], 1)
+ape_naive <- ape_of("Last value")
+ape_mean3 <- ape_of("Mean of last three")
+ape_drift <- ape_of("Drift")
+ape_damped <- ape_of("Half the last change")
+ape_trend5 <- ape_of("Trend, last five years")
+ape_trendall <- ape_of("Trend, all years")
+best_method <- overall$method[1]
+by_origin <- bench |> group_by(origin, method) |> summarise(median_ape = median(ape), .groups = "drop")
+worst_origin <- by_origin |> filter(method == "Last value") |> arrange(desc(median_ape))
+worst_o <- worst_origin$origin[1]
+worst_ape <- round(100 * worst_origin$median_ape[1], 1)
+best_o_ape <- round(100 * min(worst_origin$median_ape), 1)
+winner_2019 <- by_origin |> filter(origin == 2019) |> arrange(median_ape) |> slice(1)
+head_to_head <- bench |>
+  select(unitid, origin, method, ape) |>
+  pivot_wider(names_from = method, values_from = ape) |>
+  summarise(vs_trend5 = mean(`Last value` < `Trend, last five years`),
+            vs_mean3 = mean(`Last value` < `Mean of last three`),
+            vs_trendall = mean(`Last value` < `Trend, all years`))
+naive_beats_trend5 <- round(100 * head_to_head$vs_trend5)
+naive_beats_mean3 <- round(100 * head_to_head$vs_mean3)
+by_size <- bench |>
+  filter(method == "Last value") |>
+  mutate(band = cut(last, c(0, 500, 2000, 10000, Inf), labels = c("under 500", "500 to 1,999", "2,000 to 9,999", "10,000 and more"))) |>
+  group_by(band) |>
+  summarise(median_ape = round(100 * median(ape), 1), n = n_distinct(unitid))
+ape_small <- by_size$median_ape[1]
+ape_big <- by_size$median_ape[4]
+cc_2019 <- bench |>
+  inner_join(select(wide, unitid, control, level), by = "unitid") |>
+  filter(origin == 2019, level == "2-year", control == "Public") |>
+  group_by(method) |>
+  summarise(median_pct_err = round(100 * median(pct_err), 1), .groups = "drop")
+cc_over_naive <- cc_2019$median_pct_err[cc_2019$method == "Last value"]
+cc_over_trendall <- cc_2019$median_pct_err[cc_2019$method == "Trend, all years"]
+n_cc <- wide |> filter(level == "2-year", control == "Public") |> nrow()
+mdc <- wide[wide$unitid == 135717, ]
+mdc_name <- mdc$name
+mdc_2013 <- mdc$y2013
+mdc_2019 <- mdc$y2019
+mdc_2020 <- mdc$y2020
+mdc_2023 <- mdc$y2023
+mdc_fit <- lm(total ~ year, data = filter(complete, unitid == 135717, year <= 2019))
+mdc_r2 <- round(summary(mdc_fit)$r.squared, 2)
+mdc_trend_2020 <- round(unname(predict(mdc_fit, data.frame(year = 2020))))
+mdc_slope <- round(unname(coef(mdc_fit)[2]))
+mdc_2020_err_trend <- round(100 * (mdc_trend_2020 - mdc_2020) / mdc_2020, 1)
+mdc_2020_err_naive <- round(100 * (mdc_2019 - mdc_2020) / mdc_2020, 1)
+tamu <- wide[wide$unitid == 228723, ]
+ctc <- wide[wide$unitid == 223816, ]
+ctc_dip <- round(100 * (1 - ctc$y2020 / ctc$y2019))
+yoy <- complete |>
+  group_by(unitid) |>
+  arrange(year) |>
+  mutate(chg = total / lag(total) - 1) |>
+  ungroup() |>
+  filter(!is.na(chg))
+q_lo <- round(100 * quantile(yoy$chg, 0.1), 1)
+q_hi <- round(100 * quantile(yoy$chg, 0.9), 1)
+q_med <- round(100 * median(yoy$chg), 1)
+share_down_2020 <- round(100 * mean(yoy$chg[yoy$year == 2020] < 0))
+share_down_2023 <- round(100 * mean(yoy$chg[yoy$year == 2023] < 0))
+big_band <- yoy |>
+  inner_join(bench |> filter(origin == 2022, method == "Last value") |> select(unitid, last), by = "unitid") |>
+  filter(last >= 10000)
+q_lo_big <- round(100 * quantile(big_band$chg, 0.1), 1)
+q_hi_big <- round(100 * quantile(big_band$chg, 0.9), 1)
+mdc_2024_lo <- round(mdc_2023 * (1 + quantile(big_band$chg, 0.1)))
+mdc_2024_hi <- round(mdc_2023 * (1 + quantile(big_band$chg, 0.9)))
+n_bench <- nrow(bench) / length(methods)
+one_year_winner <- by_origin |> group_by(origin) |> slice_min(median_ape, n = 1) |> ungroup()
+n_distinct_winners <- n_distinct(one_year_winner$method)
+leak_fit <- lm(total ~ year, data = filter(complete, unitid == 135717))
+leak_2023 <- round(unname(predict(leak_fit, data.frame(year = 2023))))
+honest_fit <- lm(total ~ year, data = filter(complete, unitid == 135717, year <= 2022))
+honest_2023 <- round(unname(predict(honest_fit, data.frame(year = 2023))))
+wide_last <- n_complete + 1
+```
+
+::: {.lesson-eyebrow}
+Model · Lesson 6 of 6
+:::
+
+Every IR office is asked the same question each spring: how many students will be here in the fall? This lesson answers it for `r fmt(n_complete)` institutions at once, with eleven years of fall headcount, and scores the answers against what happened. The forecast that wins is the one that says "the same as last year": a median miss of `r ape_naive`%, against `r ape_trend5`% for a trend line through the last five years and `r ape_mean3`% for the average of the last three. The lesson is less about the methods, which fit in a line each, than about the scoring, which is where most forecasts go wrong: fitting well is not forecasting well, one test year is not evidence, and a percentage error at a college of eighty students is not the same animal as one at a college of eighty thousand.
+
+**You will be able to:** make a one-year forecast with the last value, drift, a moving average, and a fitted trend, evaluate forecasts with rolling origins on years that already happened, choose an error measure that fits the question, put an honest interval around a point forecast, and name the ways a forecast fools its author.
+
+## Watch it move {.beat data-beat="1 · Watch it move"}
+
+Pick an institution and a method, then slide the forecast origin: the method sees only the years up to the origin, forecasts the next fall, and the actual count appears beside it. The readout scores the same method at the same origin across all `r fmt(n_complete)` institutions, which is the number that matters, because any method looks good on some campus in some year.
+
+::: {.lab-anim}
+
+```{ojs}
+//| echo: false
+inst = FileAttachment("data/institutions.csv").csv({typed: true})
+fcHist = FileAttachment("data/enrollment_history.csv").csv({typed: true})
+fcYears = d3.range(2013, 2024)
+fcSeries = {
+  const byId = d3.group(fcHist, d => d.unitid);
+  const info = new Map(inst.map(d => [d.unitid, d]));
+  const out = [];
+  for (const [unitid, rows] of byId) {
+    if (rows.length !== fcYears.length || rows.some(r => r.total == null || r.total <= 0)) continue;
+    const y = fcYears.map(yr => rows.find(r => r.year === yr).total);
+    const d = info.get(unitid);
+    const name = d ? d.name : String(unitid);
+    out.push({unitid, name, label: d ? `${name} (${d.state})` : name, y});
+  }
+  return out.sort((a, b) => a.label.localeCompare(b.label));
+}
+
+fcTrendNext = (y, k) => {
+  const yy = y.slice(-k), n = yy.length;
+  const xbar = (n - 1) / 2, ybar = d3.mean(yy);
+  let sxy = 0, sxx = 0;
+  yy.forEach((v, i) => { sxy += (i - xbar) * (v - ybar); sxx += (i - xbar) ** 2; });
+  const slope = sxy / sxx;
+  return {value: ybar + slope * (n - xbar), slope, intercept: ybar - slope * xbar, k: n};
+}
+fcMethods = new Map([
+  ["Last value", y => ({value: y[y.length - 1]})],
+  ["Mean of last three", y => ({value: d3.mean(y.slice(-3))})],
+  ["Drift", y => ({value: y[y.length - 1] + (y[y.length - 1] - y[0]) / (y.length - 1)})],
+  ["Half the last change", y => ({value: y[y.length - 1] + 0.5 * (y[y.length - 1] - y[y.length - 2])})],
+  ["Trend, last five years", y => fcTrendNext(y, 5)],
+  ["Trend, all years", y => fcTrendNext(y, y.length)]
+])
+fcBench = {
+  const out = new Map();
+  for (const [m, f] of fcMethods) for (let o = 2017; o <= 2022; o++) {
+    const k = o - 2013 + 1;
+    const apes = fcSeries.map(s => { const fc = f(s.y.slice(0, k)).value; return Math.abs(fc - s.y[k]) / s.y[k]; });
+    out.set(`${m}|${o}`, d3.median(apes));
+  }
+  return out;
+}
+```
+
+::: {.lab-controls}
+```{ojs}
+//| echo: false
+viewof fcPick = Inputs.select(fcSeries, {label: "Institution", format: s => s.label, value: fcSeries.find(s => s.unitid === 135717)})
+viewof fcMethod = Inputs.radio(Array.from(fcMethods.keys()), {label: "Method", value: "Last value"})
+viewof fcOrigin = Inputs.range([2017, 2022], {label: "Forecast made after fall", step: 1, value: 2019})
+```
+:::
+
+```{ojs}
+//| echo: false
+fcState = {
+  const s = fcPick;
+  const k = fcOrigin - 2013 + 1;
+  const train = s.y.slice(0, k);
+  const res = fcMethods.get(fcMethod)(train);
+  const actual = s.y[k];
+  const naive = train[train.length - 1];
+  return {s, k, train, forecast: res.value, fit: res.slope != null ? res : null, actual, naive,
+          err: (res.value - actual) / actual, naiveErr: (naive - actual) / actual,
+          bench: fcBench.get(`${fcMethod}|${fcOrigin}`), benchNaive: fcBench.get(`Last value|${fcOrigin}`)};
+}
+```
+
+```{ojs}
+//| echo: false
+fcNode = d3.create("svg").attr("class", "lab-svg").node()
+
+fcPlot = {
+  const width = 860, height = 380, margin = {top: 20, right: 30, bottom: 40, left: 76};
+  const {s, k, train, forecast, fit, actual} = fcState;
+  const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const dur = reduce ? 0 : 550;
+  const pts = s.y.map((v, i) => ({year: fcYears[i], v, seen: i < k, next: i === k}));
+  const lo = d3.min([...s.y, forecast]), hi = d3.max([...s.y, forecast]);
+  const pad = (hi - lo) * 0.15 || hi * 0.1;
+  const x = d3.scaleLinear().domain([2013, 2024]).range([margin.left, width - margin.right]);
+  const y = d3.scaleLinear().domain([Math.max(0, lo - pad), hi + pad]).nice().range([height - margin.bottom, margin.top]);
+  const fc = d3.format(",");
+
+  const svg = d3.select(fcNode);
+  svg.attr("viewBox", [0, 0, width, height]);
+  const layer = name => { let g = svg.select(`g.${name}`); if (g.empty()) g = svg.append("g").attr("class", name); return g; };
+  const ax = layer("ax"), ay = layer("ay"), fitG = layer("fit"), lineG = layer("line"), dots = layer("dots"), marks = layer("marks");
+  const t = svg.transition().duration(dur).ease(d3.easeCubicInOut);
+
+  ax.attr("transform", `translate(0,${height - margin.bottom})`).call(d3.axisBottom(x).ticks(11).tickFormat(d3.format("d")).tickSizeOuter(0));
+  ay.attr("transform", `translate(${margin.left},0)`).transition(t).call(d3.axisLeft(y).ticks(6).tickFormat(d3.format("~s")).tickSizeOuter(0));
+  ay.selectAll("text.axis-title").data([0]).join("text").attr("class", "axis-title")
+    .attr("x", -margin.left + 6).attr("y", margin.top - 8).attr("font-size", 12).attr("fill", "currentColor").text("Fall headcount");
+
+  const line = d3.line().x(d => x(d.year)).y(d => y(d.v));
+  lineG.selectAll("path.seen").data([pts.filter(p => p.seen)]).join("path").attr("class", "seen")
+    .attr("fill", "none").attr("stroke", "var(--lab-primary)").attr("stroke-width", 2)
+    .transition(t).attr("d", line);
+  lineG.selectAll("path.unseen").data([pts.filter((p, i) => i >= k - 1)]).join("path").attr("class", "unseen")
+    .attr("fill", "none").attr("stroke", "var(--lab-muted)").attr("stroke-width", 1.4).attr("stroke-dasharray", "3 4")
+    .transition(t).attr("d", line);
+
+  const fitPts = fit ? [{year: fcYears[k - fit.k], v: fit.intercept}, {year: fcYears[k], v: fit.intercept + fit.slope * fit.k}] : [];
+  fitG.selectAll("path").data(fitPts.length ? [fitPts] : []).join("path")
+    .attr("fill", "none").attr("stroke", "var(--lab-accent)").attr("stroke-width", 1.6).attr("stroke-dasharray", "6 3")
+    .transition(t).attr("d", line);
+
+  dots.selectAll("circle").data(pts, d => d.year).join("circle")
+    .call(sel => sel.selectAll("title").data(d => [d]).join("title").text(d => `Fall ${d.year}: ${fc(d.v)}`))
+    .transition(t)
+    .attr("cx", d => x(d.year)).attr("cy", d => y(d.v)).attr("r", d => d.next ? 6 : 4.5)
+    .attr("fill", d => d.seen ? "var(--lab-primary)" : d.next ? "var(--lab-ink)" : "var(--lab-muted)")
+    .attr("fill-opacity", d => d.seen || d.next ? 1 : 0.45);
+
+  marks.selectAll("line.origin").data([fcOrigin]).join("line").attr("class", "origin")
+    .attr("stroke", "var(--lab-muted)").attr("stroke-dasharray", "2 4").attr("y1", margin.top).attr("y2", height - margin.bottom)
+    .transition(t).attr("x1", d => x(d + 0.5)).attr("x2", d => x(d + 0.5));
+  marks.selectAll("text.origin").data([fcOrigin]).join("text").attr("class", "origin")
+    .attr("y", margin.top + 12).attr("font-size", 11).attr("fill", "var(--lab-muted)").attr("text-anchor", "end")
+    .text(d => `forecast made here`).transition(t).attr("x", d => x(d + 0.5) - 6);
+  marks.selectAll("line.err").data([forecast]).join("line").attr("class", "err")
+    .attr("stroke", "var(--lab-accent)").attr("stroke-width", 2)
+    .transition(t).attr("x1", x(fcOrigin + 1)).attr("x2", x(fcOrigin + 1)).attr("y1", y(actual)).attr("y2", d => y(d));
+  marks.selectAll("circle.fc").data([forecast]).join("circle").attr("class", "fc")
+    .attr("fill", "var(--lab-bg, #fff)").attr("stroke", "var(--lab-accent)").attr("stroke-width", 3)
+    .transition(t).attr("cx", x(fcOrigin + 1)).attr("cy", d => y(d)).attr("r", 7);
+  marks.selectAll("text.fc").data([forecast]).join("text").attr("class", "fc")
+    .attr("font-size", 12).attr("font-weight", 700).attr("fill", "var(--lab-accent)")
+    .text(d => `forecast ${fc(Math.round(d))}`)
+    .transition(t).attr("x", x(fcOrigin + 1) + 12).attr("y", d => y(d) + (d >= actual ? -6 : 14));
+  marks.selectAll("text.act").data([actual]).join("text").attr("class", "act")
+    .attr("font-size", 12).attr("font-weight", 700).attr("fill", "var(--lab-ink)")
+    .text(d => `actual ${fc(d)}`)
+    .transition(t).attr("x", x(fcOrigin + 1) + 12).attr("y", d => y(d) + (forecast >= d ? 14 : -6));
+
+  return svg.node();
+}
+```
+
+```{ojs}
+//| echo: false
+fcReadout = {
+  const {forecast, actual, err, naiveErr, bench, benchNaive, naive} = fcState;
+  const fc = d3.format(","), pct = d3.format("+.1%"), pct1 = d3.format(".1%");
+  let hint;
+  if (fcMethod === "Last value") {
+    hint = `The last value is the forecast to beat. It has no parameters, cannot be overfitted, and carries every shock of the most recent year straight into the next one, which is usually right and occasionally, as in ${fcOrigin === 2019 ? "this" : "the fall-2020"} year, badly wrong.`;
+  } else if (bench < benchNaive) {
+    hint = `At this origin, this method beats the last value across all institutions, by ${pct1(benchNaive - bench)} of median error. Check whether it does so at the other origins before trusting it: a method that wins one year and loses five is a coin.`;
+  } else {
+    hint = `Across all institutions at this origin, the last value does better than this method: a median miss of ${pct1(benchNaive)} against ${pct1(bench)}. The extra machinery is fitting noise, and the noise does not repeat.`;
+  }
+  return html`<div class="lab-readout">
+    <div><span class="k">Forecast for fall ${fcOrigin + 1}</span><span class="val accent">${fc(Math.round(forecast))}</span></div>
+    <div><span class="k">Actual</span><span class="val">${fc(actual)}</span></div>
+    <div><span class="k">Error, this institution</span><span class="val ${Math.abs(err) < 0.03 ? "primary" : ""}">${pct(err)}</span></div>
+    <div><span class="k">Last value would have missed by</span><span class="val">${pct(naiveErr)}</span></div>
+    <div><span class="k">Median miss, all ${fc(fcSeries.length)} institutions</span><span class="val ${bench <= benchNaive ? "primary" : "accent"}">${pct1(bench)}</span></div>
+    <div><span class="k">Same for the last value</span><span class="val">${pct1(benchNaive)}</span></div>
+  </div>
+  <p class="lab-hint">${hint} Institutions with a reported fall headcount in every year from 2013 to 2023.</p>`;
+}
+```
+
+:::
+
+Three things to try:
+
+1. **`r mdc_name`, trend on all years, origin 2019.** Enrollment fell from `r fmt(mdc_2013)` in 2013 to `r fmt(mdc_2019)` in 2019, steadily enough that a line through the points has an R² of `r mdc_r2`. The line forecasts `r fmt(mdc_trend_2020)` for fall 2020, and the actual was `r fmt(mdc_2020)`: a miss of `r mdc_2020_err_trend`%, against `r mdc_2020_err_naive`% for the last value. A good fit to the past is a description; a forecast is a bet, and the fit does not pay it.
+2. **Any institution, origin 2019.** Fall 2020 was the pandemic term and the worst year for every method: the median miss for the last value is `r worst_ape`%, against `r best_o_ape`% at the easiest origin. Slide from 2019 to 2020 and watch the forecasts go from too high to too low, because each method assumes some version of "next year is like the last few", and one year in eleven, it is not.
+3. **Any institution, any method, against the last value.** Switch methods at a fixed origin and watch the two median-miss lines in the readout. Across `r fmt(n_bench)` institution-years the last value has the lowest median miss of the six; the trend lines fit the past best and forecast it worst. That is the lesson in one readout.
+
+## Do it {.beat data-beat="2 · Do it"}
+
+The cells below run in your browser. The data is one row per institution and fall term: total headcount, undergraduate headcount, and first-time undergraduates, 2013 to 2023, from the IPEDS fall enrollment files. The frame for scoring is the `r fmt(n_complete)` institutions with a headcount in every year.
+
+::: {.panel-tabset group="language"}
+
+### R
+
+```{webr}
+#| autorun: true
+#| caption: Load, keep complete histories, and look at the whole country first
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+hist <- read.csv("data/enrollment_history.csv")
+inst <- read.csv("data/institutions.csv", na.strings = c("", "NA"))
+
+complete <- hist |>
+  group_by(unitid) |>
+  filter(n() == 11, all(!is.na(total)), all(total > 0)) |>
+  ungroup()
+
+c(institutions_with_any_history = length(unique(hist$unitid)), with_all_eleven_years = length(unique(complete$unitid)))
+
+complete |>
+  group_by(year) |>
+  summarise(students = sum(total)) |>
+  ggplot(aes(year, students)) +
+  geom_line(color = "#2a78d6", linewidth = 1) +
+  geom_point(color = "#2a78d6", size = 2) +
+  scale_x_continuous(breaks = 2013:2023) +
+  scale_y_continuous(labels = function(x) paste0(round(x / 1e6, 1), "M"), limits = c(0, NA)) +
+  labs(x = NULL, y = "Fall headcount, these institutions", title = "A flat decade, a pandemic dip, and a partial rebound") +
+  theme_minimal(base_size = 13)
+```
+
+The national line barely moves: `r fmt(nat_2013)` in 2013, `r fmt(nat_2019)` in 2019, down `r nat_drop`% by 2022 and back up in 2023. Institutions move a great deal more than their sum. The typical year-over-year change is `r q_med`%, and the middle 80% of institution-years run from `r q_lo`% to `r q_hi`%.
+
+```{webr}
+#| autorun: true
+#| caption: Five institutions, five different decades
+picks <- c(135717, 228723, 223816, 100654, 433387)
+complete |>
+  filter(unitid %in% picks) |>
+  inner_join(select(inst, unitid, name), by = "unitid") |>
+  ggplot(aes(year, total)) +
+  geom_line(color = "#2a78d6") +
+  geom_point(color = "#2a78d6", size = 1.5) +
+  facet_wrap(~ name, scales = "free_y", ncol = 3, labeller = label_wrap_gen(28)) +
+  scale_x_continuous(breaks = c(2013, 2018, 2023)) +
+  scale_y_continuous(labels = scales::comma, limits = c(0, NA)) +
+  labs(x = NULL, y = "Fall headcount") +
+  theme_minimal(base_size = 11)
+```
+
+A steady decline, a steady climb, a collapse and rebound, a wobble, and an explosion. No single shape to extrapolate. Start with one institution and the simplest possible forecasts, made as if it were spring 2020.
+
+```{webr}
+#| autorun: true
+#| caption: Four forecasts for fall 2020, made with the years up to 2019
+mdc <- complete |> filter(unitid == 135717)
+train <- mdc |> filter(year <= 2019)
+y <- train$total
+
+fit <- lm(total ~ year, data = train)
+forecasts <- c(
+  last_value = tail(y, 1),
+  mean_of_last_three = mean(tail(y, 3)),
+  drift = tail(y, 1) + (tail(y, 1) - y[1]) / (length(y) - 1),
+  trend_all_years = unname(predict(fit, data.frame(year = 2020)))
+)
+actual_2020 <- mdc$total[mdc$year == 2020]
+data.frame(forecast = round(forecasts), actual = actual_2020, error_pct = round(100 * (forecasts - actual_2020) / actual_2020, 1))
+```
+
+The trend line's fit to 2013 to 2019 has an R² of `r mdc_r2`, and it is the worst forecast of the four, because it commits to `r fmt(abs(mdc_slope))` fewer students every year and 2020 delivered more than that. The last value is the best. That is one institution and one year, which is no evidence at all, so score every method at every origin across every institution.
+
+```{webr}
+#| autorun: true
+#| caption: The methods as functions, and a fast trend line for thousands of series
+trend_next <- function(M, k) {
+  # Least-squares line through the last k columns of M, one row at a time,
+  # evaluated one step past the end. Same answer as lm(y ~ x) on each row.
+  M <- M[, (ncol(M) - k + 1):ncol(M), drop = FALSE]
+  x <- seq_len(k)
+  slope <- (M %*% (x - mean(x))) / sum((x - mean(x))^2)
+  as.numeric(rowMeans(M) + slope * (k + 1 - mean(x)))
+}
+
+forecast_all <- function(M) {
+  n <- ncol(M)
+  last <- M[, n]
+  cbind(
+    `Last value` = last,
+    `Mean of last three` = rowMeans(M[, (n - 2):n]),
+    `Drift` = last + (last - M[, 1]) / (n - 1),
+    `Half the last change` = last + 0.5 * (last - M[, n - 1]),
+    `Trend, last five years` = trend_next(M, 5),
+    `Trend, all years` = trend_next(M, n)
+  )
+}
+
+wide <- complete |> select(unitid, year, total) |> pivot_wider(names_from = year, values_from = total, names_prefix = "y")
+Y <- as.matrix(wide[, -1])
+round(forecast_all(Y[wide$unitid == 135717, 1:7, drop = FALSE]))
+```
+
+Each method takes the history as a matrix, one row per institution, and returns one forecast per row. A rolling-origin evaluation makes the forecast for 2018 with the years to 2017, for 2019 with the years to 2018, and so on to 2023: six honest tests per institution, each using only what would have been known.
+
+```{webr}
+#| autorun: true
+#| caption: "Rolling origins: six forecasts per institution, scored against what happened"
+bench <- bind_rows(lapply(2017:2022, function(origin) {
+  M <- Y[, 1:(origin - 2012), drop = FALSE]
+  fc <- forecast_all(M)
+  actual <- Y[, origin - 2012 + 1]
+  bind_rows(lapply(colnames(fc), function(m) {
+    data.frame(unitid = wide$unitid, origin = origin, method = m, forecast = fc[, m], actual = actual, last = M[, ncol(M)])
+  }))
+})) |>
+  mutate(ape = abs(forecast - actual) / actual)
+
+bench |>
+  group_by(method) |>
+  summarise(median_ape = round(100 * median(ape), 1), mean_ape = round(100 * mean(ape), 1)) |>
+  arrange(median_ape)
+```
+
+The last value wins on the median, with half the last change and drift close behind, and the trend lines and the three-year mean well back. The mean of the absolute percentage errors tells the same story with bigger numbers, because a few tiny institutions have errors of several hundred percent; the median is the honest summary of a typical miss, and the mean is a warning about the tail.
+
+```{webr}
+#| autorun: true
+#| caption: The same scores, origin by origin
+by_origin <- bench |>
+  group_by(origin, method) |>
+  summarise(median_ape = median(ape), .groups = "drop")
+
+ggplot(by_origin, aes(origin + 1, median_ape, color = method)) +
+  geom_line(linewidth = 0.9) +
+  geom_point(size = 2) +
+  scale_x_continuous(breaks = 2018:2023) +
+  scale_y_continuous(labels = function(x) paste0(round(100 * x), "%"), limits = c(0, NA)) +
+  labs(x = "Fall being forecast", y = "Median absolute error", color = NULL) +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "right")
+
+by_origin |> group_by(origin) |> slice_min(median_ape, n = 1) |> ungroup() |> mutate(median_ape = round(100 * median_ape, 1))
+```
+
+Fall 2020 is the hard year for everyone. The winner changes from year to year, `r n_distinct_winners` different methods take a turn, and any one of those years, used alone, would have told you to pick a method that loses over the six. Rolling origins exist to stop that.
+
+```{webr}
+#| autorun: true
+#| caption: Head to head, and by institution size
+wide_ape <- bench |> select(unitid, origin, method, ape) |> pivot_wider(names_from = method, values_from = ape)
+c(last_value_beats_trend5 = round(mean(wide_ape$`Last value` < wide_ape$`Trend, last five years`), 2),
+  last_value_beats_mean3 = round(mean(wide_ape$`Last value` < wide_ape$`Mean of last three`), 2))
+
+bench |>
+  filter(method == "Last value") |>
+  mutate(size = cut(last, c(0, 500, 2000, 10000, Inf), labels = c("under 500", "500 to 1,999", "2,000 to 9,999", "10,000 and more"))) |>
+  group_by(size) |>
+  summarise(institutions = n_distinct(unitid), median_ape = round(100 * median(ape), 1))
+```
+
+The last value beats the five-year trend at `r naive_beats_trend5`% of institution-years, which is what "usually" means. And the error is a function of size before it is a function of method: the median miss is `r ape_small`% at institutions under 500 students and `r ape_big`% at those over 10,000. A forecasting shop that reports one accuracy number for all its campuses is averaging two different problems.
+
+An honest point forecast comes with an interval, and the past errors are the best source of one. The year-over-year changes at institutions the size of the one being forecast say how far next year tends to land from this year.
+
+```{webr}
+#| autorun: true
+#| caption: An interval from the empirical distribution of past changes
+changes <- complete |>
+  group_by(unitid) |>
+  arrange(year) |>
+  mutate(change = total / lag(total) - 1, size = cut(lag(total), c(0, 500, 2000, 10000, Inf))) |>
+  ungroup() |>
+  filter(!is.na(change))
+
+bands <- changes |>
+  group_by(size) |>
+  summarise(p10 = quantile(change, 0.1), p90 = quantile(change, 0.9))
+bands |> mutate(across(p10:p90, ~ paste0(round(100 * .x, 1), "%")))
+
+this_year <- mdc$total[mdc$year == 2023]
+band <- bands |> filter(size == cut(this_year, c(0, 500, 2000, 10000, Inf)))
+c(forecast_2024 = this_year, lower = round(this_year * (1 + band$p10)), upper = round(this_year * (1 + band$p90)))
+```
+
+For `r mdc_name` the forecast for fall 2024 is `r fmt(mdc_2023)`, the last value, and the 80% interval is `r fmt(mdc_2024_lo)` to `r fmt(mdc_2024_hi)`, because institutions of its size have changed by between `r q_lo_big`% and `r q_hi_big`% in four years out of five. The interval is wide. A narrow one would be a lie.
+
+Two more ways to fool yourself, in code. The first is fitting through the year you are forecasting, which happens whenever the trend line is drawn on a chart that already includes the current term.
+
+```{webr}
+#| autorun: true
+#| caption: "Leakage: a line that has already seen the answer"
+honest <- lm(total ~ year, data = filter(mdc, year <= 2022))
+leaky <- lm(total ~ year, data = mdc)
+c(honest_forecast_2023 = round(unname(predict(honest, data.frame(year = 2023)))),
+  leaky_fitted_2023 = round(unname(predict(leaky, data.frame(year = 2023)))),
+  actual_2023 = mdc$total[mdc$year == 2023])
+```
+
+The second is the frame. These `r fmt(n_complete)` institutions are the ones that exist in 2023 and reported every year: the closures, the mergers, and the campuses that stopped reporting are not in the history, so it is the survivors' history, and a little rosier than the history of an institution chosen in 2013. Any method scored on it inherits that.
+
+### Python
+
+```{pyodide}
+#| autorun: true
+#| caption: Load, keep complete histories, and look at the whole country first
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+
+hist = pd.read_csv("data/enrollment_history.csv")
+inst = pd.read_csv("data/institutions.csv")
+
+years = np.arange(2013, 2024)
+wide = hist.pivot(index="unitid", columns="year", values="total").reindex(columns=years)
+wide = wide[(wide.notna().all(axis=1)) & (wide > 0).all(axis=1)]
+print(f"{hist['unitid'].nunique():,} institutions with any history, {len(wide):,} with all eleven years")
+
+national = wide.sum()
+fig, ax = plt.subplots(figsize=(8, 3.6))
+ax.plot(years, national / 1e6, marker="o", color="#2a78d6")
+ax.set_ylim(0, None)
+ax.set_xticks(years)
+ax.set_ylabel("Fall headcount, millions")
+ax.set_title("A flat decade, a pandemic dip, and a partial rebound", loc="left", fontsize=11)
+ax.spines[["top", "right"]].set_visible(False)
+plt.tight_layout()
+plt.show()
+```
+
+```{pyodide}
+#| autorun: true
+#| caption: Five institutions, five different decades
+picks = [135717, 228723, 223816, 100654, 433387]
+names = inst.set_index("unitid")["name"]
+fig, axes = plt.subplots(2, 3, figsize=(8, 4.6))
+for ax, u in zip(axes.flat, picks):
+    ax.plot(years, wide.loc[u], marker="o", markersize=3, color="#2a78d6")
+    ax.set_ylim(0, None)
+    ax.set_title(names[u][:30], fontsize=9, loc="left")
+    ax.set_xticks([2013, 2018, 2023])
+    ax.tick_params(labelsize=8)
+    ax.spines[["top", "right"]].set_visible(False)
+axes.flat[-1].axis("off")
+plt.tight_layout()
+plt.show()
+```
+
+```{pyodide}
+#| autorun: true
+#| caption: Four forecasts for fall 2020, made with the years up to 2019
+y = wide.loc[135717, 2013:2019].to_numpy()
+slope, intercept = np.polyfit(np.arange(2013, 2020), y, 1)
+forecasts = pd.Series({
+    "last_value": y[-1],
+    "mean_of_last_three": y[-3:].mean(),
+    "drift": y[-1] + (y[-1] - y[0]) / (len(y) - 1),
+    "trend_all_years": intercept + slope * 2020,
+})
+actual_2020 = wide.loc[135717, 2020]
+pd.DataFrame({"forecast": forecasts.round(), "actual": actual_2020, "error_pct": (100 * (forecasts - actual_2020) / actual_2020).round(1)})
+```
+
+```{pyodide}
+#| autorun: true
+#| caption: The methods as functions, and a fast trend line for thousands of series
+def trend_next(M, k):
+    """Least-squares line through the last k columns of M, row by row, one step past the end."""
+    Mk = M[:, -k:]
+    x = np.arange(k)
+    slope = (Mk - Mk.mean(axis=1, keepdims=True)) @ (x - x.mean()) / ((x - x.mean()) ** 2).sum()
+    return Mk.mean(axis=1) + slope * (k - x.mean())
+
+def forecast_all(M):
+    last = M[:, -1]
+    return pd.DataFrame({
+        "Last value": last,
+        "Mean of last three": M[:, -3:].mean(axis=1),
+        "Drift": last + (last - M[:, 0]) / (M.shape[1] - 1),
+        "Half the last change": last + 0.5 * (last - M[:, -2]),
+        "Trend, last five years": trend_next(M, 5),
+        "Trend, all years": trend_next(M, M.shape[1]),
+    })
+
+Y = wide.to_numpy(dtype=float)
+forecast_all(Y[[wide.index.get_loc(135717)], :7]).round()
+```
+
+```{pyodide}
+#| autorun: true
+#| caption: "Rolling origins: six forecasts per institution, scored against what happened"
+rows = []
+for origin in range(2017, 2023):
+    k = origin - 2012
+    fc = forecast_all(Y[:, :k])
+    actual = Y[:, k]
+    for m in fc.columns:
+        rows.append(pd.DataFrame({"unitid": wide.index, "origin": origin, "method": m, "forecast": fc[m].to_numpy(),
+                                  "actual": actual, "last": Y[:, k - 1]}))
+bench = pd.concat(rows, ignore_index=True)
+bench["ape"] = (bench["forecast"] - bench["actual"]).abs() / bench["actual"]
+
+(100 * bench.groupby("method")["ape"].agg(median_ape="median", mean_ape="mean")).round(1).sort_values("median_ape")
+```
+
+```{pyodide}
+#| autorun: true
+#| caption: The same scores, origin by origin
+by_origin = bench.groupby(["origin", "method"])["ape"].median().unstack()
+fig, ax = plt.subplots(figsize=(8, 4))
+for m in by_origin.columns:
+    ax.plot(by_origin.index + 1, 100 * by_origin[m], marker="o", markersize=3, label=m)
+ax.set_ylim(0, None)
+ax.set_xlabel("Fall being forecast")
+ax.set_ylabel("Median absolute error (%)")
+ax.legend(fontsize=8, frameon=False, loc="upper left")
+ax.spines[["top", "right"]].set_visible(False)
+plt.tight_layout()
+plt.show()
+
+(100 * by_origin.min(axis=1)).round(1).to_frame("best_median_ape").assign(method=by_origin.idxmin(axis=1))
+```
+
+```{pyodide}
+#| autorun: true
+#| caption: Head to head, and by institution size
+wide_ape = bench.pivot(index=["unitid", "origin"], columns="method", values="ape")
+print(f"last value beats the five-year trend at {(wide_ape['Last value'] < wide_ape['Trend, last five years']).mean():.0%} of institution-years,",
+      f"and the three-year mean at {(wide_ape['Last value'] < wide_ape['Mean of last three']).mean():.0%}")
+
+naive = bench[bench["method"] == "Last value"].copy()
+naive["size"] = pd.cut(naive["last"], [0, 500, 2000, 10000, np.inf], labels=["under 500", "500 to 1,999", "2,000 to 9,999", "10,000 and more"])
+(100 * naive.groupby("size", observed=True)["ape"].median()).round(1).to_frame("median_ape")
+```
+
+```{pyodide}
+#| autorun: true
+#| caption: An interval from the empirical distribution of past changes
+change = wide.to_numpy()[:, 1:] / wide.to_numpy()[:, :-1] - 1
+prev = wide.to_numpy()[:, :-1]
+size = pd.cut(prev.ravel(), [0, 500, 2000, 10000, np.inf])
+bands = pd.DataFrame({"size": size, "change": change.ravel()}).groupby("size", observed=True)["change"].quantile([0.1, 0.9]).unstack()
+print((100 * bands).round(1))
+
+this_year = wide.loc[135717, 2023]
+p10, p90 = bands.loc[pd.cut([this_year], [0, 500, 2000, 10000, np.inf])[0]]
+print(f"forecast for fall 2024: {this_year:,.0f}, 80% interval {this_year * (1 + p10):,.0f} to {this_year * (1 + p90):,.0f}")
+```
+
+```{pyodide}
+#| autorun: true
+#| caption: "Leakage: a line that has already seen the answer"
+series = wide.loc[135717]
+honest = np.polyfit(np.arange(2013, 2023), series.loc[2013:2022], 1)
+leaky = np.polyfit(years, series, 1)
+print(f"honest forecast for 2023: {np.polyval(honest, 2023):,.0f}; leaky fitted value: {np.polyval(leaky, 2023):,.0f}; actual: {series[2023]:,.0f}")
+```
+
+:::
+
+The habit to keep is the order of operations. Decide the scoring first: which years are held out, which error measure, which institutions. Then run the simplest method and write its number down. Everything else has to beat that number on the same held-out years, and most things will not.
+
+## Practice {.beat data-beat="3 · Practice"}
+
+Fill in the blanks and press Run. The check reads the value your code returns, so make the last line the answer.
+
+```{webr}
+#| setup: true
+#| exercise:
+#|   - ml6_naive
+#|   - ml6_trend
+library(dplyr)
+library(tidyr)
+hist <- read.csv("data/enrollment_history.csv")
+complete <- hist |>
+  group_by(unitid) |>
+  filter(n() == 11, all(!is.na(total)), all(total > 0)) |>
+  ungroup()
+wide <- complete |> select(unitid, year, total) |> pivot_wider(names_from = year, values_from = total, names_prefix = "y")
+```
+
+::: {.lab-exercise data-exercise="ml6_naive"}
+
+### Score the last value
+
+`wide` has one row per institution with columns `y2013` to `y2023`. Forecast fall 2023 with the last value each institution had, and return the median absolute percentage error across institutions, as a number between 0 and 1.
+
+```{webr}
+#| exercise: ml6_naive
+ape <- abs(wide$______ - wide$y2023) / wide$y2023
+median(ape)
+```
+
+::: {.hint exercise="ml6_naive"}
+::: {.callout-note collapse="false"}
+## Hint
+The last value known in spring 2023 is the fall 2022 headcount, column `y2022`. The error is relative to the actual, which is `y2023`.
+:::
+:::
+
+::: {.solution exercise="ml6_naive"}
+::: {.callout-tip collapse="false"}
+## Solution
+```r
+ape <- abs(wide$y2022 - wide$y2023) / wide$y2023
+median(ape)
+```
+About `r round(100 * by_origin$median_ape[by_origin$origin == 2022 & by_origin$method == "Last value"], 1)`%. Half of all institutions landed within that of their previous fall.
+:::
+:::
+
+```{webr}
+#| exercise: ml6_naive
+#| check: true
+expected <- median(abs(wide$y2022 - wide$y2023) / wide$y2023)
+two_back <- median(abs(wide$y2021 - wide$y2023) / wide$y2023)
+mean_ape <- mean(abs(wide$y2022 - wide$y2023) / wide$y2023)
+val <- suppressWarnings(as.numeric(unlist(.result))[1])
+if (length(val) == 1 && !is.na(val) && isTRUE(abs(val - expected) < 1e-9)) {
+  list(correct = TRUE, message = sprintf("Correct: the median institution missed by %.1f%% when fall 2023 was forecast as a repeat of fall 2022.", 100 * expected))
+} else if (length(val) == 1 && !is.na(val) && isTRUE(abs(val - two_back) < 1e-9)) {
+  list(correct = FALSE, message = "That used the fall 2021 value. The last value known before fall 2023 is fall 2022.")
+} else if (length(val) == 1 && !is.na(val) && isTRUE(abs(val - mean_ape) < 1e-9)) {
+  list(correct = FALSE, message = "That is the mean of the errors, which a few tiny institutions dominate. The exercise asks for the median.")
+} else {
+  list(correct = FALSE, message = "Not yet. The answer is a single number: the median of abs(y2022 - y2023) / y2023 over the rows of wide.")
+}
+```
+
+:::
+
+::: {.lab-exercise data-exercise="ml6_trend"}
+
+### A trend line that has not seen the answer
+
+`complete` is the long table. Fit a straight line to Miami Dade College's fall headcount, unitid 135717, using only the years up to 2022, and return its forecast for 2023.
+
+```{webr}
+#| exercise: ml6_trend
+mdc <- complete |> filter(unitid == 135717, year <= ______)
+fit <- lm(total ~ year, data = mdc)
+predict(fit, data.frame(year = ______))
+```
+
+::: {.hint exercise="ml6_trend"}
+::: {.callout-note collapse="false"}
+## Hint
+The filter keeps years up to and including 2022, and the prediction is for 2023. If the line is fitted through 2023 as well, it has seen the answer.
+:::
+:::
+
+::: {.solution exercise="ml6_trend"}
+::: {.callout-tip collapse="false"}
+## Solution
+```r
+mdc <- complete |> filter(unitid == 135717, year <= 2022)
+fit <- lm(total ~ year, data = mdc)
+predict(fit, data.frame(year = 2023))
+```
+About `r fmt(honest_2023)`, against an actual of `r fmt(mdc_2023)`; the last value, `r fmt(mdc$y2022)`, was closer. The leaky version, fitted through 2023, gives `r fmt(leak_2023)` and is not a forecast.
+:::
+:::
+
+```{webr}
+#| exercise: ml6_trend
+#| check: true
+mdc_all <- complete |> filter(unitid == 135717)
+expected <- unname(predict(lm(total ~ year, data = filter(mdc_all, year <= 2022)), data.frame(year = 2023)))
+leaky <- unname(predict(lm(total ~ year, data = mdc_all), data.frame(year = 2023)))
+fitted_2022 <- unname(predict(lm(total ~ year, data = filter(mdc_all, year <= 2022)), data.frame(year = 2022)))
+naive <- mdc_all$total[mdc_all$year == 2022]
+val <- suppressWarnings(as.numeric(unlist(.result))[1])
+if (length(val) == 1 && !is.na(val) && isTRUE(abs(val - expected) < 0.5)) {
+  list(correct = TRUE, message = sprintf("Correct: the honest trend line forecasts %s for fall 2023; the actual was %s.", format(round(expected), big.mark = ","), format(mdc_all$total[mdc_all$year == 2023], big.mark = ",")))
+} else if (length(val) == 1 && !is.na(val) && isTRUE(abs(val - leaky) < 0.5)) {
+  list(correct = FALSE, message = "That line was fitted through 2023, the year being forecast. Filter to year <= 2022 before fitting.")
+} else if (length(val) == 1 && !is.na(val) && isTRUE(abs(val - fitted_2022) < 0.5)) {
+  list(correct = FALSE, message = "That is the fitted value for 2022. The forecast is for 2023.")
+} else if (length(val) == 1 && !is.na(val) && isTRUE(abs(val - naive) < 0.5)) {
+  list(correct = FALSE, message = "That is the last value, not the trend line. Fit lm(total ~ year) and predict for 2023.")
+} else {
+  list(correct = FALSE, message = "Not yet. The answer is a single number from predict() on a line fitted to the years up to 2022.")
+}
+```
+
+:::
+
+::: {.lab-exercise data-exercise="ml6_py_trend5"}
+
+### The five-year trend, scored in Python
+
+`wide` is a DataFrame with one row per institution and integer year columns 2013 to 2023. Fit a line through 2018 to 2022 for every row at once, forecast 2023, and return the median absolute percentage error as a float.
+
+```{pyodide}
+#| setup: true
+#| exercise: ml6_py_trend5
+import numpy as np
+import pandas as pd
+hist = pd.read_csv("data/enrollment_history.csv")
+years = np.arange(2013, 2024)
+wide = hist.pivot(index="unitid", columns="year", values="total").reindex(columns=years)
+wide = wide[(wide.notna().all(axis=1)) & (wide > 0).all(axis=1)]
+```
+
+```{pyodide}
+#| exercise: ml6_py_trend5
+x = np.arange(5)
+y = wide.loc[:, 2018:2022].to_numpy().T
+slope, intercept = np.polyfit(x, y, 1)
+forecast = intercept + slope * ______
+ape = np.abs(forecast - wide[2023]) / wide[2023]
+float(np.median(ape))
+```
+
+::: {.hint exercise="ml6_py_trend5"}
+::: {.callout-note collapse="false"}
+## Hint
+`x` runs 0 to 4 for 2018 to 2022, so 2023 is `x = 5`. `np.polyfit` fits every column of `y` at once and returns one slope and one intercept per institution.
+:::
+:::
+
+::: {.solution exercise="ml6_py_trend5"}
+::: {.callout-tip collapse="false"}
+## Solution
+```python
+x = np.arange(5)
+y = wide.loc[:, 2018:2022].to_numpy().T
+slope, intercept = np.polyfit(x, y, 1)
+forecast = intercept + slope * 5
+ape = np.abs(forecast - wide[2023]) / wide[2023]
+float(np.median(ape))
+```
+About `r round(100 * by_origin$median_ape[by_origin$origin == 2022 & by_origin$method == "Trend, last five years"], 1)`%, worse than the last value at the same origin.
+:::
+:::
+
+```{pyodide}
+#| exercise: ml6_py_trend5
+#| check: true
+x = np.arange(5)
+y = wide.loc[:, 2018:2022].to_numpy().T
+s, i = np.polyfit(x, y, 1)
+expected = float(np.median(np.abs(i + s * 5 - wide[2023]) / wide[2023]))
+fitted = float(np.median(np.abs(i + s * 4 - wide[2023]) / wide[2023]))
+too_far = float(np.median(np.abs(i + s * 6 - wide[2023]) / wide[2023]))
+try:
+    val = float(result)
+except Exception:
+    val = None
+if val is not None and abs(val - expected) < 1e-9:
+    feedback = {"correct": True, "message": f"Correct: the five-year trend misses by {100 * expected:.1f}% at the median institution, more than the last value does."}
+elif val is not None and abs(val - fitted) < 1e-9:
+    feedback = {"correct": False, "message": "That is the fitted value for 2022 (x = 4). The forecast for 2023 is one step further, x = 5."}
+elif val is not None and abs(val - too_far) < 1e-9:
+    feedback = {"correct": False, "message": "That is two steps ahead, 2024. With x running 0 to 4 for 2018 to 2022, 2023 is x = 5."}
+else:
+    feedback = {"correct": False, "message": "Not yet. Expected a single float: the median of abs(forecast - actual) / actual with the forecast evaluated at x = 5."}
+feedback
+```
+
+:::
+
+## In your stack {.beat data-beat="4 · In your stack"}
+
+Enrollment forecasts in most offices live in a spreadsheet, and that is fine: the methods are one formula each. What the spreadsheet usually lacks is the scoring. The `forecast` sheet in [ir-lab.xlsx](data/ir-lab.xlsx) has the `r fmt(n_complete)` complete histories one per row, the six forecasts for fall 2023 and their errors in formula columns, and the median errors by method and by size at the top.
+
+::: {.panel-tabset group="stack"}
+
+### Excel
+
+With years 2013 to 2023 in columns C to M, the fall 2023 forecasts made from the years to 2022 are:
+
+| Method | Formula, row 2 |
+|---|---|
+| Last value | `=L2` |
+| Mean of last three | `=AVERAGE(J2:L2)` |
+| Drift | `=L2 + (L2 - C2) / 9` |
+| Half the last change | `=L2 + 0.5 * (L2 - K2)` |
+| Trend, last five years | `=TREND(H2:L2, {1,2,3,4,5}, 6)` |
+| Trend, all years | `=TREND(C2:L2, {1,2,3,4,5,6,7,8,9,10}, 11)` |
+| Absolute percentage error | `=ABS(forecast - M2) / M2` |
+| Median error, one method | `=MEDIAN(error column)` |
+| Median error, one size band | `=MEDIAN(IF((L$2:L$`r wide_last` >= lower) * (L$2:L$`r wide_last` < upper), error column))`, entered as an array formula |
+
+`TREND` is the least-squares line; `FORECAST.LINEAR` does the same for one point. Data, Forecast Sheet builds an exponential-smoothing forecast with an interval from a menu, and is worth trying for one institution, but it cannot be scored across thousands of rows the way the columns above can. The empirical interval is two `PERCENTILE.INC` calls on the column of year-over-year changes, filtered to the size band, applied to the last value.
+
+### Power BI
+
+::: {.ir-powerbi data-powerbi-page="overview" data-powerbi-title="Institution overview"}
+**Interactive report: not connected yet.** Download the [Power BI project](data/ir-lab-powerbi.zip) to explore this lesson in Power BI Desktop. The embedded report will appear here once it is connected.
+:::
+
+Load `enrollment_history.csv` as a table with one row per institution and year. The rolling-origin score is a handful of measures, and a what-if parameter for the origin year turns the whole page into the animation:
+
+```dax
+Actual Next =
+VAR o = SELECTEDVALUE ( Origin[Origin] )
+RETURN CALCULATE ( SUM ( history[total] ), history[year] = o + 1 )
+
+Last Value Forecast =
+VAR o = SELECTEDVALUE ( Origin[Origin] )
+RETURN CALCULATE ( SUM ( history[total] ), history[year] = o )
+
+Trend Forecast =
+VAR o = SELECTEDVALUE ( Origin[Origin] )
+VAR fit = LINESTX ( FILTER ( history, history[year] >= o - 4 && history[year] <= o ), history[total], history[year] )
+RETURN SELECTCOLUMNS ( fit, "f", [Intercept] + [Slope1] * ( o + 1 ) )
+
+Median APE, Last Value =
+MEDIANX ( VALUES ( history[unitid] ), DIVIDE ( ABS ( [Last Value Forecast] - [Actual Next] ), [Actual Next] ) )
+```
+
+`LINESTX` fits the least-squares line inside DAX, so the trend forecast needs no calculated column. Put the two median-error measures on cards, the origin parameter on a slicer, and a line chart of `history[total]` by year for a selected institution beside them, and the report shows what this lesson shows: change the origin, and the method that wins changes, while the last value stays hard to beat. Never build the forecast column in Power Query from the full history; that is the leak from the R tab, and a measure that filters on the origin year is the guard against it.
+
+:::
+
+## Before you leave
+
+::: {.takeaways}
+1. **Start with the last value and make everything beat it.** It has no parameters and a median miss of `r ape_naive`%. The trend line through five years misses by `r ape_trend5`% and loses to it `r naive_beats_trend5`% of the time.
+2. **Score on years that already happened, from several origins.** A fit is not a forecast; an R² of `r mdc_r2` on the past said nothing about fall 2020. One held-out year picks a different winner than six.
+3. **Match the error to the question.** Medians for the typical miss, means to see the tail, and always split by size: `r ape_small`% at small institutions against `r ape_big`% at large ones is not one accuracy number.
+4. **Ship an interval, not a point.** The empirical spread of past changes at institutions of the same size is an honest interval and it is wide. Report it, and say the history is the survivors' history.
+:::
+
+This is the last lesson in the Model track, and the last in the lab. The three tracks together are one habit: look at the table before summarising it, say how sure you are and of what, and score every model on data it has not seen.

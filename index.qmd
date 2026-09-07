@@ -121,19 +121,19 @@ swarm = {
 <span class="track-verb">Explore</span>
 <span class="track-name">Exploratory data analysis</span>
 <p>Distributions, missingness, comparisons, relationships, outliers, and the IPEDS subtotal trap.</p>
-<span class="lab-progress" data-exercises="eda1_median eda1_small eda1_py_median eda2_share eda2_dropped eda2_py_share eda3_median eda3_gap eda3_py_median eda4_cor eda4_group eda4_py_spearman"></span>
+<span class="lab-progress" data-exercises="eda1_median eda1_small eda1_py_median eda2_share eda2_dropped eda2_py_share eda3_median eda3_gap eda3_py_median eda4_cor eda4_group eda4_py_spearman eda5_fence eda5_cook eda5_py_robust eda6_total eda6_part_time eda6_py_grain"></span>
 </a>
 <a class="track" href="stats.html">
 <span class="track-verb">Test</span>
 <span class="track-name">Statistical analysis</span>
 <p>Uncertainty, group comparisons, proportions, regression, and logistic models with honest interpretation.</p>
-<span class="lab-progress" data-exercises="stats1_fit stats1_predict stats1_py_fit stats2_fit stats2_predict stats2_py_fit stats3_boot stats3_ci stats3_py_boot stats4_ttest stats4_d stats4_py_ttest"></span>
+<span class="lab-progress" data-exercises="stats1_fit stats1_predict stats1_py_fit stats2_fit stats2_predict stats2_py_fit stats3_boot stats3_ci stats3_py_boot stats4_ttest stats4_d stats4_py_ttest stats5_aov stats5_bonf stats5_py_f stats6_chisq stats6_wilson stats6_py_chi2"></span>
 </a>
 <a class="track" href="ml.html">
 <span class="track-verb">Model</span>
 <span class="track-name">Machine learning</span>
 <p>Splits, predicting rates and outcomes, peer groups, dimension reduction, and forecasting enrollment.</p>
-<span class="lab-progress" data-exercises="ml1_scale ml1_elbow ml1_py_fit ml2_cum ml2_load ml2_py_fit ml3_split ml3_cv ml3_py_split ml4_tree ml4_lasso ml4_py_forest"></span>
+<span class="lab-progress" data-exercises="ml1_scale ml1_elbow ml1_py_fit ml2_cum ml2_load ml2_py_fit ml3_split ml3_cv ml3_py_split ml4_tree ml4_lasso ml4_py_forest ml5_recall ml5_leak ml5_py_confusion ml6_naive ml6_trend ml6_py_trend5"></span>
 </a>
 </div>
 ```
@@ -160,6 +160,8 @@ One row per U.S. postsecondary institution active in the 2023-24 IPEDS collectio
 - [institutions.csv](data/institutions.csv): the table the lessons use. `r fmt(nrow(institutions))` rows, `r ncol(institutions)` columns, about 1.5 MB.
 - [variables.csv](data/variables.csv): every column with its source file and IPEDS variable.
 - [ir-lab.xlsx](data/ir-lab.xlsx): the same table as an Excel Table, plus one worked sheet per lesson.
+- [fall_enrollment_2023.csv](data/fall_enrollment_2023.csv): the fall enrollment file as IPEDS ships it, every detail line and subtotal row with its `EFALEVEL`, `LINE`, `SECTION`, and `LSTUDY` codes, for **The subtotal trap**. [fall_enrollment_codes.csv](data/fall_enrollment_codes.csv) says what each code means.
+- [enrollment_history.csv](data/enrollment_history.csv): fall headcount, undergraduate headcount, and first-time undergraduates per institution and year, 2013 to 2023, for **Next fall**.
 
 ```{r}
 #| echo: false
@@ -174,4 +176,5 @@ vars |>
 - **Net price is in-state for publics** and a single figure for privates, so cross-sector comparisons carry that asymmetry.
 - **Financial aid lags a year.** Aid variables describe 2022-23; enrollment and completions describe 2023-24.
 - **Missing is not zero.** Two-year institutions have no bachelor's cohort, and many institutions do not report a student-faculty ratio. Blank cells are left blank.
+- **The history is the survivors' history.** The enrollment history covers institutions in the 2023-24 directory, so campuses that closed or merged before 2023 are not in it.
 :::

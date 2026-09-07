@@ -9,10 +9,10 @@ Machine learning in institutional research is mostly three jobs: predict an outc
 <ul class="lessons">
 <li><a href="ml-split.html">Split before you fit<span class="lesson-blurb">Train and test sets, cross-validation, and the leakage that makes a model look better than it is.</span></a><span class="lesson-status live">Live</span></li>
 <li><a href="ml-predict-rate.html">Predict a rate<span class="lesson-blurb">Regularized regression and tree models for completion rates, compared on held-out data.</span></a><span class="lesson-status live">Live</span></li>
-<li class="planned"><a>Predict a yes or no<span class="lesson-blurb">Classification, thresholds, and the confusion matrix behind every early-alert model.</span></a><span class="lesson-status">Planned</span></li>
+<li><a href="ml-classify.html">Predict a yes or no<span class="lesson-blurb">Classification, thresholds, and the confusion matrix behind every early-alert model.</span></a><span class="lesson-status live">Live</span></li>
 <li><a href="ml-clustering.html">Peer groups<span class="lesson-blurb">k-means clustering: the algorithm step by step, choosing k, and naming what you found.</span></a><span class="lesson-status live">Live</span></li>
 <li><a href="ml-pca.html">Fewer dimensions<span class="lesson-blurb">Principal components on the institution profile, and what each component means.</span></a><span class="lesson-status live">Live</span></li>
-<li class="planned"><a>Next fall<span class="lesson-blurb">Forecasting enrollment from a short history without fooling yourself.</span></a><span class="lesson-status">Planned</span></li>
+<li><a href="ml-forecast.html">Next fall<span class="lesson-blurb">Forecasting enrollment from a short history without fooling yourself.</span></a><span class="lesson-status live">Live</span></li>
 </ul>
 
-<p class="lab-progress" data-exercises="ml1_scale ml1_elbow ml1_py_fit ml2_cum ml2_load ml2_py_fit ml3_split ml3_cv ml3_py_split ml4_tree ml4_lasso ml4_py_forest"></p>
+<p class="lab-progress" data-exercises="ml1_scale ml1_elbow ml1_py_fit ml2_cum ml2_load ml2_py_fit ml3_split ml3_cv ml3_py_split ml4_tree ml4_lasso ml4_py_forest ml5_recall ml5_leak ml5_py_confusion ml6_naive ml6_trend ml6_py_trend5"></p>

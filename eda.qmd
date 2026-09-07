@@ -11,8 +11,8 @@ Every analysis starts by finding out what the data actually looks like: its shap
 <li><a href="eda-missing.html">Missing on purpose<span class="lesson-blurb">Structural blanks, unreported values, and who disappears when you drop them.</span></a><span class="lesson-status live">Live</span></li>
 <li><a href="eda-compare.html">Compare groups<span class="lesson-blurb">Boxplots, ridgelines, and small multiples by sector, size, and locale.</span></a><span class="lesson-status live">Live</span></li>
 <li><a href="eda-relationships.html">Relationships<span class="lesson-blurb">Scatterplots, correlation, and the difference between association and cause.</span></a><span class="lesson-status live">Live</span></li>
-<li class="planned"><a>Outliers and leverage<span class="lesson-blurb">Finding the rows that move every summary, and deciding what to do with them.</span></a><span class="lesson-status">Planned</span></li>
-<li class="planned"><a>The subtotal trap<span class="lesson-blurb">IPEDS LINE and SECTION codes, double counting, and building a clean grain.</span></a><span class="lesson-status">Planned</span></li>
+<li><a href="eda-outliers.html">Outliers and leverage<span class="lesson-blurb">Finding the rows that move every summary, and deciding what to do with them.</span></a><span class="lesson-status live">Live</span></li>
+<li><a href="eda-subtotals.html">The subtotal trap<span class="lesson-blurb">IPEDS LINE and SECTION codes, double counting, and building a clean grain.</span></a><span class="lesson-status live">Live</span></li>
 </ul>
 
-<p class="lab-progress" data-exercises="eda1_median eda1_small eda1_py_median eda2_share eda2_dropped eda2_py_share eda3_median eda3_gap eda3_py_median eda4_cor eda4_group eda4_py_spearman"></p>
+<p class="lab-progress" data-exercises="eda1_median eda1_small eda1_py_median eda2_share eda2_dropped eda2_py_share eda3_median eda3_gap eda3_py_median eda4_cor eda4_group eda4_py_spearman eda5_fence eda5_cook eda5_py_robust eda6_total eda6_part_time eda6_py_grain"></p>

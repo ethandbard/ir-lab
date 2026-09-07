@@ -1,6 +1,6 @@
 # IR Lab
 
-A practice site for exploratory data analysis, statistics, and machine learning on higher-education data. Every lesson works one method on the IPEDS 2023-24 institution table with four fixed beats: an animation with controls, R and Python cells that run in the browser, graded exercises, and the same method in Excel formulas and Power BI DAX.
+A practice site for exploratory data analysis, statistics, and machine learning on higher-education data. Every lesson works one method on IPEDS data, mostly the 2023-24 institution table, with four fixed beats: an animation with controls, R and Python cells that run in the browser, graded exercises, and the same method in Excel formulas and Power BI DAX.
 
 ## How it runs
 
@@ -20,33 +20,45 @@ A practice site for exploratory data analysis, statistics, and machine learning 
 | `eda-missing.qmd` | Explore, lesson 2: missingness patterns and complete-case bias. |
 | `eda-compare.qmd` | Explore, lesson 3: boxplots, small multiples, and variance explained by a grouping. |
 | `eda-relationships.qmd` | Explore, lesson 4: scatterplots, Pearson and Spearman correlation, association versus cause. |
+| `eda-outliers.qmd` | Explore, lesson 5: IQR fences, robust z-scores, leverage, Cook's distance, and what to do about outliers. |
+| `eda-subtotals.qmd` | Explore, lesson 6: IPEDS EFALEVEL, LINE, and SECTION codes, double counting, and building a clean grain. |
 | `stats-sampling.qmd` | Test, lesson 1: bootstrap and confidence intervals. |
 | `stats-two-groups.qmd` | Test, lesson 2: Welch's t-test, Cohen's d, and power. |
+| `stats-anova.qmd` | Test, lesson 3: one-way ANOVA, eta squared, Tukey HSD, and multiple-comparison corrections. |
+| `stats-proportions.qmd` | Test, lesson 4: contingency tables, chi-square, Cramér's V, Wilson intervals, two proportions, and Fisher's exact test. |
 | `stats-regression.qmd` | Test, lesson 5: simple linear regression. |
 | `stats-logistic.qmd` | Test, lesson 6: logistic regression and odds ratios. |
 | `ml-split.qmd` | Model, lesson 1: train/test splits, cross-validation, and leakage. |
 | `ml-predict-rate.qmd` | Model, lesson 2: lasso, regression trees, and random forests on held-out data. |
+| `ml-classify.qmd` | Model, lesson 3: classification, thresholds, the confusion matrix, ROC and AUC, and calibration. |
 | `ml-clustering.qmd` | Model, lesson 4: k-means peer groups. |
 | `ml-pca.qmd` | Model, lesson 5: principal components. |
+| `ml-forecast.qmd` | Model, lesson 6: one-year enrollment forecasts scored with rolling origins, error by size, and empirical intervals. |
+| `fetch_history.R` | Downloads the fall enrollment files EF2013A to EF2022A into `../ipeds/data/raw`. |
 | `build_data.R` | Builds `data/` from `../ipeds/data/raw`. |
 | `build_workbook.R` | Builds `data/ir-lab.xlsx` with one worked sheet per lesson. Called by `build_data.R`. |
 | `_common.R` | Helpers for pre-rendered parts: `v()` variable chips, `fmt()`. |
+| `grade.py` | Local grader harness: runs each exercise's setup, solution, and check outside the browser. |
 | `styles.scss`, `header.html`, `lab.js` | Theme, web fonts, progress tracking. |
 | `data/institutions.csv` | One row per institution, 44 columns. |
 | `data/variables.csv` | Column dictionary with IPEDS sources. |
+| `data/fall_enrollment_2023.csv` | The 2023 fall enrollment file as shipped: one row per institution and EFALEVEL code, with LINE, SECTION, LSTUDY, and the headcount. |
+| `data/fall_enrollment_codes.csv` | The 27 code combinations with their meaning and whether each is a detail line, a subtotal, or the grand total. |
+| `data/enrollment_history.csv` | One row per institution and fall term, 2013 to 2023: total, undergraduate, and first-time headcount. |
 
 ## Build
 
-`build_data.R` needs the raw IPEDS files in `../ipeds/data/raw`. Without them, `build_workbook.R` can still be run on its own against the CSVs in `data/` (it needs the openxlsx package):
+`build_data.R` needs the raw IPEDS 2023 files in `../ipeds/data/raw` plus the fall enrollment files for 2013 to 2022, which `fetch_history.R` downloads from NCES (about 65 MB zipped). Without them, `build_workbook.R` can still be run on its own against the CSVs in `data/` (it needs the openxlsx package):
 
 ```sh
 Rscript -e 'source("build_workbook.R"); i <- read.csv("data/institutions.csv", na.strings = c("", "NA")); v <- read.csv("data/variables.csv"); build_workbook(i, v, "data/ir-lab.xlsx")'
 ```
 
-The pre-rendered numbers in `ml-predict-rate.qmd` need rpart, glmnet, and randomForest installed locally; `setup.R` installs them.
+The pre-rendered numbers in `ml-predict-rate.qmd` and `ml-classify.qmd` need rpart, glmnet, and randomForest installed locally; `setup.R` installs them.
 
 ```sh
 Rscript setup.R          # once: installs build packages
+Rscript fetch_history.R  # once: downloads EF2013A to EF2022A
 Rscript build_data.R     # rebuild data/ from the raw IPEDS files
 quarto render            # builds _site/
 quarto preview           # local preview with live reload
@@ -60,6 +72,7 @@ The first visit to a lesson downloads webR or Pyodide plus packages, which takes
 2. Give every exercise a unique id used in three places: `#| exercise:`, the `.hint`/`.solution` divs, and the `.lab-exercise` wrapper's `data-exercise`.
 3. Add the exercise ids to the track card on `index.qmd` and the track page's `.lab-progress` element so completion counts include them.
 4. Link the lesson from its track page and change its status to Live.
+5. Run `python grade.py <lesson>.qmd` to grade every exercise's solution through its own check locally (needs Rscript on the path, or edit the path at the top of the script).
 
 ## Data notes
 
@@ -67,6 +80,8 @@ The first visit to a lesson downloads webR or Pyodide plus packages, which takes
 - Net price is in-state for public institutions and a single figure for privates.
 - Financial aid variables describe 2022-23; everything else describes 2023-24.
 - Missing values are blank, never zero.
+- `fall_enrollment_2023.csv` keeps every subtotal row on purpose; the codes file marks the ten detail lines that add to the reported total.
+- `enrollment_history.csv` covers institutions in the 2023-24 directory only, so it is the survivors' history; 5,064 institutions have a headcount in all eleven years.
 
 ## Power BI project and lesson embeds
 

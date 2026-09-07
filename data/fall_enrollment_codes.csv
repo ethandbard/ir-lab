@@ -1,0 +1,28 @@
+efalevel,line,section,lstudy,attendance,level,category,kind,label
+1,29,3,4,All,All,Total,Grand total,All students total
+2,99,3,1,All,Undergraduate,Undergraduate total,Subtotal,"All students, Undergraduate total"
+3,99,3,1,All,Undergraduate,Degree-seeking total,Subtotal,"All students, Undergraduate, Degree/certificate-seeking total"
+4,99,3,1,All,Undergraduate,First-time,Subtotal,"All students, Undergraduate, Degree/certificate-seeking, First-time"
+5,99,3,1,All,Undergraduate,Other degree-seeking,Subtotal,"All students, Undergraduate, Other degree/certificate-seeking"
+19,99,3,1,All,Undergraduate,Transfer-in,Subtotal,"All students, Undergraduate, Other degree/certificate-seeking, Transfer-ins"
+20,99,3,1,All,Undergraduate,Continuing,Subtotal,"All students, Undergraduate, Other degree/certificate-seeking, Continuing"
+11,99,3,1,All,Undergraduate,Non-degree,Subtotal,"All students, Undergraduate, Non-degree/certificate-seeking"
+12,99,3,3,All,Graduate,Graduate,Subtotal,"All students, Graduate"
+21,14,1,4,Full-time,All,Total,Subtotal,Full-time students total
+22,8,1,1,Full-time,Undergraduate,Undergraduate total,Subtotal,"Full-time students, Undergraduate total"
+23,6,1,1,Full-time,Undergraduate,Degree-seeking total,Subtotal,"Full-time students, Undergraduate, Degree/certificate-seeking total"
+24,1,1,1,Full-time,Undergraduate,First-time,Detail,"Full-time students, Undergraduate, Degree/certificate-seeking, First-time"
+25,99,1,1,Full-time,Undergraduate,Other degree-seeking,Subtotal,"Full-time students, Undergraduate, Other degree/certificate-seeking"
+39,2,1,1,Full-time,Undergraduate,Transfer-in,Detail,"Full-time students, Undergraduate, Other degree/certificate-seeking, Transfer-ins"
+40,3,1,1,Full-time,Undergraduate,Continuing,Detail,"Full-time students, Undergraduate, Other degree/certificate-seeking, Continuing"
+31,7,1,1,Full-time,Undergraduate,Non-degree,Detail,"Full-time students, Undergraduate, Non-degree/certificate-seeking"
+32,11,1,3,Full-time,Graduate,Graduate,Detail,"Full-time students, Graduate"
+41,28,2,4,Part-time,All,Total,Subtotal,Part-time students total
+42,22,2,1,Part-time,Undergraduate,Undergraduate total,Subtotal,"Part-time students, Undergraduate total"
+43,20,2,1,Part-time,Undergraduate,Degree-seeking total,Subtotal,"Part-time students, Undergraduate, Degree/certificate-seeking total"
+44,15,2,1,Part-time,Undergraduate,First-time,Detail,"Part-time students, Undergraduate, Degree/certificate-seeking, First-time"
+45,99,2,1,Part-time,Undergraduate,Other degree-seeking,Subtotal,"Part-time students, Undergraduate, Other degree/certificate-seeking"
+59,16,2,1,Part-time,Undergraduate,Transfer-in,Detail,"Part-time students, Undergraduate, Other degree/certificate-seeking, Transfer-ins"
+60,17,2,1,Part-time,Undergraduate,Continuing,Detail,"Part-time students, Undergraduate, Other degree/certificate-seeking, Continuing"
+51,21,2,1,Part-time,Undergraduate,Non-degree,Detail,"Part-time students, Undergraduate, Non-degree/certificate-seeking"
+52,25,2,3,Part-time,Graduate,Graduate,Detail,"Part-time students, Graduate"
