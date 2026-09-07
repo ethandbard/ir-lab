@@ -1,0 +1,12 @@
+{
+  "quartoRender": "passed: 7 pages",
+  "externalRuntimeCoverage": "R/Python CDNs blocked during embed-focused browser checks; existing exercises not exercised",
+  "lessonFallbacks": 3,
+  "downloadLinks": "passed",
+  "mockEmbedOptIn": "passed",
+  "livePowerBIService": "not tested; no published report URL",
+  "screenshots": [
+    "lesson-desktop.png",
+    "lesson-mobile.png"
+  ]
+}

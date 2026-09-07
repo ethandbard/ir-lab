@@ -1,0 +1,926 @@
+{
+  "name": "IR Lab",
+  "compatibilityLevel": 1600,
+  "model": {
+    "culture": "en-US",
+    "defaultPowerBIDataSourceVersion": "powerBI_V3",
+    "sourceQueryCulture": "en-US",
+    "dataAccessOptions": {
+      "legacyRedirects": true,
+      "returnErrorValuesAsNull": true
+    },
+    "expressions": [
+      {
+        "name": "ProjectRoot",
+        "kind": "m",
+        "expression": "\"C:/Users/ethan/Code/Data Science/ir-lab\" meta [IsParameterQuery=true, Type=\"Text\", IsParameterQueryRequired=true]"
+      }
+    ],
+    "tables": [
+      {
+        "name": "institutions",
+        "columns": [
+          {
+            "name": "unitid",
+            "dataType": "int64",
+            "sourceColumn": "unitid",
+            "summarizeBy": "none",
+            "description": "Unique identification number of the institution | HD2023 | UNITID",
+            "formatString": "#,0",
+            "isKey": true
+          },
+          {
+            "name": "name",
+            "dataType": "string",
+            "sourceColumn": "name",
+            "summarizeBy": "none",
+            "description": "Institution name | HD2023 | INSTNM"
+          },
+          {
+            "name": "city",
+            "dataType": "string",
+            "sourceColumn": "city",
+            "summarizeBy": "none",
+            "description": "City location of institution | HD2023 | CITY"
+          },
+          {
+            "name": "state",
+            "dataType": "string",
+            "sourceColumn": "state",
+            "summarizeBy": "none",
+            "description": "State abbreviation | HD2023 | STABBR"
+          },
+          {
+            "name": "region",
+            "dataType": "string",
+            "sourceColumn": "region",
+            "summarizeBy": "none",
+            "description": "Bureau of Economic Analysis region | HD2023 | OBEREG"
+          },
+          {
+            "name": "sector",
+            "dataType": "string",
+            "sourceColumn": "sector",
+            "summarizeBy": "none",
+            "description": "Sector of institution (control x level) | HD2023 | SECTOR"
+          },
+          {
+            "name": "control",
+            "dataType": "string",
+            "sourceColumn": "control",
+            "summarizeBy": "none",
+            "description": "Control of institution | HD2023 | CONTROL"
+          },
+          {
+            "name": "level",
+            "dataType": "string",
+            "sourceColumn": "level",
+            "summarizeBy": "none",
+            "description": "Level of institution | HD2023 | ICLEVEL"
+          },
+          {
+            "name": "locale",
+            "dataType": "string",
+            "sourceColumn": "locale",
+            "summarizeBy": "none",
+            "description": "Degree of urbanization, grouped to City, Suburb, Town, Rural | HD2023 | LOCALE"
+          },
+          {
+            "name": "size",
+            "dataType": "string",
+            "sourceColumn": "size",
+            "summarizeBy": "none",
+            "description": "Institution size category (fall headcount) | HD2023 | INSTSIZE"
+          },
+          {
+            "name": "carnegie",
+            "dataType": "string",
+            "sourceColumn": "carnegie",
+            "summarizeBy": "none",
+            "description": "Carnegie Classification 2021: Basic, grouped | HD2023 | C21BASIC"
+          },
+          {
+            "name": "hbcu",
+            "dataType": "string",
+            "sourceColumn": "hbcu",
+            "summarizeBy": "none",
+            "description": "Historically Black College or University | HD2023 | HBCU"
+          },
+          {
+            "name": "tribal",
+            "dataType": "string",
+            "sourceColumn": "tribal",
+            "summarizeBy": "none",
+            "description": "Tribal college | HD2023 | TRIBAL"
+          },
+          {
+            "name": "longitude",
+            "dataType": "double",
+            "sourceColumn": "longitude",
+            "summarizeBy": "none",
+            "description": "Longitude location of institution | HD2023 | LONGITUD"
+          },
+          {
+            "name": "latitude",
+            "dataType": "double",
+            "sourceColumn": "latitude",
+            "summarizeBy": "none",
+            "description": "Latitude location of institution | HD2023 | LATITUDE"
+          },
+          {
+            "name": "headcount",
+            "dataType": "int64",
+            "sourceColumn": "headcount",
+            "summarizeBy": "none",
+            "description": "12-month unduplicated headcount, all students | EFFY2023 | EFYTOTLT (EFFYALEV=1)",
+            "formatString": "#,0"
+          },
+          {
+            "name": "undergrad",
+            "dataType": "int64",
+            "sourceColumn": "undergrad",
+            "summarizeBy": "none",
+            "description": "12-month unduplicated headcount, undergraduate | EFFY2023 | EFYTOTLT (EFFYALEV=2)",
+            "formatString": "#,0"
+          },
+          {
+            "name": "pct_women_ug",
+            "dataType": "double",
+            "sourceColumn": "pct_women_ug",
+            "summarizeBy": "none",
+            "description": "Percent of undergraduates who are women | EFFY2023 | EFYTOTLW / EFYTOTLT",
+            "formatString": "0.0\"%\""
+          },
+          {
+            "name": "pct_white_ug",
+            "dataType": "double",
+            "sourceColumn": "pct_white_ug",
+            "summarizeBy": "none",
+            "description": "Percent of undergraduates who are White | EFFY2023 | EFYWHITT / EFYTOTLT",
+            "formatString": "0.0\"%\""
+          },
+          {
+            "name": "pct_black_ug",
+            "dataType": "double",
+            "sourceColumn": "pct_black_ug",
+            "summarizeBy": "none",
+            "description": "Percent of undergraduates who are Black or African American | EFFY2023 | EFYBKAAT / EFYTOTLT",
+            "formatString": "0.0\"%\""
+          },
+          {
+            "name": "pct_hispanic_ug",
+            "dataType": "double",
+            "sourceColumn": "pct_hispanic_ug",
+            "summarizeBy": "none",
+            "description": "Percent of undergraduates who are Hispanic or Latino | EFFY2023 | EFYHISPT / EFYTOTLT",
+            "formatString": "0.0\"%\""
+          },
+          {
+            "name": "pct_asian_ug",
+            "dataType": "double",
+            "sourceColumn": "pct_asian_ug",
+            "summarizeBy": "none",
+            "description": "Percent of undergraduates who are Asian | EFFY2023 | EFYASIAT / EFYTOTLT",
+            "formatString": "0.0\"%\""
+          },
+          {
+            "name": "pct_intl_ug",
+            "dataType": "double",
+            "sourceColumn": "pct_intl_ug",
+            "summarizeBy": "none",
+            "description": "Percent of undergraduates who are U.S. nonresidents | EFFY2023 | EFYNRALT / EFYTOTLT",
+            "formatString": "0.0\"%\""
+          },
+          {
+            "name": "retention_ft",
+            "dataType": "double",
+            "sourceColumn": "retention_ft",
+            "summarizeBy": "none",
+            "description": "Full-time retention rate, fall 2022 to fall 2023 | EF2023D | RET_PCF",
+            "formatString": "0.0\"%\""
+          },
+          {
+            "name": "retention_pt",
+            "dataType": "double",
+            "sourceColumn": "retention_pt",
+            "summarizeBy": "none",
+            "description": "Part-time retention rate, fall 2022 to fall 2023 | EF2023D | RET_PCP",
+            "formatString": "0.0\"%\""
+          },
+          {
+            "name": "stu_fac_ratio",
+            "dataType": "int64",
+            "sourceColumn": "stu_fac_ratio",
+            "summarizeBy": "none",
+            "description": "Student-to-faculty ratio | EF2023D | STUFACR",
+            "formatString": "#,0"
+          },
+          {
+            "name": "grad_cohort",
+            "dataType": "int64",
+            "sourceColumn": "grad_cohort",
+            "summarizeBy": "none",
+            "description": "Adjusted cohort, all degree/certificate-seeking students | GR2023 | GRTOTLT (GRTYPE=2 or 29)",
+            "formatString": "#,0"
+          },
+          {
+            "name": "grad_rate_150",
+            "dataType": "double",
+            "sourceColumn": "grad_rate_150",
+            "summarizeBy": "none",
+            "description": "Graduation rate within 150% of normal time, all students | GR2023 | GRTYPE 3/2 or 30/29",
+            "formatString": "0.0\"%\""
+          },
+          {
+            "name": "bach_cohort",
+            "dataType": "int64",
+            "sourceColumn": "bach_cohort",
+            "summarizeBy": "none",
+            "description": "Adjusted cohort, bachelor's-seeking subcohort at 4-year institutions | GR2023 | GRTOTLT (GRTYPE=8)",
+            "formatString": "#,0"
+          },
+          {
+            "name": "grad_rate_bach_6yr",
+            "dataType": "double",
+            "sourceColumn": "grad_rate_bach_6yr",
+            "summarizeBy": "none",
+            "description": "Bachelor's degree completion within 6 years | GR2023 | GRTYPE 12/8",
+            "formatString": "0.0\"%\""
+          },
+          {
+            "name": "grad_rate_bach_4yr",
+            "dataType": "double",
+            "sourceColumn": "grad_rate_bach_4yr",
+            "summarizeBy": "none",
+            "description": "Bachelor's degree completion within 4 years | GR2023 | GRTYPE 13/8",
+            "formatString": "0.0\"%\""
+          },
+          {
+            "name": "aid_cohort",
+            "dataType": "int64",
+            "sourceColumn": "aid_cohort",
+            "summarizeBy": "none",
+            "description": "Full-time first-time degree-seeking undergraduates in the aid cohort | SFA2223 | SCUGFFN",
+            "formatString": "#,0"
+          },
+          {
+            "name": "pct_pell",
+            "dataType": "double",
+            "sourceColumn": "pct_pell",
+            "summarizeBy": "none",
+            "description": "Percent of undergraduates awarded Pell grants | SFA2223 | UPGRNTP",
+            "formatString": "0.0\"%\""
+          },
+          {
+            "name": "pct_any_grant",
+            "dataType": "double",
+            "sourceColumn": "pct_any_grant",
+            "summarizeBy": "none",
+            "description": "Percent of undergraduates awarded any grant aid | SFA2223 | UAGRNTP",
+            "formatString": "0.0\"%\""
+          },
+          {
+            "name": "net_price",
+            "dataType": "int64",
+            "sourceColumn": "net_price",
+            "summarizeBy": "none",
+            "description": "Average net price for students awarded grant aid, 2022-23 (in-state at publics) | SFA2223 | NPIST2 or NPGRN2",
+            "formatString": "$#,0"
+          },
+          {
+            "name": "net_price_0_30k",
+            "dataType": "int64",
+            "sourceColumn": "net_price_0_30k",
+            "summarizeBy": "none",
+            "description": "Average net price, family income $0-30,000 | SFA2223 | NPT412 or NPIS412",
+            "formatString": "$#,0"
+          },
+          {
+            "name": "net_price_30_48k",
+            "dataType": "int64",
+            "sourceColumn": "net_price_30_48k",
+            "summarizeBy": "none",
+            "description": "Average net price, family income $30,001-48,000 | SFA2223 | NPT422 or NPIS422",
+            "formatString": "$#,0"
+          },
+          {
+            "name": "net_price_48_75k",
+            "dataType": "int64",
+            "sourceColumn": "net_price_48_75k",
+            "summarizeBy": "none",
+            "description": "Average net price, family income $48,001-75,000 | SFA2223 | NPT432 or NPIS432",
+            "formatString": "$#,0"
+          },
+          {
+            "name": "net_price_75_110k",
+            "dataType": "int64",
+            "sourceColumn": "net_price_75_110k",
+            "summarizeBy": "none",
+            "description": "Average net price, family income $75,001-110,000 | SFA2223 | NPT442 or NPIS442",
+            "formatString": "$#,0"
+          },
+          {
+            "name": "net_price_110k_plus",
+            "dataType": "int64",
+            "sourceColumn": "net_price_110k_plus",
+            "summarizeBy": "none",
+            "description": "Average net price, family income $110,001 or more | SFA2223 | NPT452 or NPIS452",
+            "formatString": "$#,0"
+          },
+          {
+            "name": "associates_awarded",
+            "dataType": "int64",
+            "sourceColumn": "associates_awarded",
+            "summarizeBy": "none",
+            "description": "Associate's degrees awarded, 2022-23 | C2023_C | CSTOTLT (AWLEVELC=3)",
+            "formatString": "#,0"
+          },
+          {
+            "name": "bachelors_awarded",
+            "dataType": "int64",
+            "sourceColumn": "bachelors_awarded",
+            "summarizeBy": "none",
+            "description": "Bachelor's degrees awarded, 2022-23 | C2023_C | CSTOTLT (AWLEVELC=5)",
+            "formatString": "#,0"
+          },
+          {
+            "name": "masters_awarded",
+            "dataType": "int64",
+            "sourceColumn": "masters_awarded",
+            "summarizeBy": "none",
+            "description": "Master's degrees awarded, 2022-23 | C2023_C | CSTOTLT (AWLEVELC=7)",
+            "formatString": "#,0"
+          },
+          {
+            "name": "doctorates_awarded",
+            "dataType": "int64",
+            "sourceColumn": "doctorates_awarded",
+            "summarizeBy": "none",
+            "description": "Doctor's degrees awarded, 2022-23 | C2023_C | CSTOTLT (AWLEVELC=9)",
+            "formatString": "#,0"
+          },
+          {
+            "name": "Completion Bin Sort",
+            "dataType": "int64",
+            "type": "calculated",
+            "expression": "VAR r = institutions[grad_rate_bach_6yr] RETURN IF ( ISBLANK ( r ), BLANK (), MIN ( 95, FLOOR ( r, 5 ) ) )",
+            "summarizeBy": "none",
+            "isHidden": true
+          },
+          {
+            "name": "Completion Bin",
+            "dataType": "string",
+            "type": "calculated",
+            "expression": "VAR r = institutions[grad_rate_bach_6yr] VAR lo = institutions[Completion Bin Sort] RETURN IF ( ISBLANK ( r ), BLANK (), FORMAT ( lo, \"0\" ) & IF ( lo = 95, \"–100\", \"–<\" & FORMAT ( lo + 5, \"0\" ) ) )",
+            "sortByColumn": "Completion Bin Sort",
+            "summarizeBy": "none"
+          },
+          {
+            "name": "Distribution Eligible",
+            "dataType": "int64",
+            "type": "calculated",
+            "expression": "IF ( institutions[level] = \"4-year\" && NOT ISBLANK ( institutions[grad_rate_bach_6yr] ), 1, 0 )",
+            "summarizeBy": "none",
+            "isHidden": true
+          },
+          {
+            "name": "Regression Eligible",
+            "dataType": "int64",
+            "type": "calculated",
+            "expression": "IF ( institutions[level] = \"4-year\" && institutions[bach_cohort] >= 30 && NOT ISBLANK ( institutions[pct_pell] ) && NOT ISBLANK ( institutions[grad_rate_bach_6yr] ), 1, 0 )",
+            "summarizeBy": "none",
+            "isHidden": true
+          }
+        ],
+        "measures": [
+          {
+            "name": "Institutions",
+            "expression": "COUNTROWS ( institutions )",
+            "formatString": "#,0",
+            "description": "Active institutions in the current filter context; one row per UNITID."
+          },
+          {
+            "name": "Completion Institutions",
+            "expression": "COUNTROWS ( FILTER ( institutions, institutions[level] = \"4-year\" && NOT ISBLANK ( institutions[grad_rate_bach_6yr] ) ) )",
+            "formatString": "#,0",
+            "description": ""
+          },
+          {
+            "name": "Mean Completion",
+            "expression": "AVERAGEX ( FILTER ( institutions, institutions[level] = \"4-year\" && NOT ISBLANK ( institutions[grad_rate_bach_6yr] ) ), institutions[grad_rate_bach_6yr] )",
+            "formatString": "0.0\"%\"",
+            "description": "Unweighted mean of institution rates, stored on a 0–100 scale. Not a student-level graduation rate."
+          },
+          {
+            "name": "Median Completion",
+            "expression": "MEDIANX ( FILTER ( institutions, institutions[level] = \"4-year\" && NOT ISBLANK ( institutions[grad_rate_bach_6yr] ) ), institutions[grad_rate_bach_6yr] )",
+            "formatString": "0.0\"%\"",
+            "description": ""
+          },
+          {
+            "name": "Completion SD",
+            "expression": "VAR t = FILTER ( institutions, institutions[level] = \"4-year\" && NOT ISBLANK ( institutions[grad_rate_bach_6yr] ) )\nRETURN IF ( COUNTROWS ( t ) > 1, STDEVX.S ( t, institutions[grad_rate_bach_6yr] ) )",
+            "formatString": "0.0\" pp\"",
+            "description": ""
+          },
+          {
+            "name": "Completion Missing",
+            "expression": "COUNTROWS ( FILTER ( institutions, institutions[level] = \"4-year\" && ISBLANK ( institutions[grad_rate_bach_6yr] ) ) )",
+            "formatString": "#,0",
+            "description": ""
+          },
+          {
+            "name": "Completion Skewness",
+            "expression": "VAR t = FILTER ( institutions, institutions[level] = \"4-year\" && NOT ISBLANK ( institutions[grad_rate_bach_6yr] ) )\nVAR n = COUNTROWS ( t )\nVAR m = AVERAGEX ( t, institutions[grad_rate_bach_6yr] )\nVAR s = IF ( n > 1, STDEVX.S ( t, institutions[grad_rate_bach_6yr] ) )\nRETURN IF ( n > 2 && s > 0, AVERAGEX ( t, POWER ( DIVIDE ( institutions[grad_rate_bach_6yr] - m, s ), 3 ) ) )",
+            "formatString": "0.000",
+            "description": "Lesson definition: mean cubed standardized deviation using sample SD; differs from Excel adjusted SKEW."
+          },
+          {
+            "name": "Median Net Price",
+            "expression": "MEDIAN ( institutions[net_price] )",
+            "formatString": "$#,0",
+            "description": "2022–23; median of institution-level average net prices; in-state at public institutions."
+          },
+          {
+            "name": "Regression Institutions",
+            "expression": "COUNTROWS ( FILTER ( institutions, institutions[level] = \"4-year\" && institutions[bach_cohort] >= 30 && NOT ISBLANK ( institutions[pct_pell] ) && NOT ISBLANK ( institutions[grad_rate_bach_6yr] ) ) )",
+            "formatString": "#,0",
+            "description": ""
+          },
+          {
+            "name": "Pell Slope",
+            "expression": "VAR t = FILTER ( institutions, institutions[level] = \"4-year\" && institutions[bach_cohort] >= 30 && NOT ISBLANK ( institutions[pct_pell] ) && NOT ISBLANK ( institutions[grad_rate_bach_6yr] ) )\nVAR n = COUNTROWS ( t )\nVAR sx = IF ( n > 1, STDEVX.S ( t, institutions[pct_pell] ) )\nRETURN IF ( n > 2 && sx > 0, MAXX ( LINESTX ( t, institutions[grad_rate_bach_6yr], institutions[pct_pell] ), [Slope1] ) )",
+            "formatString": "0.000\" pp/pp\"",
+            "description": "Unweighted OLS; four-year institutions, bachelor cohort >=30, complete Pell and completion. Refit within current filters."
+          },
+          {
+            "name": "Pell Intercept",
+            "expression": "VAR t = FILTER ( institutions, institutions[level] = \"4-year\" && institutions[bach_cohort] >= 30 && NOT ISBLANK ( institutions[pct_pell] ) && NOT ISBLANK ( institutions[grad_rate_bach_6yr] ) )\nVAR n = COUNTROWS ( t )\nVAR sx = IF ( n > 1, STDEVX.S ( t, institutions[pct_pell] ) )\nRETURN IF ( n > 2 && sx > 0, MAXX ( LINESTX ( t, institutions[grad_rate_bach_6yr], institutions[pct_pell] ), [Intercept] ) )",
+            "formatString": "0.00\" pp\"",
+            "description": "Unweighted OLS; four-year institutions, bachelor cohort >=30, complete Pell and completion. Refit within current filters."
+          },
+          {
+            "name": "Pell R Squared",
+            "expression": "VAR t = FILTER ( institutions, institutions[level] = \"4-year\" && institutions[bach_cohort] >= 30 && NOT ISBLANK ( institutions[pct_pell] ) && NOT ISBLANK ( institutions[grad_rate_bach_6yr] ) )\nVAR n = COUNTROWS ( t )\nVAR sx = IF ( n > 1, STDEVX.S ( t, institutions[pct_pell] ) )\nRETURN IF ( n > 2 && sx > 0, MAXX ( LINESTX ( t, institutions[grad_rate_bach_6yr], institutions[pct_pell] ), [CoefficientOfDetermination] ) )",
+            "formatString": "0.000",
+            "description": "Unweighted OLS; four-year institutions, bachelor cohort >=30, complete Pell and completion. Refit within current filters."
+          },
+          {
+            "name": "Residual SE",
+            "expression": "VAR t = FILTER ( institutions, institutions[level] = \"4-year\" && institutions[bach_cohort] >= 30 && NOT ISBLANK ( institutions[pct_pell] ) && NOT ISBLANK ( institutions[grad_rate_bach_6yr] ) )\nVAR n = COUNTROWS ( t )\nVAR sx = IF ( n > 1, STDEVX.S ( t, institutions[pct_pell] ) )\nRETURN IF ( n > 2 && sx > 0, MAXX ( LINESTX ( t, institutions[grad_rate_bach_6yr], institutions[pct_pell] ), [StandardError] ) )",
+            "formatString": "0.00\" pp\"",
+            "description": "Unweighted OLS; four-year institutions, bachelor cohort >=30, complete Pell and completion. Refit within current filters."
+          }
+        ],
+        "partitions": [
+          {
+            "name": "institutions",
+            "mode": "import",
+            "source": {
+              "type": "m",
+              "expression": [
+                "let",
+                "    Source = Csv.Document(File.Contents(ProjectRoot & \"/data/institutions.csv\"), [Delimiter=\",\", Encoding=65001, QuoteStyle=QuoteStyle.Csv]),",
+                "    Headers = Table.PromoteHeaders(Source, [PromoteAllScalars=true]),",
+                "    Nulls = Table.ReplaceValue(Headers, \"\", null, Replacer.ReplaceValue, Table.ColumnNames(Headers)),",
+                "    Typed = Table.TransformColumnTypes(Nulls, {{\"unitid\", Int64.Type}, {\"name\", type text}, {\"city\", type text}, {\"state\", type text}, {\"region\", type text}, {\"sector\", type text}, {\"control\", type text}, {\"level\", type text}, {\"locale\", type text}, {\"size\", type text}, {\"carnegie\", type text}, {\"hbcu\", type text}, {\"tribal\", type text}, {\"longitude\", type number}, {\"latitude\", type number}, {\"headcount\", Int64.Type}, {\"undergrad\", Int64.Type}, {\"pct_women_ug\", type number}, {\"pct_white_ug\", type number}, {\"pct_black_ug\", type number}, {\"pct_hispanic_ug\", type number}, {\"pct_asian_ug\", type number}, {\"pct_intl_ug\", type number}, {\"retention_ft\", type number}, {\"retention_pt\", type number}, {\"stu_fac_ratio\", Int64.Type}, {\"grad_cohort\", Int64.Type}, {\"grad_rate_150\", type number}, {\"bach_cohort\", Int64.Type}, {\"grad_rate_bach_6yr\", type number}, {\"grad_rate_bach_4yr\", type number}, {\"aid_cohort\", Int64.Type}, {\"pct_pell\", type number}, {\"pct_any_grant\", type number}, {\"net_price\", Int64.Type}, {\"net_price_0_30k\", Int64.Type}, {\"net_price_30_48k\", Int64.Type}, {\"net_price_48_75k\", Int64.Type}, {\"net_price_75_110k\", Int64.Type}, {\"net_price_110k_plus\", Int64.Type}, {\"associates_awarded\", Int64.Type}, {\"bachelors_awarded\", Int64.Type}, {\"masters_awarded\", Int64.Type}, {\"doctorates_awarded\", Int64.Type}}, \"en-US\")",
+                "in",
+                "    Typed"
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "name": "peers",
+        "columns": [
+          {
+            "name": "unitid",
+            "dataType": "int64",
+            "sourceColumn": "unitid",
+            "summarizeBy": "none",
+            "description": "Unique identification number of the institution | HD2023 | UNITID",
+            "formatString": "#,0",
+            "isKey": true
+          },
+          {
+            "name": "name",
+            "dataType": "string",
+            "sourceColumn": "name",
+            "summarizeBy": "none",
+            "description": "Institution name | HD2023 | INSTNM"
+          },
+          {
+            "name": "city",
+            "dataType": "string",
+            "sourceColumn": "city",
+            "summarizeBy": "none",
+            "description": "City location of institution | HD2023 | CITY"
+          },
+          {
+            "name": "state",
+            "dataType": "string",
+            "sourceColumn": "state",
+            "summarizeBy": "none",
+            "description": "State abbreviation | HD2023 | STABBR"
+          },
+          {
+            "name": "region",
+            "dataType": "string",
+            "sourceColumn": "region",
+            "summarizeBy": "none",
+            "description": "Bureau of Economic Analysis region | HD2023 | OBEREG"
+          },
+          {
+            "name": "sector",
+            "dataType": "string",
+            "sourceColumn": "sector",
+            "summarizeBy": "none",
+            "description": "Sector of institution (control x level) | HD2023 | SECTOR"
+          },
+          {
+            "name": "control",
+            "dataType": "string",
+            "sourceColumn": "control",
+            "summarizeBy": "none",
+            "description": "Control of institution | HD2023 | CONTROL"
+          },
+          {
+            "name": "level",
+            "dataType": "string",
+            "sourceColumn": "level",
+            "summarizeBy": "none",
+            "description": "Level of institution | HD2023 | ICLEVEL"
+          },
+          {
+            "name": "locale",
+            "dataType": "string",
+            "sourceColumn": "locale",
+            "summarizeBy": "none",
+            "description": "Degree of urbanization, grouped to City, Suburb, Town, Rural | HD2023 | LOCALE"
+          },
+          {
+            "name": "size",
+            "dataType": "string",
+            "sourceColumn": "size",
+            "summarizeBy": "none",
+            "description": "Institution size category (fall headcount) | HD2023 | INSTSIZE"
+          },
+          {
+            "name": "carnegie",
+            "dataType": "string",
+            "sourceColumn": "carnegie",
+            "summarizeBy": "none",
+            "description": "Carnegie Classification 2021: Basic, grouped | HD2023 | C21BASIC"
+          },
+          {
+            "name": "hbcu",
+            "dataType": "string",
+            "sourceColumn": "hbcu",
+            "summarizeBy": "none",
+            "description": "Historically Black College or University | HD2023 | HBCU"
+          },
+          {
+            "name": "tribal",
+            "dataType": "string",
+            "sourceColumn": "tribal",
+            "summarizeBy": "none",
+            "description": "Tribal college | HD2023 | TRIBAL"
+          },
+          {
+            "name": "longitude",
+            "dataType": "double",
+            "sourceColumn": "longitude",
+            "summarizeBy": "none",
+            "description": "Longitude location of institution | HD2023 | LONGITUD"
+          },
+          {
+            "name": "latitude",
+            "dataType": "double",
+            "sourceColumn": "latitude",
+            "summarizeBy": "none",
+            "description": "Latitude location of institution | HD2023 | LATITUDE"
+          },
+          {
+            "name": "headcount",
+            "dataType": "int64",
+            "sourceColumn": "headcount",
+            "summarizeBy": "none",
+            "description": "12-month unduplicated headcount, all students | EFFY2023 | EFYTOTLT (EFFYALEV=1)",
+            "formatString": "#,0"
+          },
+          {
+            "name": "undergrad",
+            "dataType": "int64",
+            "sourceColumn": "undergrad",
+            "summarizeBy": "none",
+            "description": "12-month unduplicated headcount, undergraduate | EFFY2023 | EFYTOTLT (EFFYALEV=2)",
+            "formatString": "#,0"
+          },
+          {
+            "name": "pct_women_ug",
+            "dataType": "double",
+            "sourceColumn": "pct_women_ug",
+            "summarizeBy": "none",
+            "description": "Percent of undergraduates who are women | EFFY2023 | EFYTOTLW / EFYTOTLT",
+            "formatString": "0.0\"%\""
+          },
+          {
+            "name": "pct_white_ug",
+            "dataType": "double",
+            "sourceColumn": "pct_white_ug",
+            "summarizeBy": "none",
+            "description": "Percent of undergraduates who are White | EFFY2023 | EFYWHITT / EFYTOTLT",
+            "formatString": "0.0\"%\""
+          },
+          {
+            "name": "pct_black_ug",
+            "dataType": "double",
+            "sourceColumn": "pct_black_ug",
+            "summarizeBy": "none",
+            "description": "Percent of undergraduates who are Black or African American | EFFY2023 | EFYBKAAT / EFYTOTLT",
+            "formatString": "0.0\"%\""
+          },
+          {
+            "name": "pct_hispanic_ug",
+            "dataType": "double",
+            "sourceColumn": "pct_hispanic_ug",
+            "summarizeBy": "none",
+            "description": "Percent of undergraduates who are Hispanic or Latino | EFFY2023 | EFYHISPT / EFYTOTLT",
+            "formatString": "0.0\"%\""
+          },
+          {
+            "name": "pct_asian_ug",
+            "dataType": "double",
+            "sourceColumn": "pct_asian_ug",
+            "summarizeBy": "none",
+            "description": "Percent of undergraduates who are Asian | EFFY2023 | EFYASIAT / EFYTOTLT",
+            "formatString": "0.0\"%\""
+          },
+          {
+            "name": "pct_intl_ug",
+            "dataType": "double",
+            "sourceColumn": "pct_intl_ug",
+            "summarizeBy": "none",
+            "description": "Percent of undergraduates who are U.S. nonresidents | EFFY2023 | EFYNRALT / EFYTOTLT",
+            "formatString": "0.0\"%\""
+          },
+          {
+            "name": "retention_ft",
+            "dataType": "double",
+            "sourceColumn": "retention_ft",
+            "summarizeBy": "none",
+            "description": "Full-time retention rate, fall 2022 to fall 2023 | EF2023D | RET_PCF",
+            "formatString": "0.0\"%\""
+          },
+          {
+            "name": "retention_pt",
+            "dataType": "double",
+            "sourceColumn": "retention_pt",
+            "summarizeBy": "none",
+            "description": "Part-time retention rate, fall 2022 to fall 2023 | EF2023D | RET_PCP",
+            "formatString": "0.0\"%\""
+          },
+          {
+            "name": "stu_fac_ratio",
+            "dataType": "int64",
+            "sourceColumn": "stu_fac_ratio",
+            "summarizeBy": "none",
+            "description": "Student-to-faculty ratio | EF2023D | STUFACR",
+            "formatString": "#,0"
+          },
+          {
+            "name": "grad_cohort",
+            "dataType": "int64",
+            "sourceColumn": "grad_cohort",
+            "summarizeBy": "none",
+            "description": "Adjusted cohort, all degree/certificate-seeking students | GR2023 | GRTOTLT (GRTYPE=2 or 29)",
+            "formatString": "#,0"
+          },
+          {
+            "name": "grad_rate_150",
+            "dataType": "double",
+            "sourceColumn": "grad_rate_150",
+            "summarizeBy": "none",
+            "description": "Graduation rate within 150% of normal time, all students | GR2023 | GRTYPE 3/2 or 30/29",
+            "formatString": "0.0\"%\""
+          },
+          {
+            "name": "bach_cohort",
+            "dataType": "int64",
+            "sourceColumn": "bach_cohort",
+            "summarizeBy": "none",
+            "description": "Adjusted cohort, bachelor's-seeking subcohort at 4-year institutions | GR2023 | GRTOTLT (GRTYPE=8)",
+            "formatString": "#,0"
+          },
+          {
+            "name": "grad_rate_bach_6yr",
+            "dataType": "double",
+            "sourceColumn": "grad_rate_bach_6yr",
+            "summarizeBy": "none",
+            "description": "Bachelor's degree completion within 6 years | GR2023 | GRTYPE 12/8",
+            "formatString": "0.0\"%\""
+          },
+          {
+            "name": "grad_rate_bach_4yr",
+            "dataType": "double",
+            "sourceColumn": "grad_rate_bach_4yr",
+            "summarizeBy": "none",
+            "description": "Bachelor's degree completion within 4 years | GR2023 | GRTYPE 13/8",
+            "formatString": "0.0\"%\""
+          },
+          {
+            "name": "aid_cohort",
+            "dataType": "int64",
+            "sourceColumn": "aid_cohort",
+            "summarizeBy": "none",
+            "description": "Full-time first-time degree-seeking undergraduates in the aid cohort | SFA2223 | SCUGFFN",
+            "formatString": "#,0"
+          },
+          {
+            "name": "pct_pell",
+            "dataType": "double",
+            "sourceColumn": "pct_pell",
+            "summarizeBy": "none",
+            "description": "Percent of undergraduates awarded Pell grants | SFA2223 | UPGRNTP",
+            "formatString": "0.0\"%\""
+          },
+          {
+            "name": "pct_any_grant",
+            "dataType": "double",
+            "sourceColumn": "pct_any_grant",
+            "summarizeBy": "none",
+            "description": "Percent of undergraduates awarded any grant aid | SFA2223 | UAGRNTP",
+            "formatString": "0.0\"%\""
+          },
+          {
+            "name": "net_price",
+            "dataType": "int64",
+            "sourceColumn": "net_price",
+            "summarizeBy": "none",
+            "description": "Average net price for students awarded grant aid, 2022-23 (in-state at publics) | SFA2223 | NPIST2 or NPGRN2",
+            "formatString": "$#,0"
+          },
+          {
+            "name": "net_price_0_30k",
+            "dataType": "int64",
+            "sourceColumn": "net_price_0_30k",
+            "summarizeBy": "none",
+            "description": "Average net price, family income $0-30,000 | SFA2223 | NPT412 or NPIS412",
+            "formatString": "$#,0"
+          },
+          {
+            "name": "net_price_30_48k",
+            "dataType": "int64",
+            "sourceColumn": "net_price_30_48k",
+            "summarizeBy": "none",
+            "description": "Average net price, family income $30,001-48,000 | SFA2223 | NPT422 or NPIS422",
+            "formatString": "$#,0"
+          },
+          {
+            "name": "net_price_48_75k",
+            "dataType": "int64",
+            "sourceColumn": "net_price_48_75k",
+            "summarizeBy": "none",
+            "description": "Average net price, family income $48,001-75,000 | SFA2223 | NPT432 or NPIS432",
+            "formatString": "$#,0"
+          },
+          {
+            "name": "net_price_75_110k",
+            "dataType": "int64",
+            "sourceColumn": "net_price_75_110k",
+            "summarizeBy": "none",
+            "description": "Average net price, family income $75,001-110,000 | SFA2223 | NPT442 or NPIS442",
+            "formatString": "$#,0"
+          },
+          {
+            "name": "net_price_110k_plus",
+            "dataType": "int64",
+            "sourceColumn": "net_price_110k_plus",
+            "summarizeBy": "none",
+            "description": "Average net price, family income $110,001 or more | SFA2223 | NPT452 or NPIS452",
+            "formatString": "$#,0"
+          },
+          {
+            "name": "associates_awarded",
+            "dataType": "int64",
+            "sourceColumn": "associates_awarded",
+            "summarizeBy": "none",
+            "description": "Associate's degrees awarded, 2022-23 | C2023_C | CSTOTLT (AWLEVELC=3)",
+            "formatString": "#,0"
+          },
+          {
+            "name": "bachelors_awarded",
+            "dataType": "int64",
+            "sourceColumn": "bachelors_awarded",
+            "summarizeBy": "none",
+            "description": "Bachelor's degrees awarded, 2022-23 | C2023_C | CSTOTLT (AWLEVELC=5)",
+            "formatString": "#,0"
+          },
+          {
+            "name": "masters_awarded",
+            "dataType": "int64",
+            "sourceColumn": "masters_awarded",
+            "summarizeBy": "none",
+            "description": "Master's degrees awarded, 2022-23 | C2023_C | CSTOTLT (AWLEVELC=7)",
+            "formatString": "#,0"
+          },
+          {
+            "name": "doctorates_awarded",
+            "dataType": "int64",
+            "sourceColumn": "doctorates_awarded",
+            "summarizeBy": "none",
+            "description": "Doctor's degrees awarded, 2022-23 | C2023_C | CSTOTLT (AWLEVELC=9)",
+            "formatString": "#,0"
+          },
+          {
+            "name": "peer_group",
+            "dataType": "string",
+            "sourceColumn": "peer_group",
+            "summarizeBy": "none",
+            "sortByColumn": "peer_group_sort"
+          },
+          {
+            "name": "peer_group_sort",
+            "dataType": "int64",
+            "sourceColumn": "peer_group_sort",
+            "summarizeBy": "none",
+            "formatString": "#,0"
+          }
+        ],
+        "measures": [
+          {
+            "name": "Peer Institutions",
+            "expression": "COUNTROWS ( peers )",
+            "formatString": "#,0",
+            "description": ""
+          },
+          {
+            "name": "Peer Groups",
+            "expression": "DISTINCTCOUNT ( peers[peer_group] )",
+            "formatString": "#,0",
+            "description": ""
+          },
+          {
+            "name": "Peer Median Pell",
+            "expression": "MEDIAN ( peers[pct_pell] )",
+            "formatString": "0.0\"%\"",
+            "description": ""
+          },
+          {
+            "name": "Peer Median Completion",
+            "expression": "MEDIAN ( peers[grad_rate_bach_6yr] )",
+            "formatString": "0.0\"%\"",
+            "description": ""
+          },
+          {
+            "name": "Peer Median Net Price",
+            "expression": "MEDIAN ( peers[net_price] )",
+            "formatString": "$#,0",
+            "description": ""
+          },
+          {
+            "name": "Peer Median Retention",
+            "expression": "MEDIAN ( peers[retention_ft] )",
+            "formatString": "0.0\"%\"",
+            "description": ""
+          },
+          {
+            "name": "Peer Median Student Faculty Ratio",
+            "expression": "MEDIAN ( peers[stu_fac_ratio] )",
+            "formatString": "0.0",
+            "description": ""
+          }
+        ],
+        "partitions": [
+          {
+            "name": "peers",
+            "mode": "import",
+            "source": {
+              "type": "m",
+              "expression": [
+                "let",
+                "    Source = Csv.Document(File.Contents(ProjectRoot & \"/powerbi/data/peers.csv\"), [Delimiter=\",\", Encoding=65001, QuoteStyle=QuoteStyle.Csv]),",
+                "    Headers = Table.PromoteHeaders(Source, [PromoteAllScalars=true]),",
+                "    Nulls = Table.ReplaceValue(Headers, \"\", null, Replacer.ReplaceValue, Table.ColumnNames(Headers)),",
+                "    Typed = Table.TransformColumnTypes(Nulls, {{\"unitid\", Int64.Type}, {\"name\", type text}, {\"city\", type text}, {\"state\", type text}, {\"region\", type text}, {\"sector\", type text}, {\"control\", type text}, {\"level\", type text}, {\"locale\", type text}, {\"size\", type text}, {\"carnegie\", type text}, {\"hbcu\", type text}, {\"tribal\", type text}, {\"longitude\", type number}, {\"latitude\", type number}, {\"headcount\", Int64.Type}, {\"undergrad\", Int64.Type}, {\"pct_women_ug\", type number}, {\"pct_white_ug\", type number}, {\"pct_black_ug\", type number}, {\"pct_hispanic_ug\", type number}, {\"pct_asian_ug\", type number}, {\"pct_intl_ug\", type number}, {\"retention_ft\", type number}, {\"retention_pt\", type number}, {\"stu_fac_ratio\", Int64.Type}, {\"grad_cohort\", Int64.Type}, {\"grad_rate_150\", type number}, {\"bach_cohort\", Int64.Type}, {\"grad_rate_bach_6yr\", type number}, {\"grad_rate_bach_4yr\", type number}, {\"aid_cohort\", Int64.Type}, {\"pct_pell\", type number}, {\"pct_any_grant\", type number}, {\"net_price\", Int64.Type}, {\"net_price_0_30k\", Int64.Type}, {\"net_price_30_48k\", Int64.Type}, {\"net_price_48_75k\", Int64.Type}, {\"net_price_75_110k\", Int64.Type}, {\"net_price_110k_plus\", Int64.Type}, {\"associates_awarded\", Int64.Type}, {\"bachelors_awarded\", Int64.Type}, {\"masters_awarded\", Int64.Type}, {\"doctorates_awarded\", Int64.Type}, {\"peer_group\", type text}, {\"peer_group_sort\", Int64.Type}}, \"en-US\")",
+                "in",
+                "    Typed"
+              ]
+            }
+          }
+        ]
+      }
+    ],
+    "annotations": [
+      {
+        "name": "PBI_QueryOrder",
+        "value": "[\"ProjectRoot\",\"institutions\",\"peers\"]"
+      },
+      {
+        "name": "IRLabSourceSHA256",
+        "value": "7878e71f738540e792f75d171660e938416290576b41803396e5cdc84f0f4ed7"
+      }
+    ]
+  }
+}

@@ -1,0 +1,5 @@
+expression ProjectRoot = "C:/Users/ethan/Code/Data Science/ir-lab" meta [IsParameterQuery=true, Type="Text", IsParameterQueryRequired=true]
+	lineageTag: c4e9f4ac-68f5-479b-b42f-34ff5e77ef9a
+
+	annotation PBI_ResultType = Text
+

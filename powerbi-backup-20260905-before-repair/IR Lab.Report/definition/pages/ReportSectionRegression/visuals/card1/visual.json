@@ -1,0 +1,74 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.1.0/schema.json",
+  "name": "card1",
+  "position": {
+    "x": 304.0,
+    "y": 120,
+    "width": 264.0,
+    "height": 98,
+    "z": 10,
+    "tabOrder": 1504.0
+  },
+  "visual": {
+    "visualType": "card",
+    "visualContainerObjects": {
+      "title": [
+        {
+          "properties": {
+            "show": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            },
+            "text": {
+              "expr": {
+                "Literal": {
+                  "Value": "'Pell Slope'"
+                }
+              }
+            },
+            "fontSize": {
+              "expr": {
+                "Literal": {
+                  "Value": "14"
+                }
+              }
+            },
+            "titleWrap": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "query": {
+      "queryState": {
+        "Values": {
+          "projections": [
+            {
+              "field": {
+                "Measure": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "institutions"
+                    }
+                  },
+                  "Property": "Pell Slope"
+                }
+              },
+              "queryRef": "institutions.Pell Slope",
+              "nativeQueryRef": "Pell Slope",
+              "displayName": "Pell Slope"
+            }
+          ]
+        }
+      }
+    }
+  }
+}

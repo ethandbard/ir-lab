@@ -1,0 +1,464 @@
+table institutions
+	lineageTag: 1efcbdbb-236b-4553-8b46-2c00a00d07ea
+
+	/// Active institutions in the current filter context; one row per UNITID.
+	measure Institutions = COUNTROWS ( institutions )
+		formatString: #,0
+		lineageTag: 1736fb8d-8091-4d37-8eda-cb30fc80f5a0
+
+	measure 'Completion Institutions' = COUNTROWS ( FILTER ( institutions, institutions[level] = "4-year" && NOT ISBLANK ( institutions[grad_rate_bach_6yr] ) ) )
+		formatString: #,0
+		lineageTag: 240f8220-0ea5-4c1b-ac92-26ee4543ec30
+
+	/// Unweighted mean of institution rates, stored on a 0–100 scale. Not a student-level graduation rate.
+	measure 'Mean Completion' = AVERAGEX ( FILTER ( institutions, institutions[level] = "4-year" && NOT ISBLANK ( institutions[grad_rate_bach_6yr] ) ), institutions[grad_rate_bach_6yr] )
+		formatString: 0.0"%"
+		lineageTag: cb45c4a2-d50f-43d1-a4a7-e6dc58505fc1
+
+	measure 'Median Completion' = MEDIANX ( FILTER ( institutions, institutions[level] = "4-year" && NOT ISBLANK ( institutions[grad_rate_bach_6yr] ) ), institutions[grad_rate_bach_6yr] )
+		formatString: 0.0"%"
+		lineageTag: 9e9353f0-ac2f-4fd3-9548-bc8a80f4ee51
+
+	measure 'Completion SD' =
+			VAR t = FILTER ( institutions, institutions[level] = "4-year" && NOT ISBLANK ( institutions[grad_rate_bach_6yr] ) )
+			RETURN IF ( COUNTROWS ( t ) > 1, STDEVX.S ( t, institutions[grad_rate_bach_6yr] ) )
+		formatString: 0.0" pp"
+		lineageTag: 2db4616d-1727-44ed-99c3-ab07392adb66
+
+	measure 'Completion Missing' = COUNTROWS ( FILTER ( institutions, institutions[level] = "4-year" && ISBLANK ( institutions[grad_rate_bach_6yr] ) ) )
+		formatString: #,0
+		lineageTag: c04b9b40-dd3f-4a61-ad38-35e9ad7b1050
+
+	/// Lesson definition: mean cubed standardized deviation using sample SD; differs from Excel adjusted SKEW.
+	measure 'Completion Skewness' =
+			VAR t = FILTER ( institutions, institutions[level] = "4-year" && NOT ISBLANK ( institutions[grad_rate_bach_6yr] ) )
+			VAR n = COUNTROWS ( t )
+			VAR m = AVERAGEX ( t, institutions[grad_rate_bach_6yr] )
+			VAR s = IF ( n > 1, STDEVX.S ( t, institutions[grad_rate_bach_6yr] ) )
+			RETURN IF ( n > 2 && s > 0, AVERAGEX ( t, POWER ( DIVIDE ( institutions[grad_rate_bach_6yr] - m, s ), 3 ) ) )
+		formatString: 0.000
+		lineageTag: f14fcdee-4435-4a30-a89a-6aa25a562b6b
+
+	/// 2022–23; median of institution-level average net prices; in-state at public institutions.
+	measure 'Median Net Price' = MEDIAN ( institutions[net_price] )
+		formatString: $#,0
+		lineageTag: 324a5687-20c3-4767-aa62-c2a1cfb8cc1f
+
+	measure 'Regression Institutions' = COUNTROWS ( FILTER ( institutions, institutions[level] = "4-year" && institutions[bach_cohort] >= 30 && NOT ISBLANK ( institutions[pct_pell] ) && NOT ISBLANK ( institutions[grad_rate_bach_6yr] ) ) )
+		formatString: #,0
+		lineageTag: 33a27587-1c77-4350-b3f1-678f85bc7e88
+
+	/// Unweighted OLS; four-year institutions, bachelor cohort >=30, complete Pell and completion. Refit within current filters.
+	measure 'Pell Slope' =
+			VAR t = FILTER ( institutions, institutions[level] = "4-year" && institutions[bach_cohort] >= 30 && NOT ISBLANK ( institutions[pct_pell] ) && NOT ISBLANK ( institutions[grad_rate_bach_6yr] ) )
+			VAR n = COUNTROWS ( t )
+			VAR sx = IF ( n > 1, STDEVX.S ( t, institutions[pct_pell] ) )
+			RETURN IF ( n > 2 && sx > 0, MAXX ( LINESTX ( t, institutions[grad_rate_bach_6yr], institutions[pct_pell] ), [Slope1] ) )
+		formatString: 0.000" pp/pp"
+		lineageTag: ff4a949e-6252-48ae-8625-efaeae77be83
+
+	/// Unweighted OLS; four-year institutions, bachelor cohort >=30, complete Pell and completion. Refit within current filters.
+	measure 'Pell Intercept' =
+			VAR t = FILTER ( institutions, institutions[level] = "4-year" && institutions[bach_cohort] >= 30 && NOT ISBLANK ( institutions[pct_pell] ) && NOT ISBLANK ( institutions[grad_rate_bach_6yr] ) )
+			VAR n = COUNTROWS ( t )
+			VAR sx = IF ( n > 1, STDEVX.S ( t, institutions[pct_pell] ) )
+			RETURN IF ( n > 2 && sx > 0, MAXX ( LINESTX ( t, institutions[grad_rate_bach_6yr], institutions[pct_pell] ), [Intercept] ) )
+		formatString: 0.00" pp"
+		lineageTag: ef82469f-5ff3-43a5-ad16-12ec947d3431
+
+	/// Unweighted OLS; four-year institutions, bachelor cohort >=30, complete Pell and completion. Refit within current filters.
+	measure 'Pell R Squared' =
+			VAR t = FILTER ( institutions, institutions[level] = "4-year" && institutions[bach_cohort] >= 30 && NOT ISBLANK ( institutions[pct_pell] ) && NOT ISBLANK ( institutions[grad_rate_bach_6yr] ) )
+			VAR n = COUNTROWS ( t )
+			VAR sx = IF ( n > 1, STDEVX.S ( t, institutions[pct_pell] ) )
+			RETURN IF ( n > 2 && sx > 0, MAXX ( LINESTX ( t, institutions[grad_rate_bach_6yr], institutions[pct_pell] ), [CoefficientOfDetermination] ) )
+		formatString: 0.000
+		lineageTag: 44a06c1c-b098-41b6-8aab-0db08cfc1694
+
+	/// Unweighted OLS; four-year institutions, bachelor cohort >=30, complete Pell and completion. Refit within current filters.
+	measure 'Residual SE' =
+			VAR t = FILTER ( institutions, institutions[level] = "4-year" && institutions[bach_cohort] >= 30 && NOT ISBLANK ( institutions[pct_pell] ) && NOT ISBLANK ( institutions[grad_rate_bach_6yr] ) )
+			VAR n = COUNTROWS ( t )
+			VAR sx = IF ( n > 1, STDEVX.S ( t, institutions[pct_pell] ) )
+			RETURN IF ( n > 2 && sx > 0, MAXX ( LINESTX ( t, institutions[grad_rate_bach_6yr], institutions[pct_pell] ), [StandardError] ) )
+		formatString: 0.00" pp"
+		lineageTag: aea247ad-0299-42e6-b1da-df049b5450e1
+
+	/// Unique identification number of the institution | HD2023 | UNITID
+	column unitid
+		dataType: int64
+		isKey
+		formatString: #,0
+		lineageTag: b5dfc120-cb8a-420f-addc-69dea44ec566
+		summarizeBy: none
+		sourceColumn: unitid
+
+	/// Institution name | HD2023 | INSTNM
+	column name
+		dataType: string
+		lineageTag: 3990c94b-5fbd-426c-9d28-8a97e6b7c261
+		summarizeBy: none
+		sourceColumn: name
+
+	/// City location of institution | HD2023 | CITY
+	column city
+		dataType: string
+		lineageTag: a81a4aad-4c38-4eab-98de-a7079b2a3598
+		summarizeBy: none
+		sourceColumn: city
+
+	/// State abbreviation | HD2023 | STABBR
+	column state
+		dataType: string
+		lineageTag: 36662c96-0173-47c2-a097-7b5fb7ade43a
+		summarizeBy: none
+		sourceColumn: state
+
+	/// Bureau of Economic Analysis region | HD2023 | OBEREG
+	column region
+		dataType: string
+		lineageTag: e717753c-9e1e-48c3-9a4d-677ddadcbe05
+		summarizeBy: none
+		sourceColumn: region
+
+	/// Sector of institution (control x level) | HD2023 | SECTOR
+	column sector
+		dataType: string
+		lineageTag: ddcff218-47cb-4f32-b50c-342e08dc718f
+		summarizeBy: none
+		sourceColumn: sector
+
+	/// Control of institution | HD2023 | CONTROL
+	column control
+		dataType: string
+		lineageTag: e7078705-0d70-4b15-90eb-20aa53a70fa4
+		summarizeBy: none
+		sourceColumn: control
+
+	/// Level of institution | HD2023 | ICLEVEL
+	column level
+		dataType: string
+		lineageTag: 746174f3-7acf-447c-8474-649998de740e
+		summarizeBy: none
+		sourceColumn: level
+
+	/// Degree of urbanization, grouped to City, Suburb, Town, Rural | HD2023 | LOCALE
+	column locale
+		dataType: string
+		lineageTag: 686d9559-c7d5-4726-9698-e432edc25e65
+		summarizeBy: none
+		sourceColumn: locale
+
+	/// Institution size category (fall headcount) | HD2023 | INSTSIZE
+	column size
+		dataType: string
+		lineageTag: dd86557c-dba5-4263-aaee-077b786336cb
+		summarizeBy: none
+		sourceColumn: size
+
+	/// Carnegie Classification 2021: Basic, grouped | HD2023 | C21BASIC
+	column carnegie
+		dataType: string
+		lineageTag: 2feb8293-f3f2-49e6-88c0-8e8ac09bc486
+		summarizeBy: none
+		sourceColumn: carnegie
+
+	/// Historically Black College or University | HD2023 | HBCU
+	column hbcu
+		dataType: string
+		lineageTag: e464e49e-f0af-4331-a02b-b6908e47302c
+		summarizeBy: none
+		sourceColumn: hbcu
+
+	/// Tribal college | HD2023 | TRIBAL
+	column tribal
+		dataType: string
+		lineageTag: 9ad35c29-2712-4d58-98c8-b2b8de9757b0
+		summarizeBy: none
+		sourceColumn: tribal
+
+	/// Longitude location of institution | HD2023 | LONGITUD
+	column longitude
+		dataType: double
+		lineageTag: 75714f60-763e-47e2-9f6e-8f4669ff09c9
+		summarizeBy: none
+		sourceColumn: longitude
+
+	/// Latitude location of institution | HD2023 | LATITUDE
+	column latitude
+		dataType: double
+		lineageTag: dd0a6889-41b4-4687-924a-01cf1b378da1
+		summarizeBy: none
+		sourceColumn: latitude
+
+	/// 12-month unduplicated headcount, all students | EFFY2023 | EFYTOTLT (EFFYALEV=1)
+	column headcount
+		dataType: int64
+		formatString: #,0
+		lineageTag: f4574f19-bcf7-49bc-a8c8-848eea995493
+		summarizeBy: none
+		sourceColumn: headcount
+
+	/// 12-month unduplicated headcount, undergraduate | EFFY2023 | EFYTOTLT (EFFYALEV=2)
+	column undergrad
+		dataType: int64
+		formatString: #,0
+		lineageTag: 1eb33c23-d181-4ee7-a9e7-ba1ac33e151b
+		summarizeBy: none
+		sourceColumn: undergrad
+
+	/// Percent of undergraduates who are women | EFFY2023 | EFYTOTLW / EFYTOTLT
+	column pct_women_ug
+		dataType: double
+		formatString: 0.0"%"
+		lineageTag: e5c8d5d7-6aa3-48aa-a312-e9ba44642334
+		summarizeBy: none
+		sourceColumn: pct_women_ug
+
+	/// Percent of undergraduates who are White | EFFY2023 | EFYWHITT / EFYTOTLT
+	column pct_white_ug
+		dataType: double
+		formatString: 0.0"%"
+		lineageTag: fe9ab984-93a4-4f6d-8132-c79acdacd4de
+		summarizeBy: none
+		sourceColumn: pct_white_ug
+
+	/// Percent of undergraduates who are Black or African American | EFFY2023 | EFYBKAAT / EFYTOTLT
+	column pct_black_ug
+		dataType: double
+		formatString: 0.0"%"
+		lineageTag: 3304dbbe-a857-4a3c-a3af-6abb08778598
+		summarizeBy: none
+		sourceColumn: pct_black_ug
+
+	/// Percent of undergraduates who are Hispanic or Latino | EFFY2023 | EFYHISPT / EFYTOTLT
+	column pct_hispanic_ug
+		dataType: double
+		formatString: 0.0"%"
+		lineageTag: 392614e0-25b4-4b61-949e-c1d1c5de1c9a
+		summarizeBy: none
+		sourceColumn: pct_hispanic_ug
+
+	/// Percent of undergraduates who are Asian | EFFY2023 | EFYASIAT / EFYTOTLT
+	column pct_asian_ug
+		dataType: double
+		formatString: 0.0"%"
+		lineageTag: a82ec720-fdd1-462b-955e-b03a1250db73
+		summarizeBy: none
+		sourceColumn: pct_asian_ug
+
+	/// Percent of undergraduates who are U.S. nonresidents | EFFY2023 | EFYNRALT / EFYTOTLT
+	column pct_intl_ug
+		dataType: double
+		formatString: 0.0"%"
+		lineageTag: 88c677f1-3ea4-4468-b318-5c85a23a0882
+		summarizeBy: none
+		sourceColumn: pct_intl_ug
+
+	/// Full-time retention rate, fall 2022 to fall 2023 | EF2023D | RET_PCF
+	column retention_ft
+		dataType: double
+		formatString: 0.0"%"
+		lineageTag: e5b3edf3-aa26-4033-a2d2-4ea5e905f38a
+		summarizeBy: none
+		sourceColumn: retention_ft
+
+	/// Part-time retention rate, fall 2022 to fall 2023 | EF2023D | RET_PCP
+	column retention_pt
+		dataType: double
+		formatString: 0.0"%"
+		lineageTag: fdd7065b-64c6-4808-8703-12dd299bc29c
+		summarizeBy: none
+		sourceColumn: retention_pt
+
+	/// Student-to-faculty ratio | EF2023D | STUFACR
+	column stu_fac_ratio
+		dataType: int64
+		formatString: #,0
+		lineageTag: db7a635f-bfce-4f89-bb09-13f899798e72
+		summarizeBy: none
+		sourceColumn: stu_fac_ratio
+
+	/// Adjusted cohort, all degree/certificate-seeking students | GR2023 | GRTOTLT (GRTYPE=2 or 29)
+	column grad_cohort
+		dataType: int64
+		formatString: #,0
+		lineageTag: ce70af2a-6aa8-4ffe-aa32-8a0e5f9b270a
+		summarizeBy: none
+		sourceColumn: grad_cohort
+
+	/// Graduation rate within 150% of normal time, all students | GR2023 | GRTYPE 3/2 or 30/29
+	column grad_rate_150
+		dataType: double
+		formatString: 0.0"%"
+		lineageTag: 3fa7bbef-f96d-43c6-9d8e-321f8aca8017
+		summarizeBy: none
+		sourceColumn: grad_rate_150
+
+	/// Adjusted cohort, bachelor's-seeking subcohort at 4-year institutions | GR2023 | GRTOTLT (GRTYPE=8)
+	column bach_cohort
+		dataType: int64
+		formatString: #,0
+		lineageTag: ddd2f329-b2d4-44fb-8651-e69888cd59d2
+		summarizeBy: none
+		sourceColumn: bach_cohort
+
+	/// Bachelor's degree completion within 6 years | GR2023 | GRTYPE 12/8
+	column grad_rate_bach_6yr
+		dataType: double
+		formatString: 0.0"%"
+		lineageTag: fda46990-d112-4a57-beef-ba9bafec8baa
+		summarizeBy: none
+		sourceColumn: grad_rate_bach_6yr
+
+	/// Bachelor's degree completion within 4 years | GR2023 | GRTYPE 13/8
+	column grad_rate_bach_4yr
+		dataType: double
+		formatString: 0.0"%"
+		lineageTag: 5653e330-8c4c-4bd3-b1cd-f058c48797ca
+		summarizeBy: none
+		sourceColumn: grad_rate_bach_4yr
+
+	/// Full-time first-time degree-seeking undergraduates in the aid cohort | SFA2223 | SCUGFFN
+	column aid_cohort
+		dataType: int64
+		formatString: #,0
+		lineageTag: 4c120ad0-e4e8-4374-bc46-0c89d4b1e801
+		summarizeBy: none
+		sourceColumn: aid_cohort
+
+	/// Percent of undergraduates awarded Pell grants | SFA2223 | UPGRNTP
+	column pct_pell
+		dataType: double
+		formatString: 0.0"%"
+		lineageTag: 08654f10-bf00-44c5-a929-a3a80dceeb9d
+		summarizeBy: none
+		sourceColumn: pct_pell
+
+	/// Percent of undergraduates awarded any grant aid | SFA2223 | UAGRNTP
+	column pct_any_grant
+		dataType: double
+		formatString: 0.0"%"
+		lineageTag: 77831375-e81b-48b0-8b63-17043232d096
+		summarizeBy: none
+		sourceColumn: pct_any_grant
+
+	/// Average net price for students awarded grant aid, 2022-23 (in-state at publics) | SFA2223 | NPIST2 or NPGRN2
+	column net_price
+		dataType: int64
+		formatString: $#,0
+		lineageTag: 903ebae2-5c9b-4c76-a874-f8c014344930
+		summarizeBy: none
+		sourceColumn: net_price
+
+	/// Average net price, family income $0-30,000 | SFA2223 | NPT412 or NPIS412
+	column net_price_0_30k
+		dataType: int64
+		formatString: $#,0
+		lineageTag: 3d9f532e-3924-4de9-8384-ad905f5b91ef
+		summarizeBy: none
+		sourceColumn: net_price_0_30k
+
+	/// Average net price, family income $30,001-48,000 | SFA2223 | NPT422 or NPIS422
+	column net_price_30_48k
+		dataType: int64
+		formatString: $#,0
+		lineageTag: 37ba585c-d273-43f7-8b37-921e48603635
+		summarizeBy: none
+		sourceColumn: net_price_30_48k
+
+	/// Average net price, family income $48,001-75,000 | SFA2223 | NPT432 or NPIS432
+	column net_price_48_75k
+		dataType: int64
+		formatString: $#,0
+		lineageTag: 1d2c718f-8561-4fc0-8d8d-481749ad27d4
+		summarizeBy: none
+		sourceColumn: net_price_48_75k
+
+	/// Average net price, family income $75,001-110,000 | SFA2223 | NPT442 or NPIS442
+	column net_price_75_110k
+		dataType: int64
+		formatString: $#,0
+		lineageTag: 039cc23d-137a-4700-b167-ec9a68a3cbea
+		summarizeBy: none
+		sourceColumn: net_price_75_110k
+
+	/// Average net price, family income $110,001 or more | SFA2223 | NPT452 or NPIS452
+	column net_price_110k_plus
+		dataType: int64
+		formatString: $#,0
+		lineageTag: a410063b-455d-4d6f-bc34-e2e578e90ee5
+		summarizeBy: none
+		sourceColumn: net_price_110k_plus
+
+	/// Associate's degrees awarded, 2022-23 | C2023_C | CSTOTLT (AWLEVELC=3)
+	column associates_awarded
+		dataType: int64
+		formatString: #,0
+		lineageTag: 08b10a45-29ca-4466-a255-e9d50bd1eaee
+		summarizeBy: none
+		sourceColumn: associates_awarded
+
+	/// Bachelor's degrees awarded, 2022-23 | C2023_C | CSTOTLT (AWLEVELC=5)
+	column bachelors_awarded
+		dataType: int64
+		formatString: #,0
+		lineageTag: aa68d7fe-2f2a-4c14-9364-8f6206cbad92
+		summarizeBy: none
+		sourceColumn: bachelors_awarded
+
+	/// Master's degrees awarded, 2022-23 | C2023_C | CSTOTLT (AWLEVELC=7)
+	column masters_awarded
+		dataType: int64
+		formatString: #,0
+		lineageTag: 76435aa3-ec2b-40a0-b086-6a4cb7817f8b
+		summarizeBy: none
+		sourceColumn: masters_awarded
+
+	/// Doctor's degrees awarded, 2022-23 | C2023_C | CSTOTLT (AWLEVELC=9)
+	column doctorates_awarded
+		dataType: int64
+		formatString: #,0
+		lineageTag: 9e37b8c9-0b34-4f42-97f8-3a1d554e0ced
+		summarizeBy: none
+		sourceColumn: doctorates_awarded
+
+	/// Completion Bin Sort
+	column 'Completion Bin Sort' = VAR r = institutions[grad_rate_bach_6yr] RETURN IF ( ISBLANK ( r ), BLANK (), MIN ( 95, FLOOR ( r, 5 ) ) )
+		dataType: int64
+		isHidden
+		lineageTag: bd4e942c-a577-442b-9981-5f548c00a34a
+		summarizeBy: none
+
+	/// Completion Bin
+	column 'Completion Bin' = VAR r = institutions[grad_rate_bach_6yr] VAR lo = institutions[Completion Bin Sort] RETURN IF ( ISBLANK ( r ), BLANK (), FORMAT ( lo, "0" ) & IF ( lo = 95, "–100", "–<" & FORMAT ( lo + 5, "0" ) ) )
+		dataType: string
+		lineageTag: 18730183-b4bd-4c29-8a45-19bf894bb396
+		summarizeBy: none
+		sortByColumn: 'Completion Bin Sort'
+
+	/// Distribution Eligible
+	column 'Distribution Eligible' = IF ( institutions[level] = "4-year" && NOT ISBLANK ( institutions[grad_rate_bach_6yr] ), 1, 0 )
+		dataType: int64
+		isHidden
+		lineageTag: a149aa25-f96d-4d4e-bdbc-765483d88099
+		summarizeBy: none
+
+	/// Regression Eligible
+	column 'Regression Eligible' = IF ( institutions[level] = "4-year" && institutions[bach_cohort] >= 30 && NOT ISBLANK ( institutions[pct_pell] ) && NOT ISBLANK ( institutions[grad_rate_bach_6yr] ), 1, 0 )
+		dataType: int64
+		isHidden
+		lineageTag: b4352f51-57f2-4abe-b962-ac735b7c103d
+		summarizeBy: none
+
+	partition institutions = m
+		mode: import
+		source =
+				let
+				    Source = Csv.Document(File.Contents(ProjectRoot & "/data/institutions.csv"), [Delimiter=",", Encoding=65001, QuoteStyle=QuoteStyle.Csv]),
+				    Headers = Table.PromoteHeaders(Source, [PromoteAllScalars=true]),
+				    Nulls = Table.ReplaceValue(Headers, "", null, Replacer.ReplaceValue, Table.ColumnNames(Headers)),
+				    Typed = Table.TransformColumnTypes(Nulls, {{"unitid", Int64.Type}, {"name", type text}, {"city", type text}, {"state", type text}, {"region", type text}, {"sector", type text}, {"control", type text}, {"level", type text}, {"locale", type text}, {"size", type text}, {"carnegie", type text}, {"hbcu", type text}, {"tribal", type text}, {"longitude", type number}, {"latitude", type number}, {"headcount", Int64.Type}, {"undergrad", Int64.Type}, {"pct_women_ug", type number}, {"pct_white_ug", type number}, {"pct_black_ug", type number}, {"pct_hispanic_ug", type number}, {"pct_asian_ug", type number}, {"pct_intl_ug", type number}, {"retention_ft", type number}, {"retention_pt", type number}, {"stu_fac_ratio", Int64.Type}, {"grad_cohort", Int64.Type}, {"grad_rate_150", type number}, {"bach_cohort", Int64.Type}, {"grad_rate_bach_6yr", type number}, {"grad_rate_bach_4yr", type number}, {"aid_cohort", Int64.Type}, {"pct_pell", type number}, {"pct_any_grant", type number}, {"net_price", Int64.Type}, {"net_price_0_30k", Int64.Type}, {"net_price_30_48k", Int64.Type}, {"net_price_48_75k", Int64.Type}, {"net_price_75_110k", Int64.Type}, {"net_price_110k_plus", Int64.Type}, {"associates_awarded", Int64.Type}, {"bachelors_awarded", Int64.Type}, {"masters_awarded", Int64.Type}, {"doctorates_awarded", Int64.Type}}, "en-US")
+				in
+				    Typed
+

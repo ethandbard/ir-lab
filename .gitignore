@@ -1,0 +1,14 @@
+_site/
+.quarto/
+/.luarc.json
+*_files/
+.Rhistory
+.RData
+
+/.quarto/
+**/*.quarto_ipynb
+
+# Power BI local caches and generated downloads
+**/.pbi/
+**/*.pbix
+data/ir-lab-powerbi.zip

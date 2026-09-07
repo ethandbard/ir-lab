@@ -1,0 +1,550 @@
+---
+title: "Peer groups"
+subtitle: "k-means clustering: the algorithm step by step, choosing k, and naming what you found"
+webr:
+  packages:
+    - dplyr
+    - ggplot2
+    - tidyr
+    - cluster
+  resources:
+    - data/institutions.csv
+pyodide:
+  packages:
+    - pandas
+    - matplotlib
+    - scikit-learn
+  resources:
+    - data/institutions.csv
+---
+
+{{< include ./_extensions/r-wasm/live/_knitr.qmd >}}
+
+```{r}
+#| include: false
+source("_common.R")
+km <- filter(institutions, level == "4-year", control != "Private for-profit",
+             !is.na(pct_pell), !is.na(grad_rate_bach_6yr), !is.na(net_price),
+             !is.na(retention_ft), bach_cohort >= 100)
+```
+
+::: {.lesson-eyebrow}
+Model · Lesson 4 of 6
+:::
+
+Every IR office has a peer list, and every peer list started as an argument. Clustering turns the argument into a procedure: pick the variables that define "similar", let an algorithm group institutions by them, then look at what it found. This lesson uses k-means on `r fmt(nrow(km))` public and private nonprofit four-year institutions with a bachelor's cohort of at least 100.
+
+**You will be able to:** explain k-means as two repeating steps, standardize variables so none of them dominates, choose k with the elbow and silhouette, and profile a cluster in plain words.
+
+## Watch it move {.beat data-beat="1 · Watch it move"}
+
+Two variables, standardized: Pell share on the horizontal axis and six-year completion on the vertical. The large marks are the cluster centers. Press **Step** to alternate between the two moves k-means makes: assign every institution to its nearest center, then move each center to the mean of its members. Keep stepping until nothing changes.
+
+::: {.lab-anim}
+
+```{ojs}
+//| echo: false
+inst = FileAttachment("data/institutions.csv").csv({typed: true})
+kmRows = inst.filter(d => d.level === "4-year" && d.control !== "Private for-profit" && d.pct_pell != null && d.grad_rate_bach_6yr != null && d.net_price != null && d.retention_ft != null && d.bach_cohort >= 100)
+zs = {
+  const mx = d3.mean(kmRows, d => d.pct_pell), sx = d3.deviation(kmRows, d => d.pct_pell);
+  const my = d3.mean(kmRows, d => d.grad_rate_bach_6yr), sy = d3.deviation(kmRows, d => d.grad_rate_bach_6yr);
+  return kmRows.map(d => ({unitid: d.unitid, name: d.name, control: d.control, zx: (d.pct_pell - mx) / sx, zy: (d.grad_rate_bach_6yr - my) / sy}));
+}
+clusterColors = ["var(--lab-primary)", "var(--lab-accent)", "var(--lab-aqua)", "var(--lab-series-4)", "var(--lab-series-5)"]
+```
+
+::: {.lab-controls}
+```{ojs}
+//| echo: false
+viewof k = Inputs.range([2, 5], {label: "k (clusters)", step: 1, value: 3})
+viewof step = Inputs.button([["Step", v => v + 1], ["Run to convergence", v => v + 200], ["Reset", () => 0]], {label: "Algorithm", value: 0})
+viewof seed = Inputs.button("New starting centers", {label: " ", value: 1, reduce: v => v + 1})
+```
+:::
+
+```{ojs}
+//| echo: false
+kmState = {
+  const rng = d3.randomLcg(seed * 7919 + k);
+  const pick = d3.shuffler(rng)(zs.slice()).slice(0, k);
+  let centers = pick.map(p => ({x: p.zx, y: p.zy}));
+  let assign = new Array(zs.length).fill(-1);
+  let phase = "start";
+  let converged = false;
+  let n = 0;
+  for (let i = 1; i <= step; i++) {
+    if (i % 2 === 1) {
+      const next = zs.map(p => {
+        let best = 0, bd = Infinity;
+        centers.forEach((c, j) => { const d = (p.zx - c.x) ** 2 + (p.zy - c.y) ** 2; if (d < bd) { bd = d; best = j; } });
+        return best;
+      });
+      const changed = next.some((v, j) => v !== assign[j]);
+      assign = next;
+      phase = "assign";
+      n = (i + 1) / 2;
+      if (!changed && i > 1) { converged = true; break; }
+    } else {
+      centers = centers.map((c, j) => {
+        const members = zs.filter((p, idx) => assign[idx] === j);
+        return members.length ? {x: d3.mean(members, p => p.zx), y: d3.mean(members, p => p.zy)} : c;
+      });
+      phase = "update";
+    }
+  }
+  const inertia = assign[0] === -1 ? null : d3.sum(zs, (p, idx) => (p.zx - centers[assign[idx]].x) ** 2 + (p.zy - centers[assign[idx]].y) ** 2);
+  const sizes = d3.range(k).map(j => assign.filter(a => a === j).length);
+  return {centers, assign, phase, iteration: n, converged, inertia, sizes};
+}
+```
+
+```{ojs}
+//| echo: false
+kmNode = d3.create("svg").attr("class", "lab-svg").node()
+
+kmChart = {
+  const width = 860, height = 460, margin = {top: 20, right: 20, bottom: 48, left: 52};
+  const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const dur = reduce ? 0 : 600;
+  const x = d3.scaleLinear().domain([-2.6, 3.2]).range([margin.left, width - margin.right]);
+  const y = d3.scaleLinear().domain([-3.4, 2.4]).range([height - margin.bottom, margin.top]);
+
+  const svg = d3.select(kmNode);
+  svg.attr("viewBox", [0, 0, width, height]);
+  const layer = name => { let g = svg.select(`g.${name}`); if (g.empty()) g = svg.append("g").attr("class", name); return g; };
+  const gx = layer("axis"), gy = layer("axisy"), gd = layer("dots"), gc = layer("centers"), glab = layer("labels");
+
+  if (gx.selectAll("*").empty()) {
+    gx.attr("transform", `translate(0,${height - margin.bottom})`).call(d3.axisBottom(x).ticks(8).tickSizeOuter(0));
+    gy.attr("transform", `translate(${margin.left},0)`).call(d3.axisLeft(y).ticks(8).tickSizeOuter(0));
+    glab.append("text").attr("class", "axis-label").attr("x", width - margin.right).attr("y", height - 10).attr("text-anchor", "end").text("Pell share (standard deviations from the mean)");
+    glab.append("text").attr("class", "axis-label").attr("transform", `translate(14,${margin.top}) rotate(-90)`).attr("text-anchor", "end").text("6-year completion (standard deviations)");
+    gd.selectAll("circle").data(zs, d => d.unitid).join("circle")
+      .attr("r", 3).attr("fill-opacity", 0.6).attr("fill", "var(--lab-muted)")
+      .attr("cx", d => x(d.zx)).attr("cy", d => y(d.zy))
+      .append("title").text(d => d.name);
+  }
+
+  const t = svg.transition().duration(dur).ease(d3.easeCubicInOut);
+  gd.selectAll("circle").data(zs, d => d.unitid)
+    .transition(t)
+    .attr("fill", (d, i) => kmState.assign[i] === -1 ? "var(--lab-muted)" : clusterColors[kmState.assign[i]]);
+
+  gc.selectAll("g.center").data(kmState.centers.map((c, j) => ({...c, j})), d => d.j)
+    .join(
+      enter => {
+        const g = enter.append("g").attr("class", "center").attr("transform", d => `translate(${x(d.x)},${y(d.y)})`);
+        g.append("circle").attr("r", 13).attr("fill", "#fff").attr("stroke-width", 4);
+        g.append("text").attr("dy", "0.35em").attr("text-anchor", "middle").attr("font-size", 12).attr("font-weight", 700);
+        return g;
+      },
+      update => update,
+      exit => exit.remove()
+    )
+    .call(g => {
+      g.select("circle").attr("stroke", d => clusterColors[d.j]);
+      g.select("text").attr("fill", d => clusterColors[d.j]).text(d => String.fromCharCode(65 + d.j));
+    })
+    .transition(t)
+    .attr("transform", d => `translate(${x(d.x)},${y(d.y)})`);
+
+  return svg.node();
+}
+```
+
+```{ojs}
+//| echo: false
+kmReadout = {
+  const s = kmState;
+  const what = s.phase === "start" ? "Centers placed at random institutions. Press Step to assign each institution to its nearest center."
+    : s.phase === "assign" ? (s.converged ? `No assignment changed. Converged after ${s.iteration - 1} iterations.` : `Iteration ${s.iteration}: each institution colored by its nearest center. Step again to move the centers to their members' mean.`)
+    : `Iteration ${s.iteration}: centers moved to the mean of their members. Step again to reassign.`;
+  return html`<div class="lab-readout">
+    <div><span class="k">Iteration</span><span class="val">${s.iteration}</span></div>
+    <div><span class="k">Within-cluster SS</span><span class="val">${s.inertia == null ? "–" : d3.format(",.0f")(s.inertia)}</span></div>
+    ${s.sizes.map((n, j) => html`<div><span class="k">Cluster ${String.fromCharCode(65 + j)}</span><span class="val" style="color:${clusterColors[j]}">${s.assign[0] === -1 ? "–" : d3.format(",")(n)}</span></div>`)}
+  </div>
+  <p class="lab-hint">${what}</p>`;
+}
+```
+
+:::
+
+Three things to try:
+
+1. **Step slowly with k = 3.** Assign, move, assign, move. The within-cluster sum of squares only ever goes down, and on this cloud it usually settles within twenty to forty iterations. That number is what the elbow plot below is made of.
+2. **New starting centers.** Run to convergence, note the within-cluster SS, then reseed and run again. Different starts can end in different groupings with different scores. Real implementations run many starts and keep the best; that is what `nstart` in R and `n_init` in scikit-learn do.
+3. **Push k to 5.** The score keeps falling, because more centers always fit better. That is why "lowest within-cluster SS" cannot choose k on its own.
+
+## Do it {.beat data-beat="2 · Do it"}
+
+Five variables this time: Pell share, completion, net price, retention, and student-faculty ratio. Standardizing first matters. Net price is in dollars and runs to 70,000, so without scaling it would be the only variable the distance sees.
+
+::: {.panel-tabset group="language"}
+
+### R
+
+```{webr}
+#| autorun: true
+#| caption: Filter and standardize
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+library(cluster)
+
+inst <- read.csv("data/institutions.csv")
+km <- inst |>
+  filter(level == "4-year", control != "Private for-profit",
+         !is.na(pct_pell), !is.na(grad_rate_bach_6yr), !is.na(net_price),
+         !is.na(retention_ft), !is.na(stu_fac_ratio), bach_cohort >= 100)
+
+z <- km |>
+  select(pct_pell, grad_rate_bach_6yr, net_price, retention_ft, stu_fac_ratio) |>
+  scale()
+
+round(colMeans(z), 6)
+round(apply(z, 2, sd), 3)
+```
+
+```{webr}
+#| autorun: true
+#| caption: The elbow
+set.seed(2023)
+wss <- sapply(1:8, function(k) kmeans(z, centers = k, nstart = 10)$tot.withinss)
+
+ggplot(data.frame(k = 1:8, wss), aes(k, wss)) +
+  geom_line(color = "#2a78d6") +
+  geom_point(size = 3, color = "#2a78d6") +
+  scale_x_continuous(breaks = 1:8) +
+  labs(x = "k", y = "Total within-cluster sum of squares") +
+  theme_minimal(base_size = 13)
+```
+
+The silhouette is the second opinion: for each institution, how much closer is it to its own cluster than to the next nearest? Values near 1 are well placed; near 0 sit on a boundary.
+
+```{webr}
+#| autorun: true
+#| caption: Average silhouette by k
+set.seed(2023)
+sil <- sapply(2:8, function(k) {
+  fit <- kmeans(z, centers = k, nstart = 10)
+  mean(silhouette(fit$cluster, dist(z))[, "sil_width"])
+})
+data.frame(k = 2:8, silhouette = round(sil, 3))
+```
+
+Fit the chosen k and describe each cluster in the original units. This table is the deliverable; the algorithm is just how you got it.
+
+```{webr}
+#| autorun: true
+#| caption: Fit k = 4 and profile the clusters
+set.seed(2023)
+fit <- kmeans(z, centers = 4, nstart = 25)
+km$cluster <- factor(fit$cluster)
+
+km |>
+  group_by(cluster) |>
+  summarise(
+    n = n(),
+    public = mean(control == "Public"),
+    pell = median(pct_pell),
+    completion = median(grad_rate_bach_6yr),
+    net_price = median(net_price),
+    retention = median(retention_ft),
+    sfr = median(stu_fac_ratio)
+  ) |>
+  mutate(across(where(is.numeric), \(x) round(x, 1)))
+```
+
+```{webr}
+#| autorun: true
+#| caption: Clusters in two of the five dimensions
+ggplot(km, aes(pct_pell, grad_rate_bach_6yr, color = cluster)) +
+  geom_point(alpha = 0.6) +
+  scale_color_manual(values = c("#2a78d6", "#eb6834", "#1baf7a", "#eda100")) +
+  labs(x = "Percent Pell", y = "6-year completion (%)", color = "Cluster") +
+  theme_minimal(base_size = 13)
+```
+
+### Python
+
+```{pyodide}
+#| autorun: true
+#| caption: Filter and standardize
+import pandas as pd
+import matplotlib.pyplot as plt
+from sklearn.preprocessing import StandardScaler
+from sklearn.cluster import KMeans
+from sklearn.metrics import silhouette_score
+
+inst = pd.read_csv("data/institutions.csv")
+cols = ["pct_pell", "grad_rate_bach_6yr", "net_price", "retention_ft", "stu_fac_ratio"]
+km = inst[(inst["level"] == "4-year") & (inst["control"] != "Private for-profit") & (inst["bach_cohort"] >= 100)].dropna(subset=cols).copy()
+
+z = StandardScaler().fit_transform(km[cols])
+pd.DataFrame(z, columns=cols).describe().loc[["mean", "std"]].round(3)
+```
+
+```{pyodide}
+#| autorun: true
+#| caption: The elbow
+wss = [KMeans(n_clusters=k, n_init=10, random_state=2023).fit(z).inertia_ for k in range(1, 9)]
+
+fig, ax = plt.subplots(figsize=(8, 4.5))
+ax.plot(range(1, 9), wss, marker="o", color="#2a78d6")
+ax.set_xlabel("k")
+ax.set_ylabel("Total within-cluster sum of squares")
+plt.show()
+```
+
+```{pyodide}
+#| autorun: true
+#| caption: Average silhouette by k
+sil = {k: round(silhouette_score(z, KMeans(n_clusters=k, n_init=10, random_state=2023).fit_predict(z)), 3) for k in range(2, 9)}
+pd.Series(sil, name="silhouette")
+```
+
+```{pyodide}
+#| autorun: true
+#| caption: Fit k = 4 and profile the clusters
+fit = KMeans(n_clusters=4, n_init=25, random_state=2023).fit(z)
+km["cluster"] = fit.labels_
+
+profile = km.groupby("cluster").agg(
+    n=("unitid", "size"),
+    public=("control", lambda s: (s == "Public").mean()),
+    pell=("pct_pell", "median"),
+    completion=("grad_rate_bach_6yr", "median"),
+    net_price=("net_price", "median"),
+    retention=("retention_ft", "median"),
+    sfr=("stu_fac_ratio", "median"),
+)
+profile.round(1)
+```
+
+```{pyodide}
+#| autorun: true
+#| caption: Clusters in two of the five dimensions
+colors = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100"]
+fig, ax = plt.subplots(figsize=(8, 4.5))
+for c, grp in km.groupby("cluster"):
+    ax.scatter(grp["pct_pell"], grp["grad_rate_bach_6yr"], s=12, alpha=0.6, color=colors[c], label=f"Cluster {c}")
+ax.set_xlabel("Percent Pell")
+ax.set_ylabel("6-year completion (%)")
+ax.legend(frameon=False)
+plt.show()
+```
+
+:::
+
+## Practice {.beat data-beat="3 · Practice"}
+
+```{webr}
+#| setup: true
+#| exercise:
+#|   - ml1_scale
+#|   - ml1_elbow
+inst <- read.csv("data/institutions.csv")
+km <- dplyr::filter(inst, level == "4-year", control != "Private for-profit",
+                    !is.na(pct_pell), !is.na(grad_rate_bach_6yr), !is.na(net_price),
+                    !is.na(retention_ft), !is.na(stu_fac_ratio), bach_cohort >= 100)
+z <- scale(dplyr::select(km, pct_pell, grad_rate_bach_6yr, net_price, retention_ft, stu_fac_ratio))
+set.seed(2023)
+```
+
+::: {.lab-exercise data-exercise="ml1_scale"}
+
+### Standardize a different profile
+
+Build a standardized matrix from three columns of `km`: `net_price`, `pct_pell`, and `stu_fac_ratio`. Return the matrix.
+
+```{webr}
+#| exercise: ml1_scale
+______(dplyr::select(km, ______, ______, ______))
+```
+
+::: {.hint exercise="ml1_scale"}
+::: {.callout-note collapse="false"}
+## Hint
+`scale()` centers and divides each column by its standard deviation. Select the three columns by name inside `select()`.
+:::
+:::
+
+::: {.solution exercise="ml1_scale"}
+::: {.callout-tip collapse="false"}
+## Solution
+```r
+scale(dplyr::select(km, net_price, pct_pell, stu_fac_ratio))
+```
+:::
+:::
+
+```{webr}
+#| exercise: ml1_scale
+#| check: true
+ok <- is.matrix(.result) &&
+  ncol(.result) == 3 &&
+  setequal(colnames(.result), c("net_price", "pct_pell", "stu_fac_ratio")) &&
+  isTRUE(all(abs(colMeans(.result)) < 1e-8)) &&
+  isTRUE(all(abs(apply(.result, 2, sd) - 1) < 1e-8))
+if (ok) {
+  list(correct = TRUE, message = "Correct. Every column now has mean 0 and standard deviation 1, so a dollar and a percentage point count the same.")
+} else if (is.matrix(.result) || is.data.frame(.result)) {
+  list(correct = FALSE, message = "Right shape, but the columns are not standardized or are not the three asked for. Wrap the selection in scale().")
+} else {
+  list(correct = FALSE, message = "Not yet. The result should be the matrix that scale() returns.")
+}
+```
+
+:::
+
+::: {.lab-exercise data-exercise="ml1_elbow"}
+
+### Compute the elbow yourself
+
+Using `z` from the setup, return a numeric vector of the total within-cluster sum of squares for k from 1 to 6, with `nstart = 10`.
+
+```{webr}
+#| exercise: ml1_elbow
+sapply(1:6, function(k) kmeans(z, centers = ______, nstart = ______)$______)
+```
+
+::: {.hint exercise="ml1_elbow"}
+::: {.callout-note collapse="false"}
+## Hint
+Inside the function, `k` is the number of centers. The element of a `kmeans` result that holds the total within-cluster sum of squares is `tot.withinss`.
+:::
+:::
+
+::: {.solution exercise="ml1_elbow"}
+::: {.callout-tip collapse="false"}
+## Solution
+```r
+sapply(1:6, function(k) kmeans(z, centers = k, nstart = 10)$tot.withinss)
+```
+The drop from 1 to 2 is always the largest. The elbow is where the drops stop being worth an extra group to explain.
+:::
+:::
+
+```{webr}
+#| exercise: ml1_elbow
+#| check: true
+ok <- is.numeric(.result) && length(.result) == 6 &&
+  all(diff(.result) <= 0) &&
+  isTRUE(abs(.result[1] - sum(z^2)) < 1e-6)
+if (ok) {
+  list(correct = TRUE, message = "Correct. Six values, each no larger than the last. With k = 1 the sum equals the total variance times n minus one, which is where every elbow plot starts.")
+} else if (is.numeric(.result) && length(.result) == 6) {
+  list(correct = FALSE, message = "Six numbers, but they do not look like a within-cluster sum of squares sequence. Check you are pulling tot.withinss.")
+} else {
+  list(correct = FALSE, message = "Not yet. Expected a numeric vector of length 6.")
+}
+```
+
+:::
+
+::: {.lab-exercise data-exercise="ml1_py_fit"}
+
+### Fit three clusters in Python
+
+Fit k-means with three clusters on `z` and return the array of cluster labels.
+
+```{pyodide}
+#| setup: true
+#| exercise: ml1_py_fit
+import pandas as pd
+from sklearn.preprocessing import StandardScaler
+from sklearn.cluster import KMeans
+inst = pd.read_csv("data/institutions.csv")
+cols = ["pct_pell", "grad_rate_bach_6yr", "net_price", "retention_ft", "stu_fac_ratio"]
+km = inst[(inst["level"] == "4-year") & (inst["control"] != "Private for-profit") & (inst["bach_cohort"] >= 100)].dropna(subset=cols).copy()
+z = StandardScaler().fit_transform(km[cols])
+```
+
+```{pyodide}
+#| exercise: ml1_py_fit
+KMeans(n_clusters=______, n_init=10, random_state=2023).fit(z).______
+```
+
+::: {.hint exercise="ml1_py_fit"}
+::: {.callout-note collapse="false"}
+## Hint
+Three clusters means `n_clusters=3`. After `.fit()`, the labels live in the `labels_` attribute.
+:::
+:::
+
+::: {.solution exercise="ml1_py_fit"}
+::: {.callout-tip collapse="false"}
+## Solution
+```python
+KMeans(n_clusters=3, n_init=10, random_state=2023).fit(z).labels_
+```
+:::
+:::
+
+```{pyodide}
+#| exercise: ml1_py_fit
+#| check: true
+import numpy as np
+ok = isinstance(result, np.ndarray) and len(result) == len(z) and set(np.unique(result)) == {0, 1, 2}
+if ok:
+    feedback = {"correct": True, "message": "Correct. One label per institution, three distinct groups. Profile them with groupby before you trust them."}
+else:
+    feedback = {"correct": False, "message": "Not yet. Expected a labels array with one entry per row of z and values 0, 1, 2."}
+feedback
+```
+
+:::
+
+## In your stack {.beat data-beat="4 · In your stack"}
+
+::: {.panel-tabset group="stack"}
+
+### Excel
+
+Excel has no k-means, which makes it the best place to learn what k-means does. The `clustering` sheet in [ir-lab.xlsx](data/ir-lab.xlsx) lays out two full iterations on 400 institutions and two variables.
+
+1. **Standardize.** `=STANDARDIZE(D2, AVERAGE(D$2:D$401), STDEV.S(D$2:D$401))` for each variable, in columns F and G.
+2. **Starting centers.** Three rows of the standardized data copied into the block at R4:S6.
+3. **Distance to each center.** `=SQRT((F2-$R$4)^2 + (G2-$S$4)^2)`, one column per center.
+4. **Assign.** `=CHOOSE(MATCH(MIN(H2:J2), H2:J2, 0), "A", "B", "C")`.
+5. **Update.** New centers are `=AVERAGEIF($K$2:$K$401, "A", $F$2:$F$401)` and the same for the second variable.
+6. **Repeat.** Columns L to O repeat steps 3 and 4 against the updated centers. `=SUMPRODUCT(--(K2:K401 <> O2:O401))` counts how many institutions changed cluster, which is what "converged" means when it reaches zero.
+
+Copy the four columns a few more times and you have the algorithm. To go beyond a demonstration, the Solver add-in can minimize the total within-cluster distance directly, but at that point you are better served by R or Python.
+
+### Power BI
+
+::: {.ir-powerbi data-powerbi-page="peers" data-powerbi-title="Peer groups"}
+**Interactive report: not connected yet.** Download the [Power BI project](data/ir-lab-powerbi.zip) to explore this lesson in Power BI Desktop. The embedded report will appear here once it is connected.
+:::
+
+The project imports four peer groups fitted on the same five features as the R example: Pell share, six-year completion, net price, full-time retention, and student-to-faculty ratio. It keeps public and private nonprofit four-year institutions with a bachelor's cohort of at least 100 and complete values for all five features.
+
+`powerbi/scripts/build_peers.R` standardizes each feature with its sample standard deviation and runs `set.seed(2023); kmeans(z, centers = 4, nstart = 25)`. Group labels are reordered by Pell center for readability; they are not a quality ranking. This follows the four-group worked R example, while the Python exercise asks you to try three groups.
+
+The report uses native Power BI scatter, bar, and table visuals. **Slicers select members of the existing groups; they do not refit k-means.** Rebuild the peer extract after updating the CSV or changing the feature set, then refresh the Power BI model. The five-feature clustering is shown in two dimensions; dots can overlap even when their full profiles differ.
+
+Profile each group in the original units with measures such as:
+
+```dax
+Peer Median Pell = MEDIAN ( peers[pct_pell] )
+Peer Median Completion = MEDIAN ( peers[grad_rate_bach_6yr] )
+Peer Median Net Price = MEDIAN ( peers[net_price] )
+```
+
+Keep the R and Python tabs for experiments with k, elbow plots, and silhouette scores. The embedded report provides a reproducible view of the saved model.
+
+:::
+
+## Before you leave
+
+::: {.takeaways}
+1. **k-means is two moves repeated.** Assign to the nearest center, move centers to the mean. Once you can narrate that, you can explain the output to anyone.
+2. **Scale first or the dollars win.** Distance is only meaningful when every variable is in the same units.
+3. **k is a judgment call with evidence.** The elbow and silhouette narrow it; the profile table decides it.
+4. **Name the clusters in the original units.** "High-Pell publics with low net price and mid completion" is a peer group. "Cluster 2" is not.
+:::
+
+Next in this track: **Fewer dimensions**, principal components on the full institution profile, and what each component means.

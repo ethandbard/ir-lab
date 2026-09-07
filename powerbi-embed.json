@@ -1,0 +1,9 @@
+{
+  "embedUrl": "",
+  "pages": {
+    "overview": "ReportSectionOverview",
+    "distributions": "ReportSectionDistributions",
+    "regression": "ReportSectionRegression",
+    "peers": "ReportSectionPeers"
+  }
+}

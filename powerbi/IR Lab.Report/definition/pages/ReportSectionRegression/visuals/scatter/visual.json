@@ -1,0 +1,213 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.12.0/schema.json",
+  "name": "scatter",
+  "position": {
+    "x": 24,
+    "y": 238,
+    "z": 10,
+    "height": 400,
+    "width": 826,
+    "tabOrder": 2404
+  },
+  "visual": {
+    "visualType": "scatterChart",
+    "query": {
+      "queryState": {
+        "Category": {
+          "projections": [
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "institutions"
+                    }
+                  },
+                  "Property": "unitid"
+                }
+              },
+              "queryRef": "institutions.unitid",
+              "nativeQueryRef": "unitid",
+              "active": true,
+              "displayName": "Institution ID"
+            }
+          ]
+        },
+        "Tooltips": {
+          "projections": [
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "institutions"
+                    }
+                  },
+                  "Property": "name"
+                }
+              },
+              "queryRef": "institutions.name",
+              "nativeQueryRef": "name",
+              "displayName": "Institution"
+            },
+            {
+              "field": {
+                "Aggregation": {
+                  "Expression": {
+                    "Column": {
+                      "Expression": {
+                        "SourceRef": {
+                          "Entity": "institutions"
+                        }
+                      },
+                      "Property": "bach_cohort"
+                    }
+                  },
+                  "Function": 1
+                }
+              },
+              "queryRef": "institutions.bach_cohort",
+              "nativeQueryRef": "bach_cohort",
+              "displayName": "Bachelor cohort"
+            }
+          ]
+        },
+        "X": {
+          "projections": [
+            {
+              "field": {
+                "Aggregation": {
+                  "Expression": {
+                    "Column": {
+                      "Expression": {
+                        "SourceRef": {
+                          "Entity": "institutions"
+                        }
+                      },
+                      "Property": "pct_pell"
+                    }
+                  },
+                  "Function": 1
+                }
+              },
+              "queryRef": "institutions.pct_pell",
+              "nativeQueryRef": "pct_pell",
+              "active": true,
+              "displayName": "Pell share (%)"
+            }
+          ]
+        },
+        "Y": {
+          "projections": [
+            {
+              "field": {
+                "Aggregation": {
+                  "Expression": {
+                    "Column": {
+                      "Expression": {
+                        "SourceRef": {
+                          "Entity": "institutions"
+                        }
+                      },
+                      "Property": "grad_rate_bach_6yr"
+                    }
+                  },
+                  "Function": 1
+                }
+              },
+              "queryRef": "institutions.grad_rate_bach_6yr",
+              "nativeQueryRef": "grad_rate_bach_6yr",
+              "displayName": "Six-year completion (%)"
+            }
+          ]
+        }
+      }
+    },
+    "objects": {
+      "categoryAxis": [
+        {
+          "properties": {}
+        }
+      ],
+      "valueAxis": [
+        {
+          "properties": {}
+        }
+      ]
+    },
+    "visualContainerObjects": {
+      "title": [
+        {
+          "properties": {
+            "show": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            },
+            "text": {
+              "expr": {
+                "Literal": {
+                  "Value": "'Pell share and six-year completion'"
+                }
+              }
+            },
+            "titleWrap": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            },
+            "fontColor": {
+              "solid": {
+                "color": {
+                  "expr": {
+                    "Literal": {
+                      "Value": "'#14213d'"
+                    }
+                  }
+                }
+              }
+            },
+            "fontSize": {
+              "expr": {
+                "Literal": {
+                  "Value": "12D"
+                }
+              }
+            }
+          }
+        }
+      ],
+      "subTitle": [
+        {
+          "properties": {
+            "show": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            },
+            "text": {
+              "expr": {
+                "Literal": {
+                  "Value": "'One dot per institution • Slicer selections refit the OLS cards'"
+                }
+              }
+            },
+            "titleWrap": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

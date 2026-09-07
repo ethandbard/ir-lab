@@ -1,0 +1,61 @@
+{
+  "name": "IR Lab",
+  "dataColors": [
+    "#2a78d6",
+    "#eb6834",
+    "#1baf7a",
+    "#9b62b3"
+  ],
+  "background": "#f8f9fc",
+  "foreground": "#14213d",
+  "tableAccent": "#2a78d6",
+  "textClasses": {
+    "title": {
+      "fontFace": "Segoe UI",
+      "fontSize": 15,
+      "color": "#14213d"
+    },
+    "label": {
+      "fontFace": "Segoe UI",
+      "fontSize": 11,
+      "color": "#5c6674"
+    },
+    "callout": {
+      "fontFace": "Segoe UI",
+      "fontSize": 30,
+      "color": "#14213d"
+    }
+  },
+  "visualStyles": {
+    "*": {
+      "*": {
+        "background": [
+          {
+            "color": {
+              "solid": {
+                "color": "#ffffff"
+              }
+            },
+            "transparency": 0
+          }
+        ],
+        "border": [
+          {
+            "show": true,
+            "color": {
+              "solid": {
+                "color": "#dde2ea"
+              }
+            },
+            "radius": 8
+          }
+        ],
+        "visualHeader": [
+          {
+            "show": true
+          }
+        ]
+      }
+    }
+  }
+}

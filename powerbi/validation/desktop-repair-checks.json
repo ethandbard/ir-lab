@@ -1,0 +1,31 @@
+{
+  "verified_at": "2026-09-05T14:12:02.419Z",
+  "all_20_measures_evaluated": true,
+  "source_metrics_reconciled": true,
+  "results": {
+    "rows": 5988,
+    "distribution_rows": 1928,
+    "regression_rows": 1648,
+    "peer_rows": 1448,
+    "completion_mean": 53.4357883817427,
+    "completion_median": 53.8,
+    "ols": {
+      "slope": -0.6706860036751209,
+      "intercept": 77.88189484910428,
+      "r_squared": 0.32648179372599584,
+      "residual_se": 16.09129614874258
+    }
+  },
+  "desktop_pages_rendered": [
+    "overview",
+    "distributions",
+    "regression",
+    "peers"
+  ],
+  "interaction_checks": [
+    "Group 1: 388 institutions, one group; restored all groups",
+    "Cohort lower bound: counts and statistics update; restored full range"
+  ],
+  "saved_in_desktop": true,
+  "backup": "C:/Users/ethan/Code/Data Science/ir-lab/powerbi-backup-20260905-before-repair"
+}

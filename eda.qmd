@@ -1,0 +1,18 @@
+---
+title: "Explore"
+subtitle: "Exploratory data analysis: look before you model"
+toc: false
+---
+
+Every analysis starts by finding out what the data actually looks like: its shape, its gaps, its groups, and the handful of rows that will dominate any average. These lessons build that habit on the institution table.
+
+<ul class="lessons">
+<li><a href="eda-distributions.html">The shape of a rate<span class="lesson-blurb">Histograms, bin width, and why the mean and median disagree.</span></a><span class="lesson-status live">Live</span></li>
+<li class="planned"><a>Missing on purpose<span class="lesson-blurb">Missingness patterns, imputation flags, and what a blank cell means in IPEDS.</span></a><span class="lesson-status">Planned</span></li>
+<li class="planned"><a>Compare groups<span class="lesson-blurb">Boxplots, ridgelines, and small multiples by sector, size, and locale.</span></a><span class="lesson-status">Planned</span></li>
+<li class="planned"><a>Relationships<span class="lesson-blurb">Scatterplots, correlation, and the difference between association and cause.</span></a><span class="lesson-status">Planned</span></li>
+<li class="planned"><a>Outliers and leverage<span class="lesson-blurb">Finding the rows that move every summary, and deciding what to do with them.</span></a><span class="lesson-status">Planned</span></li>
+<li class="planned"><a>The subtotal trap<span class="lesson-blurb">IPEDS LINE and SECTION codes, double counting, and building a clean grain.</span></a><span class="lesson-status">Planned</span></li>
+</ul>
+
+<p class="lab-progress" data-exercises="eda1_median eda1_small eda1_py_median"></p>

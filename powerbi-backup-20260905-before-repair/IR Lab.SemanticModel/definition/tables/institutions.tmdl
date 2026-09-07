@@ -1,0 +1,413 @@
+table 'institutions'
+
+	/// Active institutions in the current filter context; one row per UNITID.
+	measure 'Institutions' =
+		COUNTROWS ( institutions )
+		formatString: #,0
+
+	/// 
+	measure 'Completion Institutions' =
+		COUNTROWS ( FILTER ( institutions, institutions[level] = "4-year" && NOT ISBLANK ( institutions[grad_rate_bach_6yr] ) ) )
+		formatString: #,0
+
+	/// Unweighted mean of institution rates, stored on a 0â€“100 scale. Not a student-level graduation rate.
+	measure 'Mean Completion' =
+		AVERAGEX ( FILTER ( institutions, institutions[level] = "4-year" && NOT ISBLANK ( institutions[grad_rate_bach_6yr] ) ), institutions[grad_rate_bach_6yr] )
+		formatString: 0.0"%"
+
+	/// 
+	measure 'Median Completion' =
+		MEDIANX ( FILTER ( institutions, institutions[level] = "4-year" && NOT ISBLANK ( institutions[grad_rate_bach_6yr] ) ), institutions[grad_rate_bach_6yr] )
+		formatString: 0.0"%"
+
+	/// 
+	measure 'Completion SD' =
+		VAR t = FILTER ( institutions, institutions[level] = "4-year" && NOT ISBLANK ( institutions[grad_rate_bach_6yr] ) )
+		RETURN IF ( COUNTROWS ( t ) > 1, STDEVX.S ( t, institutions[grad_rate_bach_6yr] ) )
+		formatString: 0.0" pp"
+
+	/// 
+	measure 'Completion Missing' =
+		COUNTROWS ( FILTER ( institutions, institutions[level] = "4-year" && ISBLANK ( institutions[grad_rate_bach_6yr] ) ) )
+		formatString: #,0
+
+	/// Lesson definition: mean cubed standardized deviation using sample SD; differs from Excel adjusted SKEW.
+	measure 'Completion Skewness' =
+		VAR t = FILTER ( institutions, institutions[level] = "4-year" && NOT ISBLANK ( institutions[grad_rate_bach_6yr] ) )
+		VAR n = COUNTROWS ( t )
+		VAR m = AVERAGEX ( t, institutions[grad_rate_bach_6yr] )
+		VAR s = IF ( n > 1, STDEVX.S ( t, institutions[grad_rate_bach_6yr] ) )
+		RETURN IF ( n > 2 && s > 0, AVERAGEX ( t, POWER ( DIVIDE ( institutions[grad_rate_bach_6yr] - m, s ), 3 ) ) )
+		formatString: 0.000
+
+	/// 2022â€“23; median of institution-level average net prices; in-state at public institutions.
+	measure 'Median Net Price' =
+		MEDIAN ( institutions[net_price] )
+		formatString: $#,0
+
+	/// 
+	measure 'Regression Institutions' =
+		COUNTROWS ( FILTER ( institutions, institutions[level] = "4-year" && institutions[bach_cohort] >= 30 && NOT ISBLANK ( institutions[pct_pell] ) && NOT ISBLANK ( institutions[grad_rate_bach_6yr] ) ) )
+		formatString: #,0
+
+	/// Unweighted OLS; four-year institutions, bachelor cohort >=30, complete Pell and completion. Refit within current filters.
+	measure 'Pell Slope' =
+		VAR t = FILTER ( institutions, institutions[level] = "4-year" && institutions[bach_cohort] >= 30 && NOT ISBLANK ( institutions[pct_pell] ) && NOT ISBLANK ( institutions[grad_rate_bach_6yr] ) )
+		VAR n = COUNTROWS ( t )
+		VAR sx = IF ( n > 1, STDEVX.S ( t, institutions[pct_pell] ) )
+		RETURN IF ( n > 2 && sx > 0, MAXX ( LINESTX ( t, institutions[grad_rate_bach_6yr], institutions[pct_pell] ), [Slope1] ) )
+		formatString: 0.000" pp/pp"
+
+	/// Unweighted OLS; four-year institutions, bachelor cohort >=30, complete Pell and completion. Refit within current filters.
+	measure 'Pell Intercept' =
+		VAR t = FILTER ( institutions, institutions[level] = "4-year" && institutions[bach_cohort] >= 30 && NOT ISBLANK ( institutions[pct_pell] ) && NOT ISBLANK ( institutions[grad_rate_bach_6yr] ) )
+		VAR n = COUNTROWS ( t )
+		VAR sx = IF ( n > 1, STDEVX.S ( t, institutions[pct_pell] ) )
+		RETURN IF ( n > 2 && sx > 0, MAXX ( LINESTX ( t, institutions[grad_rate_bach_6yr], institutions[pct_pell] ), [Intercept] ) )
+		formatString: 0.00" pp"
+
+	/// Unweighted OLS; four-year institutions, bachelor cohort >=30, complete Pell and completion. Refit within current filters.
+	measure 'Pell R Squared' =
+		VAR t = FILTER ( institutions, institutions[level] = "4-year" && institutions[bach_cohort] >= 30 && NOT ISBLANK ( institutions[pct_pell] ) && NOT ISBLANK ( institutions[grad_rate_bach_6yr] ) )
+		VAR n = COUNTROWS ( t )
+		VAR sx = IF ( n > 1, STDEVX.S ( t, institutions[pct_pell] ) )
+		RETURN IF ( n > 2 && sx > 0, MAXX ( LINESTX ( t, institutions[grad_rate_bach_6yr], institutions[pct_pell] ), [CoefficientOfDetermination] ) )
+		formatString: 0.000
+
+	/// Unweighted OLS; four-year institutions, bachelor cohort >=30, complete Pell and completion. Refit within current filters.
+	measure 'Residual SE' =
+		VAR t = FILTER ( institutions, institutions[level] = "4-year" && institutions[bach_cohort] >= 30 && NOT ISBLANK ( institutions[pct_pell] ) && NOT ISBLANK ( institutions[grad_rate_bach_6yr] ) )
+		VAR n = COUNTROWS ( t )
+		VAR sx = IF ( n > 1, STDEVX.S ( t, institutions[pct_pell] ) )
+		RETURN IF ( n > 2 && sx > 0, MAXX ( LINESTX ( t, institutions[grad_rate_bach_6yr], institutions[pct_pell] ), [StandardError] ) )
+		formatString: 0.00" pp"
+
+	/// Unique identification number of the institution | HD2023 | UNITID
+	column 'unitid'
+		dataType: int64
+		isKey
+		sourceColumn: unitid
+		formatString: #,0
+		summarizeBy: none
+
+	/// Institution name | HD2023 | INSTNM
+	column 'name'
+		dataType: string
+		sourceColumn: name
+		summarizeBy: none
+
+	/// City location of institution | HD2023 | CITY
+	column 'city'
+		dataType: string
+		sourceColumn: city
+		summarizeBy: none
+
+	/// State abbreviation | HD2023 | STABBR
+	column 'state'
+		dataType: string
+		sourceColumn: state
+		summarizeBy: none
+
+	/// Bureau of Economic Analysis region | HD2023 | OBEREG
+	column 'region'
+		dataType: string
+		sourceColumn: region
+		summarizeBy: none
+
+	/// Sector of institution (control x level) | HD2023 | SECTOR
+	column 'sector'
+		dataType: string
+		sourceColumn: sector
+		summarizeBy: none
+
+	/// Control of institution | HD2023 | CONTROL
+	column 'control'
+		dataType: string
+		sourceColumn: control
+		summarizeBy: none
+
+	/// Level of institution | HD2023 | ICLEVEL
+	column 'level'
+		dataType: string
+		sourceColumn: level
+		summarizeBy: none
+
+	/// Degree of urbanization, grouped to City, Suburb, Town, Rural | HD2023 | LOCALE
+	column 'locale'
+		dataType: string
+		sourceColumn: locale
+		summarizeBy: none
+
+	/// Institution size category (fall headcount) | HD2023 | INSTSIZE
+	column 'size'
+		dataType: string
+		sourceColumn: size
+		summarizeBy: none
+
+	/// Carnegie Classification 2021: Basic, grouped | HD2023 | C21BASIC
+	column 'carnegie'
+		dataType: string
+		sourceColumn: carnegie
+		summarizeBy: none
+
+	/// Historically Black College or University | HD2023 | HBCU
+	column 'hbcu'
+		dataType: string
+		sourceColumn: hbcu
+		summarizeBy: none
+
+	/// Tribal college | HD2023 | TRIBAL
+	column 'tribal'
+		dataType: string
+		sourceColumn: tribal
+		summarizeBy: none
+
+	/// Longitude location of institution | HD2023 | LONGITUD
+	column 'longitude'
+		dataType: double
+		sourceColumn: longitude
+		summarizeBy: none
+
+	/// Latitude location of institution | HD2023 | LATITUDE
+	column 'latitude'
+		dataType: double
+		sourceColumn: latitude
+		summarizeBy: none
+
+	/// 12-month unduplicated headcount, all students | EFFY2023 | EFYTOTLT (EFFYALEV=1)
+	column 'headcount'
+		dataType: int64
+		sourceColumn: headcount
+		formatString: #,0
+		summarizeBy: none
+
+	/// 12-month unduplicated headcount, undergraduate | EFFY2023 | EFYTOTLT (EFFYALEV=2)
+	column 'undergrad'
+		dataType: int64
+		sourceColumn: undergrad
+		formatString: #,0
+		summarizeBy: none
+
+	/// Percent of undergraduates who are women | EFFY2023 | EFYTOTLW / EFYTOTLT
+	column 'pct_women_ug'
+		dataType: double
+		sourceColumn: pct_women_ug
+		formatString: 0.0"%"
+		summarizeBy: none
+
+	/// Percent of undergraduates who are White | EFFY2023 | EFYWHITT / EFYTOTLT
+	column 'pct_white_ug'
+		dataType: double
+		sourceColumn: pct_white_ug
+		formatString: 0.0"%"
+		summarizeBy: none
+
+	/// Percent of undergraduates who are Black or African American | EFFY2023 | EFYBKAAT / EFYTOTLT
+	column 'pct_black_ug'
+		dataType: double
+		sourceColumn: pct_black_ug
+		formatString: 0.0"%"
+		summarizeBy: none
+
+	/// Percent of undergraduates who are Hispanic or Latino | EFFY2023 | EFYHISPT / EFYTOTLT
+	column 'pct_hispanic_ug'
+		dataType: double
+		sourceColumn: pct_hispanic_ug
+		formatString: 0.0"%"
+		summarizeBy: none
+
+	/// Percent of undergraduates who are Asian | EFFY2023 | EFYASIAT / EFYTOTLT
+	column 'pct_asian_ug'
+		dataType: double
+		sourceColumn: pct_asian_ug
+		formatString: 0.0"%"
+		summarizeBy: none
+
+	/// Percent of undergraduates who are U.S. nonresidents | EFFY2023 | EFYNRALT / EFYTOTLT
+	column 'pct_intl_ug'
+		dataType: double
+		sourceColumn: pct_intl_ug
+		formatString: 0.0"%"
+		summarizeBy: none
+
+	/// Full-time retention rate, fall 2022 to fall 2023 | EF2023D | RET_PCF
+	column 'retention_ft'
+		dataType: double
+		sourceColumn: retention_ft
+		formatString: 0.0"%"
+		summarizeBy: none
+
+	/// Part-time retention rate, fall 2022 to fall 2023 | EF2023D | RET_PCP
+	column 'retention_pt'
+		dataType: double
+		sourceColumn: retention_pt
+		formatString: 0.0"%"
+		summarizeBy: none
+
+	/// Student-to-faculty ratio | EF2023D | STUFACR
+	column 'stu_fac_ratio'
+		dataType: int64
+		sourceColumn: stu_fac_ratio
+		formatString: #,0
+		summarizeBy: none
+
+	/// Adjusted cohort, all degree/certificate-seeking students | GR2023 | GRTOTLT (GRTYPE=2 or 29)
+	column 'grad_cohort'
+		dataType: int64
+		sourceColumn: grad_cohort
+		formatString: #,0
+		summarizeBy: none
+
+	/// Graduation rate within 150% of normal time, all students | GR2023 | GRTYPE 3/2 or 30/29
+	column 'grad_rate_150'
+		dataType: double
+		sourceColumn: grad_rate_150
+		formatString: 0.0"%"
+		summarizeBy: none
+
+	/// Adjusted cohort, bachelor's-seeking subcohort at 4-year institutions | GR2023 | GRTOTLT (GRTYPE=8)
+	column 'bach_cohort'
+		dataType: int64
+		sourceColumn: bach_cohort
+		formatString: #,0
+		summarizeBy: none
+
+	/// Bachelor's degree completion within 6 years | GR2023 | GRTYPE 12/8
+	column 'grad_rate_bach_6yr'
+		dataType: double
+		sourceColumn: grad_rate_bach_6yr
+		formatString: 0.0"%"
+		summarizeBy: none
+
+	/// Bachelor's degree completion within 4 years | GR2023 | GRTYPE 13/8
+	column 'grad_rate_bach_4yr'
+		dataType: double
+		sourceColumn: grad_rate_bach_4yr
+		formatString: 0.0"%"
+		summarizeBy: none
+
+	/// Full-time first-time degree-seeking undergraduates in the aid cohort | SFA2223 | SCUGFFN
+	column 'aid_cohort'
+		dataType: int64
+		sourceColumn: aid_cohort
+		formatString: #,0
+		summarizeBy: none
+
+	/// Percent of undergraduates awarded Pell grants | SFA2223 | UPGRNTP
+	column 'pct_pell'
+		dataType: double
+		sourceColumn: pct_pell
+		formatString: 0.0"%"
+		summarizeBy: none
+
+	/// Percent of undergraduates awarded any grant aid | SFA2223 | UAGRNTP
+	column 'pct_any_grant'
+		dataType: double
+		sourceColumn: pct_any_grant
+		formatString: 0.0"%"
+		summarizeBy: none
+
+	/// Average net price for students awarded grant aid, 2022-23 (in-state at publics) | SFA2223 | NPIST2 or NPGRN2
+	column 'net_price'
+		dataType: int64
+		sourceColumn: net_price
+		formatString: $#,0
+		summarizeBy: none
+
+	/// Average net price, family income $0-30,000 | SFA2223 | NPT412 or NPIS412
+	column 'net_price_0_30k'
+		dataType: int64
+		sourceColumn: net_price_0_30k
+		formatString: $#,0
+		summarizeBy: none
+
+	/// Average net price, family income $30,001-48,000 | SFA2223 | NPT422 or NPIS422
+	column 'net_price_30_48k'
+		dataType: int64
+		sourceColumn: net_price_30_48k
+		formatString: $#,0
+		summarizeBy: none
+
+	/// Average net price, family income $48,001-75,000 | SFA2223 | NPT432 or NPIS432
+	column 'net_price_48_75k'
+		dataType: int64
+		sourceColumn: net_price_48_75k
+		formatString: $#,0
+		summarizeBy: none
+
+	/// Average net price, family income $75,001-110,000 | SFA2223 | NPT442 or NPIS442
+	column 'net_price_75_110k'
+		dataType: int64
+		sourceColumn: net_price_75_110k
+		formatString: $#,0
+		summarizeBy: none
+
+	/// Average net price, family income $110,001 or more | SFA2223 | NPT452 or NPIS452
+	column 'net_price_110k_plus'
+		dataType: int64
+		sourceColumn: net_price_110k_plus
+		formatString: $#,0
+		summarizeBy: none
+
+	/// Associate's degrees awarded, 2022-23 | C2023_C | CSTOTLT (AWLEVELC=3)
+	column 'associates_awarded'
+		dataType: int64
+		sourceColumn: associates_awarded
+		formatString: #,0
+		summarizeBy: none
+
+	/// Bachelor's degrees awarded, 2022-23 | C2023_C | CSTOTLT (AWLEVELC=5)
+	column 'bachelors_awarded'
+		dataType: int64
+		sourceColumn: bachelors_awarded
+		formatString: #,0
+		summarizeBy: none
+
+	/// Master's degrees awarded, 2022-23 | C2023_C | CSTOTLT (AWLEVELC=7)
+	column 'masters_awarded'
+		dataType: int64
+		sourceColumn: masters_awarded
+		formatString: #,0
+		summarizeBy: none
+
+	/// Doctor's degrees awarded, 2022-23 | C2023_C | CSTOTLT (AWLEVELC=9)
+	column 'doctorates_awarded'
+		dataType: int64
+		sourceColumn: doctorates_awarded
+		formatString: #,0
+		summarizeBy: none
+
+	/// Completion Bin Sort
+	column 'Completion Bin Sort' = VAR r = institutions[grad_rate_bach_6yr] RETURN IF ( ISBLANK ( r ), BLANK (), MIN ( 95, FLOOR ( r, 5 ) ) )
+		dataType: int64
+		isHidden
+		summarizeBy: none
+
+	/// Completion Bin
+	column 'Completion Bin' = VAR r = institutions[grad_rate_bach_6yr] VAR lo = institutions[Completion Bin Sort] RETURN IF ( ISBLANK ( r ), BLANK (), FORMAT ( lo, "0" ) & IF ( lo = 95, "â€“100", "â€“<" & FORMAT ( lo + 5, "0" ) ) )
+		dataType: string
+		sortByColumn: 'Completion Bin Sort'
+		summarizeBy: none
+
+	/// Distribution Eligible
+	column 'Distribution Eligible' = IF ( institutions[level] = "4-year" && NOT ISBLANK ( institutions[grad_rate_bach_6yr] ), 1, 0 )
+		dataType: int64
+		isHidden
+		summarizeBy: none
+
+	/// Regression Eligible
+	column 'Regression Eligible' = IF ( institutions[level] = "4-year" && institutions[bach_cohort] >= 30 && NOT ISBLANK ( institutions[pct_pell] ) && NOT ISBLANK ( institutions[grad_rate_bach_6yr] ), 1, 0 )
+		dataType: int64
+		isHidden
+		summarizeBy: none
+
+	partition 'institutions' = m
+		mode: import
+		source =
+			let
+			    Source = Csv.Document(File.Contents(ProjectRoot & "/data/institutions.csv"), [Delimiter=",", Encoding=65001, QuoteStyle=QuoteStyle.Csv]),
+			    Headers = Table.PromoteHeaders(Source, [PromoteAllScalars=true]),
+			    Nulls = Table.ReplaceValue(Headers, "", null, Replacer.ReplaceValue, Table.ColumnNames(Headers)),
+			    Typed = Table.TransformColumnTypes(Nulls, {{"unitid", Int64.Type}, {"name", type text}, {"city", type text}, {"state", type text}, {"region", type text}, {"sector", type text}, {"control", type text}, {"level", type text}, {"locale", type text}, {"size", type text}, {"carnegie", type text}, {"hbcu", type text}, {"tribal", type text}, {"longitude", type number}, {"latitude", type number}, {"headcount", Int64.Type}, {"undergrad", Int64.Type}, {"pct_women_ug", type number}, {"pct_white_ug", type number}, {"pct_black_ug", type number}, {"pct_hispanic_ug", type number}, {"pct_asian_ug", type number}, {"pct_intl_ug", type number}, {"retention_ft", type number}, {"retention_pt", type number}, {"stu_fac_ratio", Int64.Type}, {"grad_cohort", Int64.Type}, {"grad_rate_150", type number}, {"bach_cohort", Int64.Type}, {"grad_rate_bach_6yr", type number}, {"grad_rate_bach_4yr", type number}, {"aid_cohort", Int64.Type}, {"pct_pell", type number}, {"pct_any_grant", type number}, {"net_price", Int64.Type}, {"net_price_0_30k", Int64.Type}, {"net_price_30_48k", Int64.Type}, {"net_price_48_75k", Int64.Type}, {"net_price_75_110k", Int64.Type}, {"net_price_110k_plus", Int64.Type}, {"associates_awarded", Int64.Type}, {"bachelors_awarded", Int64.Type}, {"masters_awarded", Int64.Type}, {"doctorates_awarded", Int64.Type}}, "en-US")
+			in
+			    Typed

@@ -1,0 +1,168 @@
+---
+title: "IR Lab"
+toc: false
+page-layout: article
+body-classes: index-page
+---
+
+```{r}
+#| include: false
+source("_common.R")
+n_inst <- fmt(nrow(institutions))
+```
+
+::: {.hero}
+<h1 class="hero-title">`r n_inst` institutions.<br>One row each. <em>Now do something with them.</em></h1>
+
+<p class="hero-lede">A practice lab for institutional research: exploratory analysis, statistics, and machine learning worked on the real IPEDS collection. Every lesson has an animation you can push around, R and Python you can edit and run in the browser, graded exercises, and the same method in Excel and Power BI.</p>
+:::
+
+```{ojs}
+//| echo: false
+inst = FileAttachment("data/institutions.csv").csv({typed: true})
+
+swarmMetrics = new Map([
+  ["6-year completion (%)", "grad_rate_bach_6yr"],
+  ["Full-time retention (%)", "retention_ft"],
+  ["Percent Pell", "pct_pell"],
+  ["Net price ($)", "net_price"],
+  ["12-month headcount (log)", "headcount"]
+])
+
+viewof swarmMetric = Inputs.radio(swarmMetrics, {label: "Spread the institutions out by", value: "grad_rate_bach_6yr"})
+```
+
+::: {.lab-anim}
+
+```{ojs}
+//| echo: false
+swarmNode = d3.create("svg").attr("class", "lab-svg").node()
+
+swarm = {
+  const width = 860, rowH = 64, margin = {top: 8, right: 16, bottom: 34, left: 150};
+  const groups = ["Public", "Private nonprofit", "Private for-profit"];
+  const color = new Map([
+    ["Public", "var(--lab-primary)"],
+    ["Private nonprofit", "var(--lab-accent)"],
+    ["Private for-profit", "var(--lab-aqua)"]
+  ]);
+  const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const dur = reduce ? 0 : 900;
+  const isLog = swarmMetric === "headcount";
+  const val = d => isLog ? Math.log10(Math.max(d[swarmMetric], 1)) : d[swarmMetric];
+  const rows = inst.filter(d => d[swarmMetric] != null && groups.includes(d.control));
+  const height = margin.top + rowH * groups.length + margin.bottom;
+  const x = d3.scaleLinear().domain(d3.extent(rows, val)).nice().range([margin.left, width - margin.right]);
+  const y = d3.scalePoint().domain(groups).range([margin.top + rowH / 2, margin.top + rowH * groups.length - rowH / 2]);
+  const jitter = d3.randomNormal.source(d3.randomLcg(11))(0, rowH * 0.19);
+  const jit = new Map(rows.map(d => [d.unitid, Math.max(-rowH * 0.42, Math.min(rowH * 0.42, jitter()))]));
+  const fmt = isLog ? (v => d3.format("~s")(10 ** v)) : swarmMetric === "net_price" ? d3.format("$,.0f") : d3.format(".0f");
+  const tickFmt = isLog ? (v => d3.format("~s")(10 ** v)) : swarmMetric === "net_price" ? d3.format("$~s") : d3.format("~f");
+
+  const svg = d3.select(swarmNode);
+  svg.attr("viewBox", [0, 0, width, height]);
+  let axis = svg.select("g.axis");
+  if (axis.empty()) axis = svg.append("g").attr("class", "axis");
+  let labels = svg.select("g.labels");
+  if (labels.empty()) labels = svg.append("g").attr("class", "labels");
+  let dots = svg.select("g.dots");
+  if (dots.empty()) dots = svg.append("g").attr("class", "dots");
+
+  axis.attr("transform", `translate(0,${height - margin.bottom})`)
+    .transition().duration(dur)
+    .call(d3.axisBottom(x).ticks(8).tickFormat(tickFmt).tickSizeOuter(0));
+
+  labels.selectAll("text").data(groups).join("text")
+    .attr("x", margin.left - 12).attr("y", d => y(d)).attr("dy", "0.35em")
+    .attr("text-anchor", "end").attr("font-size", 13).attr("font-weight", 600)
+    .attr("fill", d => color.get(d)).text(d => d);
+
+  const t = svg.transition().duration(dur).ease(d3.easeCubicInOut);
+  dots.selectAll("circle").data(rows, d => d.unitid)
+    .join(
+      enter => enter.append("circle")
+        .attr("r", 0)
+        .attr("cx", d => x(val(d)))
+        .attr("cy", d => y(d.control) + jit.get(d.unitid))
+        .attr("fill", d => color.get(d.control))
+        .attr("fill-opacity", 0.55)
+        .call(e => e.append("title")),
+      update => update,
+      exit => exit.transition(t).attr("r", 0).remove()
+    )
+    .call(sel => sel.select("title").text(d => `${d.name}\n${d.city}, ${d.state}\n${fmt(val(d))}`))
+    .transition(t).delay((d, i) => reduce ? 0 : (i % 40) * 6)
+    .attr("r", 2.3)
+    .attr("cx", d => x(val(d)))
+    .attr("cy", d => y(d.control) + jit.get(d.unitid));
+
+  return svg.node();
+}
+```
+
+<p class="lab-hint">Each dot is one institution with a reported value. Hover a dot for its name. Two-year and less-than-two-year institutions have no bachelor's completion rate, so they drop out when that metric is selected: missingness is part of the shape.</p>
+
+:::
+
+## Three tracks
+
+```{=html}
+<div class="tracks">
+<a class="track" href="eda.html">
+<span class="track-verb">Explore</span>
+<span class="track-name">Exploratory data analysis</span>
+<p>Distributions, missingness, comparisons, relationships, outliers, and the IPEDS subtotal trap.</p>
+<span class="lab-progress" data-exercises="eda1_median eda1_small eda1_py_median"></span>
+</a>
+<a class="track" href="stats.html">
+<span class="track-verb">Test</span>
+<span class="track-name">Statistical analysis</span>
+<p>Uncertainty, group comparisons, proportions, regression, and logistic models with honest interpretation.</p>
+<span class="lab-progress" data-exercises="stats1_fit stats1_predict stats1_py_fit"></span>
+</a>
+<a class="track" href="ml.html">
+<span class="track-verb">Model</span>
+<span class="track-name">Machine learning</span>
+<p>Splits, predicting rates and outcomes, peer groups, dimension reduction, and forecasting enrollment.</p>
+<span class="lab-progress" data-exercises="ml1_scale ml1_elbow ml1_py_fit"></span>
+</a>
+</div>
+```
+
+## How a lesson works
+
+Every lesson has the same four beats, in the same order.
+
+```{=html}
+<div class="beats">
+<div><b>Watch it move</b><span>An animation with controls. Build intuition before any code.</span></div>
+<div><b>Do it</b><span>R and Python cells that run in the browser. Edit anything and re-run.</span></div>
+<div><b>Practice</b><span>Exercises with hints, solutions, and automatic checks.</span></div>
+<div><b>In your stack</b><span>The same method in Excel formulas and Power BI DAX.</span></div>
+</div>
+```
+
+Progress is tracked in this browser only. Completed exercises are marked on the track pages. <a href="#" data-lab-reset>Reset progress</a>.
+
+## The data
+
+One row per U.S. postsecondary institution active in the 2023-24 IPEDS collection, joined from six survey components on `r v("unitid")`. Institution attributes come from the directory file, headcount from 12-month enrollment, retention from fall enrollment, completion rates from the graduation-rate cohorts, Pell share and net price from student financial aid, and degrees awarded from completions.
+
+- [institutions.csv](data/institutions.csv): the table the lessons use. `r fmt(nrow(institutions))` rows, `r ncol(institutions)` columns, about 1.5 MB.
+- [variables.csv](data/variables.csv): every column with its source file and IPEDS variable.
+- [ir-lab.xlsx](data/ir-lab.xlsx): the same table as an Excel Table, plus one worked sheet per lesson.
+
+```{r}
+#| echo: false
+vars |>
+  transmute(Column = paste0("`", variable, "`"), Source = source, `IPEDS variable` = ipeds, Label = label) |>
+  knitr::kable()
+```
+
+::: {.callout-note}
+## Things to know before trusting a number
+- **Rates are ratios of small counts at small institutions.** A 100% completion rate on a cohort of four is not a signal. Check `r v("bach_cohort")` and `r v("grad_cohort")` before ranking.
+- **Net price is in-state for publics** and a single figure for privates, so cross-sector comparisons carry that asymmetry.
+- **Financial aid lags a year.** Aid variables describe 2022-23; enrollment and completions describe 2023-24.
+- **Missing is not zero.** Two-year institutions have no bachelor's cohort, and many institutions do not report a student-faculty ratio. Blank cells are left blank.
+:::

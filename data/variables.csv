@@ -1,0 +1,45 @@
+variable,source,ipeds,label
+unitid,HD2023,UNITID,Unique identification number of the institution
+name,HD2023,INSTNM,Institution name
+city,HD2023,CITY,City location of institution
+state,HD2023,STABBR,State abbreviation
+region,HD2023,OBEREG,Bureau of Economic Analysis region
+sector,HD2023,SECTOR,Sector of institution (control x level)
+control,HD2023,CONTROL,Control of institution
+level,HD2023,ICLEVEL,Level of institution
+locale,HD2023,LOCALE,"Degree of urbanization, grouped to City, Suburb, Town, Rural"
+size,HD2023,INSTSIZE,Institution size category (fall headcount)
+carnegie,HD2023,C21BASIC,"Carnegie Classification 2021: Basic, grouped"
+hbcu,HD2023,HBCU,Historically Black College or University
+tribal,HD2023,TRIBAL,Tribal college
+longitude,HD2023,LONGITUD,Longitude location of institution
+latitude,HD2023,LATITUDE,Latitude location of institution
+headcount,EFFY2023,EFYTOTLT (EFFYALEV=1),"12-month unduplicated headcount, all students"
+undergrad,EFFY2023,EFYTOTLT (EFFYALEV=2),"12-month unduplicated headcount, undergraduate"
+pct_women_ug,EFFY2023,EFYTOTLW / EFYTOTLT,Percent of undergraduates who are women
+pct_white_ug,EFFY2023,EFYWHITT / EFYTOTLT,Percent of undergraduates who are White
+pct_black_ug,EFFY2023,EFYBKAAT / EFYTOTLT,Percent of undergraduates who are Black or African American
+pct_hispanic_ug,EFFY2023,EFYHISPT / EFYTOTLT,Percent of undergraduates who are Hispanic or Latino
+pct_asian_ug,EFFY2023,EFYASIAT / EFYTOTLT,Percent of undergraduates who are Asian
+pct_intl_ug,EFFY2023,EFYNRALT / EFYTOTLT,Percent of undergraduates who are U.S. nonresidents
+retention_ft,EF2023D,RET_PCF,"Full-time retention rate, fall 2022 to fall 2023"
+retention_pt,EF2023D,RET_PCP,"Part-time retention rate, fall 2022 to fall 2023"
+stu_fac_ratio,EF2023D,STUFACR,Student-to-faculty ratio
+grad_cohort,GR2023,GRTOTLT (GRTYPE=2 or 29),"Adjusted cohort, all degree/certificate-seeking students"
+grad_rate_150,GR2023,GRTYPE 3/2 or 30/29,"Graduation rate within 150% of normal time, all students"
+bach_cohort,GR2023,GRTOTLT (GRTYPE=8),"Adjusted cohort, bachelor's-seeking subcohort at 4-year institutions"
+grad_rate_bach_6yr,GR2023,GRTYPE 12/8,Bachelor's degree completion within 6 years
+grad_rate_bach_4yr,GR2023,GRTYPE 13/8,Bachelor's degree completion within 4 years
+aid_cohort,SFA2223,SCUGFFN,Full-time first-time degree-seeking undergraduates in the aid cohort
+pct_pell,SFA2223,UPGRNTP,Percent of undergraduates awarded Pell grants
+pct_any_grant,SFA2223,UAGRNTP,Percent of undergraduates awarded any grant aid
+net_price,SFA2223,NPIST2 or NPGRN2,"Average net price for students awarded grant aid, 2022-23 (in-state at publics)"
+net_price_0_30k,SFA2223,NPT412 or NPIS412,"Average net price, family income $0-30,000"
+net_price_30_48k,SFA2223,NPT422 or NPIS422,"Average net price, family income $30,001-48,000"
+net_price_48_75k,SFA2223,NPT432 or NPIS432,"Average net price, family income $48,001-75,000"
+net_price_75_110k,SFA2223,NPT442 or NPIS442,"Average net price, family income $75,001-110,000"
+net_price_110k_plus,SFA2223,NPT452 or NPIS452,"Average net price, family income $110,001 or more"
+associates_awarded,C2023_C,CSTOTLT (AWLEVELC=3),"Associate's degrees awarded, 2022-23"
+bachelors_awarded,C2023_C,CSTOTLT (AWLEVELC=5),"Bachelor's degrees awarded, 2022-23"
+masters_awarded,C2023_C,CSTOTLT (AWLEVELC=7),"Master's degrees awarded, 2022-23"
+doctorates_awarded,C2023_C,CSTOTLT (AWLEVELC=9),"Doctor's degrees awarded, 2022-23"

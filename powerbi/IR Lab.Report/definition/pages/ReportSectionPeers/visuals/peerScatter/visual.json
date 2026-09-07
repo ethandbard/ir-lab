@@ -1,0 +1,232 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.12.0/schema.json",
+  "name": "peerScatter",
+  "position": {
+    "x": 24,
+    "y": 238,
+    "z": 9,
+    "height": 358,
+    "width": 806,
+    "tabOrder": 2404
+  },
+  "visual": {
+    "visualType": "scatterChart",
+    "query": {
+      "queryState": {
+        "Category": {
+          "projections": [
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "peers"
+                    }
+                  },
+                  "Property": "unitid"
+                }
+              },
+              "queryRef": "peers.unitid",
+              "nativeQueryRef": "unitid",
+              "active": true,
+              "displayName": "Institution ID"
+            }
+          ]
+        },
+        "Series": {
+          "projections": [
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "peers"
+                    }
+                  },
+                  "Property": "peer_group"
+                }
+              },
+              "queryRef": "peers.peer_group",
+              "nativeQueryRef": "peer_group",
+              "displayName": "Peer group"
+            }
+          ]
+        },
+        "Tooltips": {
+          "projections": [
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "peers"
+                    }
+                  },
+                  "Property": "name"
+                }
+              },
+              "queryRef": "peers.name",
+              "nativeQueryRef": "name",
+              "displayName": "Institution"
+            },
+            {
+              "field": {
+                "Aggregation": {
+                  "Expression": {
+                    "Column": {
+                      "Expression": {
+                        "SourceRef": {
+                          "Entity": "peers"
+                        }
+                      },
+                      "Property": "net_price"
+                    }
+                  },
+                  "Function": 1
+                }
+              },
+              "queryRef": "peers.net_price",
+              "nativeQueryRef": "net_price",
+              "displayName": "Net price"
+            }
+          ]
+        },
+        "X": {
+          "projections": [
+            {
+              "field": {
+                "Aggregation": {
+                  "Expression": {
+                    "Column": {
+                      "Expression": {
+                        "SourceRef": {
+                          "Entity": "peers"
+                        }
+                      },
+                      "Property": "pct_pell"
+                    }
+                  },
+                  "Function": 1
+                }
+              },
+              "queryRef": "peers.pct_pell",
+              "nativeQueryRef": "pct_pell",
+              "active": true,
+              "displayName": "Pell share (%)"
+            }
+          ]
+        },
+        "Y": {
+          "projections": [
+            {
+              "field": {
+                "Aggregation": {
+                  "Expression": {
+                    "Column": {
+                      "Expression": {
+                        "SourceRef": {
+                          "Entity": "peers"
+                        }
+                      },
+                      "Property": "grad_rate_bach_6yr"
+                    }
+                  },
+                  "Function": 1
+                }
+              },
+              "queryRef": "peers.grad_rate_bach_6yr",
+              "nativeQueryRef": "grad_rate_bach_6yr",
+              "displayName": "Completion (%)"
+            }
+          ]
+        }
+      }
+    },
+    "objects": {
+      "categoryAxis": [
+        {
+          "properties": {}
+        }
+      ],
+      "valueAxis": [
+        {
+          "properties": {}
+        }
+      ]
+    },
+    "visualContainerObjects": {
+      "title": [
+        {
+          "properties": {
+            "show": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            },
+            "text": {
+              "expr": {
+                "Literal": {
+                  "Value": "'Peer groups in two of the five dimensions'"
+                }
+              }
+            },
+            "titleWrap": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            },
+            "fontColor": {
+              "solid": {
+                "color": {
+                  "expr": {
+                    "Literal": {
+                      "Value": "'#14213d'"
+                    }
+                  }
+                }
+              }
+            },
+            "fontSize": {
+              "expr": {
+                "Literal": {
+                  "Value": "12D"
+                }
+              }
+            }
+          }
+        }
+      ],
+      "subTitle": [
+        {
+          "properties": {
+            "show": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            },
+            "text": {
+              "expr": {
+                "Literal": {
+                  "Value": "'Slicers select existing groups; they do not refit k-means'"
+                }
+              }
+            },
+            "titleWrap": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

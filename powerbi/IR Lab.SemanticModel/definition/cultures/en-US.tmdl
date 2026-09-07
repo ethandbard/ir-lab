@@ -1,0 +1,766 @@
+cultureInfo en-US
+
+	linguisticMetadata =
+			{
+			  "Version": "2.0.0",
+			  "Language": "en-US",
+			  "Entities": {
+			    "institutions.institutions": {
+			      "Definition": {
+			        "Binding": {
+			          "ConceptualEntity": "institutions",
+			          "ConceptualProperty": "Institutions"
+			        }
+			      },
+			      "State": "Generated",
+			      "Terms": [
+			        {
+			          "Institutions": {
+			            "State": "Suggested",
+			            "Source": {
+			              "Type": "External",
+			              "Agent": "PowerBI.VisualColumnRename"
+			            },
+			            "Weight": 0.9
+			          }
+			        }
+			      ]
+			    },
+			    "institutions.completion_institutions": {
+			      "Definition": {
+			        "Binding": {
+			          "ConceptualEntity": "institutions",
+			          "ConceptualProperty": "Completion Institutions"
+			        }
+			      },
+			      "State": "Generated",
+			      "Terms": [
+			        {
+			          "Completion Institutions": {
+			            "State": "Suggested",
+			            "Source": {
+			              "Type": "External",
+			              "Agent": "PowerBI.VisualColumnRename"
+			            },
+			            "Weight": 0.9
+			          }
+			        }
+			      ]
+			    },
+			    "institutions.median_net_price": {
+			      "Definition": {
+			        "Binding": {
+			          "ConceptualEntity": "institutions",
+			          "ConceptualProperty": "Median Net Price"
+			        }
+			      },
+			      "State": "Generated",
+			      "Terms": [
+			        {
+			          "Median Net Price": {
+			            "State": "Suggested",
+			            "Source": {
+			              "Type": "External",
+			              "Agent": "PowerBI.VisualColumnRename"
+			            },
+			            "Weight": 0.9
+			          }
+			        }
+			      ]
+			    },
+			    "institutions.control": {
+			      "Definition": {
+			        "Binding": {
+			          "ConceptualEntity": "institutions",
+			          "ConceptualProperty": "control"
+			        }
+			      },
+			      "State": "Generated",
+			      "Terms": [
+			        {
+			          "Control": {
+			            "State": "Suggested",
+			            "Source": {
+			              "Type": "External",
+			              "Agent": "PowerBI.VisualColumnRename"
+			            },
+			            "Weight": 0.9
+			          }
+			        }
+			      ]
+			    },
+			    "institutions.median_completion": {
+			      "Definition": {
+			        "Binding": {
+			          "ConceptualEntity": "institutions",
+			          "ConceptualProperty": "Median Completion"
+			        }
+			      },
+			      "State": "Generated",
+			      "Terms": [
+			        {
+			          "Median Completion": {
+			            "State": "Suggested",
+			            "Source": {
+			              "Type": "External",
+			              "Agent": "PowerBI.VisualColumnRename"
+			            },
+			            "Weight": 0.9
+			          }
+			        }
+			      ]
+			    },
+			    "institutions.name": {
+			      "Definition": {
+			        "Binding": {
+			          "ConceptualEntity": "institutions",
+			          "ConceptualProperty": "name"
+			        }
+			      },
+			      "State": "Generated",
+			      "Terms": [
+			        {
+			          "Institution": {
+			            "State": "Suggested",
+			            "Source": {
+			              "Type": "External",
+			              "Agent": "PowerBI.VisualColumnRename"
+			            },
+			            "Weight": 0.9
+			          }
+			        }
+			      ]
+			    },
+			    "institutions.state": {
+			      "Definition": {
+			        "Binding": {
+			          "ConceptualEntity": "institutions",
+			          "ConceptualProperty": "state"
+			        }
+			      },
+			      "State": "Generated",
+			      "Terms": [
+			        {
+			          "State": {
+			            "State": "Suggested",
+			            "Source": {
+			              "Type": "External",
+			              "Agent": "PowerBI.VisualColumnRename"
+			            },
+			            "Weight": 0.9
+			          }
+			        }
+			      ]
+			    },
+			    "institutions.sector": {
+			      "Definition": {
+			        "Binding": {
+			          "ConceptualEntity": "institutions",
+			          "ConceptualProperty": "sector"
+			        }
+			      },
+			      "State": "Generated",
+			      "Terms": [
+			        {
+			          "Sector": {
+			            "State": "Suggested",
+			            "Source": {
+			              "Type": "External",
+			              "Agent": "PowerBI.VisualColumnRename"
+			            },
+			            "Weight": 0.9
+			          }
+			        }
+			      ]
+			    },
+			    "institutions.headcount": {
+			      "Definition": {
+			        "Binding": {
+			          "ConceptualEntity": "institutions",
+			          "ConceptualProperty": "headcount"
+			        }
+			      },
+			      "State": "Generated",
+			      "Terms": [
+			        {
+			          "12-month enrollment": {
+			            "State": "Suggested",
+			            "Source": {
+			              "Type": "External",
+			              "Agent": "PowerBI.VisualColumnRename"
+			            },
+			            "Weight": 0.9
+			          }
+			        }
+			      ]
+			    },
+			    "institutions.bach_cohort": {
+			      "Definition": {
+			        "Binding": {
+			          "ConceptualEntity": "institutions",
+			          "ConceptualProperty": "bach_cohort"
+			        }
+			      },
+			      "State": "Generated",
+			      "Terms": [
+			        {
+			          "Bachelor cohort": {
+			            "State": "Suggested",
+			            "Source": {
+			              "Type": "External",
+			              "Agent": "PowerBI.VisualColumnRename"
+			            },
+			            "Weight": 0.9
+			          }
+			        }
+			      ]
+			    },
+			    "institutions.grad_rate_bach_6yr": {
+			      "Definition": {
+			        "Binding": {
+			          "ConceptualEntity": "institutions",
+			          "ConceptualProperty": "grad_rate_bach_6yr"
+			        }
+			      },
+			      "State": "Generated",
+			      "Terms": [
+			        {
+			          "6-year completion": {
+			            "State": "Suggested",
+			            "Source": {
+			              "Type": "External",
+			              "Agent": "PowerBI.VisualColumnRename"
+			            },
+			            "Weight": 0.9
+			          }
+			        },
+			        {
+			          "Completion (%)": {
+			            "State": "Suggested",
+			            "Source": {
+			              "Type": "External",
+			              "Agent": "PowerBI.VisualColumnRename"
+			            },
+			            "Weight": 0.9
+			          }
+			        }
+			      ]
+			    },
+			    "institutions.net_price": {
+			      "Definition": {
+			        "Binding": {
+			          "ConceptualEntity": "institutions",
+			          "ConceptualProperty": "net_price"
+			        }
+			      },
+			      "State": "Generated",
+			      "Terms": [
+			        {
+			          "Net price (2022–23)": {
+			            "State": "Suggested",
+			            "Source": {
+			              "Type": "External",
+			              "Agent": "PowerBI.VisualColumnRename"
+			            },
+			            "Weight": 0.9
+			          }
+			        }
+			      ]
+			    },
+			    "institutions.level": {
+			      "Definition": {
+			        "Binding": {
+			          "ConceptualEntity": "institutions",
+			          "ConceptualProperty": "level"
+			        }
+			      },
+			      "State": "Generated",
+			      "Terms": [
+			        {
+			          "level": {
+			            "State": "Suggested",
+			            "Source": {
+			              "Type": "External",
+			              "Agent": "PowerBI.VisualColumnRename"
+			            },
+			            "Weight": 0.9
+			          }
+			        }
+			      ]
+			    },
+			    "institutions.mean_completion": {
+			      "Definition": {
+			        "Binding": {
+			          "ConceptualEntity": "institutions",
+			          "ConceptualProperty": "Mean Completion"
+			        }
+			      },
+			      "State": "Generated",
+			      "Terms": [
+			        {
+			          "Mean Completion": {
+			            "State": "Suggested",
+			            "Source": {
+			              "Type": "External",
+			              "Agent": "PowerBI.VisualColumnRename"
+			            },
+			            "Weight": 0.9
+			          }
+			        }
+			      ]
+			    },
+			    "institutions.completion_bin": {
+			      "Definition": {
+			        "Binding": {
+			          "ConceptualEntity": "institutions",
+			          "ConceptualProperty": "Completion Bin"
+			        }
+			      },
+			      "State": "Generated",
+			      "Terms": [
+			        {
+			          "Completion rate (%)": {
+			            "State": "Suggested",
+			            "Source": {
+			              "Type": "External",
+			              "Agent": "PowerBI.VisualColumnRename"
+			            },
+			            "Weight": 0.9
+			          }
+			        }
+			      ]
+			    },
+			    "institutions.completion_skewness": {
+			      "Definition": {
+			        "Binding": {
+			          "ConceptualEntity": "institutions",
+			          "ConceptualProperty": "Completion Skewness"
+			        }
+			      },
+			      "State": "Generated",
+			      "Terms": [
+			        {
+			          "Completion Skewness": {
+			            "State": "Suggested",
+			            "Source": {
+			              "Type": "External",
+			              "Agent": "PowerBI.VisualColumnRename"
+			            },
+			            "Weight": 0.9
+			          }
+			        }
+			      ]
+			    },
+			    "institutions.completion_sd": {
+			      "Definition": {
+			        "Binding": {
+			          "ConceptualEntity": "institutions",
+			          "ConceptualProperty": "Completion SD"
+			        }
+			      },
+			      "State": "Generated",
+			      "Terms": [
+			        {
+			          "Completion SD": {
+			            "State": "Suggested",
+			            "Source": {
+			              "Type": "External",
+			              "Agent": "PowerBI.VisualColumnRename"
+			            },
+			            "Weight": 0.9
+			          }
+			        }
+			      ]
+			    },
+			    "institutions.regression_institutions": {
+			      "Definition": {
+			        "Binding": {
+			          "ConceptualEntity": "institutions",
+			          "ConceptualProperty": "Regression Institutions"
+			        }
+			      },
+			      "State": "Generated",
+			      "Terms": [
+			        {
+			          "Regression Institutions": {
+			            "State": "Suggested",
+			            "Source": {
+			              "Type": "External",
+			              "Agent": "PowerBI.VisualColumnRename"
+			            },
+			            "Weight": 0.9
+			          }
+			        }
+			      ]
+			    },
+			    "institutions.pell_slope": {
+			      "Definition": {
+			        "Binding": {
+			          "ConceptualEntity": "institutions",
+			          "ConceptualProperty": "Pell Slope"
+			        }
+			      },
+			      "State": "Generated",
+			      "Terms": [
+			        {
+			          "Pell Slope": {
+			            "State": "Suggested",
+			            "Source": {
+			              "Type": "External",
+			              "Agent": "PowerBI.VisualColumnRename"
+			            },
+			            "Weight": 0.9
+			          }
+			        }
+			      ]
+			    },
+			    "institutions.pell_r_squared": {
+			      "Definition": {
+			        "Binding": {
+			          "ConceptualEntity": "institutions",
+			          "ConceptualProperty": "Pell R Squared"
+			        }
+			      },
+			      "State": "Generated",
+			      "Terms": [
+			        {
+			          "Pell R Squared": {
+			            "State": "Suggested",
+			            "Source": {
+			              "Type": "External",
+			              "Agent": "PowerBI.VisualColumnRename"
+			            },
+			            "Weight": 0.9
+			          }
+			        }
+			      ]
+			    },
+			    "institutions.pct_pell": {
+			      "Definition": {
+			        "Binding": {
+			          "ConceptualEntity": "institutions",
+			          "ConceptualProperty": "pct_pell"
+			        }
+			      },
+			      "State": "Generated",
+			      "Terms": [
+			        {
+			          "Pell share (%)": {
+			            "State": "Suggested",
+			            "Source": {
+			              "Type": "External",
+			              "Agent": "PowerBI.VisualColumnRename"
+			            },
+			            "Weight": 0.9
+			          }
+			        }
+			      ]
+			    },
+			    "institutions.residual_se": {
+			      "Definition": {
+			        "Binding": {
+			          "ConceptualEntity": "institutions",
+			          "ConceptualProperty": "Residual SE"
+			        }
+			      },
+			      "State": "Generated",
+			      "Terms": [
+			        {
+			          "Residual SE": {
+			            "State": "Suggested",
+			            "Source": {
+			              "Type": "External",
+			              "Agent": "PowerBI.VisualColumnRename"
+			            },
+			            "Weight": 0.9
+			          }
+			        }
+			      ]
+			    },
+			    "institutions.pell_intercept": {
+			      "Definition": {
+			        "Binding": {
+			          "ConceptualEntity": "institutions",
+			          "ConceptualProperty": "Pell Intercept"
+			        }
+			      },
+			      "State": "Generated",
+			      "Terms": [
+			        {
+			          "Pell Intercept": {
+			            "State": "Suggested",
+			            "Source": {
+			              "Type": "External",
+			              "Agent": "PowerBI.VisualColumnRename"
+			            },
+			            "Weight": 0.9
+			          }
+			        }
+			      ]
+			    },
+			    "institutions.unitid": {
+			      "Definition": {
+			        "Binding": {
+			          "ConceptualEntity": "institutions",
+			          "ConceptualProperty": "unitid"
+			        }
+			      },
+			      "State": "Generated",
+			      "Terms": [
+			        {
+			          "Institution ID": {
+			            "State": "Suggested",
+			            "Source": {
+			              "Type": "External",
+			              "Agent": "PowerBI.VisualColumnRename"
+			            },
+			            "Weight": 0.9
+			          }
+			        }
+			      ]
+			    },
+			    "peers.peer_institutions": {
+			      "Definition": {
+			        "Binding": {
+			          "ConceptualEntity": "peers",
+			          "ConceptualProperty": "Peer Institutions"
+			        }
+			      },
+			      "State": "Generated",
+			      "Terms": [
+			        {
+			          "Peer Institutions": {
+			            "State": "Suggested",
+			            "Source": {
+			              "Type": "External",
+			              "Agent": "PowerBI.VisualColumnRename"
+			            },
+			            "Weight": 0.9
+			          }
+			        }
+			      ]
+			    },
+			    "peers.peer_groups": {
+			      "Definition": {
+			        "Binding": {
+			          "ConceptualEntity": "peers",
+			          "ConceptualProperty": "Peer Groups"
+			        }
+			      },
+			      "State": "Generated",
+			      "Terms": [
+			        {
+			          "Peer Groups": {
+			            "State": "Suggested",
+			            "Source": {
+			              "Type": "External",
+			              "Agent": "PowerBI.VisualColumnRename"
+			            },
+			            "Weight": 0.9
+			          }
+			        }
+			      ]
+			    },
+			    "peers.peer_median_net_price": {
+			      "Definition": {
+			        "Binding": {
+			          "ConceptualEntity": "peers",
+			          "ConceptualProperty": "Peer Median Net Price"
+			        }
+			      },
+			      "State": "Generated",
+			      "Terms": [
+			        {
+			          "Peer Median Net Price": {
+			            "State": "Suggested",
+			            "Source": {
+			              "Type": "External",
+			              "Agent": "PowerBI.VisualColumnRename"
+			            },
+			            "Weight": 0.9
+			          }
+			        }
+			      ]
+			    },
+			    "peers.peer_group": {
+			      "Definition": {
+			        "Binding": {
+			          "ConceptualEntity": "peers",
+			          "ConceptualProperty": "peer_group"
+			        }
+			      },
+			      "State": "Generated",
+			      "Terms": [
+			        {
+			          "Peer group": {
+			            "State": "Suggested",
+			            "Source": {
+			              "Type": "External",
+			              "Agent": "PowerBI.VisualColumnRename"
+			            },
+			            "Weight": 0.9
+			          }
+			        },
+			        {
+			          "peer_group": {
+			            "State": "Suggested",
+			            "Source": {
+			              "Type": "External",
+			              "Agent": "PowerBI.VisualColumnRename"
+			            },
+			            "Weight": 0.9
+			          }
+			        }
+			      ]
+			    },
+			    "peers.unitid": {
+			      "Definition": {
+			        "Binding": {
+			          "ConceptualEntity": "peers",
+			          "ConceptualProperty": "unitid"
+			        }
+			      },
+			      "State": "Generated",
+			      "Terms": [
+			        {
+			          "Institution ID": {
+			            "State": "Suggested",
+			            "Source": {
+			              "Type": "External",
+			              "Agent": "PowerBI.VisualColumnRename"
+			            },
+			            "Weight": 0.9
+			          }
+			        }
+			      ]
+			    },
+			    "peers.name": {
+			      "Definition": {
+			        "Binding": {
+			          "ConceptualEntity": "peers",
+			          "ConceptualProperty": "name"
+			        }
+			      },
+			      "State": "Generated",
+			      "Terms": [
+			        {
+			          "Institution": {
+			            "State": "Suggested",
+			            "Source": {
+			              "Type": "External",
+			              "Agent": "PowerBI.VisualColumnRename"
+			            },
+			            "Weight": 0.9
+			          }
+			        }
+			      ]
+			    },
+			    "peers.peer_median_pell": {
+			      "Definition": {
+			        "Binding": {
+			          "ConceptualEntity": "peers",
+			          "ConceptualProperty": "Peer Median Pell"
+			        }
+			      },
+			      "State": "Generated",
+			      "Terms": [
+			        {
+			          "Peer Median Pell": {
+			            "State": "Suggested",
+			            "Source": {
+			              "Type": "External",
+			              "Agent": "PowerBI.VisualColumnRename"
+			            },
+			            "Weight": 0.9
+			          }
+			        }
+			      ]
+			    },
+			    "peers.peer_median_completion": {
+			      "Definition": {
+			        "Binding": {
+			          "ConceptualEntity": "peers",
+			          "ConceptualProperty": "Peer Median Completion"
+			        }
+			      },
+			      "State": "Generated",
+			      "Terms": [
+			        {
+			          "Peer Median Completion": {
+			            "State": "Suggested",
+			            "Source": {
+			              "Type": "External",
+			              "Agent": "PowerBI.VisualColumnRename"
+			            },
+			            "Weight": 0.9
+			          }
+			        }
+			      ]
+			    },
+			    "peers.peer_median_retention": {
+			      "Definition": {
+			        "Binding": {
+			          "ConceptualEntity": "peers",
+			          "ConceptualProperty": "Peer Median Retention"
+			        }
+			      },
+			      "State": "Generated",
+			      "Terms": [
+			        {
+			          "Peer Median Retention": {
+			            "State": "Suggested",
+			            "Source": {
+			              "Type": "External",
+			              "Agent": "PowerBI.VisualColumnRename"
+			            },
+			            "Weight": 0.9
+			          }
+			        }
+			      ]
+			    },
+			    "peers.peer_median_student_faculty_ratio": {
+			      "Definition": {
+			        "Binding": {
+			          "ConceptualEntity": "peers",
+			          "ConceptualProperty": "Peer Median Student Faculty Ratio"
+			        }
+			      },
+			      "State": "Generated",
+			      "Terms": [
+			        {
+			          "Peer Median Student Faculty Ratio": {
+			            "State": "Suggested",
+			            "Source": {
+			              "Type": "External",
+			              "Agent": "PowerBI.VisualColumnRename"
+			            },
+			            "Weight": 0.9
+			          }
+			        }
+			      ]
+			    },
+			    "peers.control": {
+			      "Definition": {
+			        "Binding": {
+			          "ConceptualEntity": "peers",
+			          "ConceptualProperty": "control"
+			        }
+			      },
+			      "State": "Generated",
+			      "Terms": [
+			        {
+			          "control": {
+			            "State": "Suggested",
+			            "Source": {
+			              "Type": "External",
+			              "Agent": "PowerBI.VisualColumnRename"
+			            },
+			            "Weight": 0.9
+			          }
+			        }
+			      ]
+			    }
+			  }
+			}
+		contentType: json
+

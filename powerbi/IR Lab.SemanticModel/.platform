@@ -1,0 +1,11 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json",
+  "metadata": {
+    "type": "SemanticModel",
+    "displayName": "IR Lab"
+  },
+  "config": {
+    "version": "2.0",
+    "logicalId": "0be7821d-4650-4523-afa1-413f1e4f898d"
+  }
+}

@@ -1,0 +1,75 @@
+project:
+  type: website
+  output-dir: _site
+  resources:
+    - data
+    - lab.js
+    - powerbi-embed.js
+    - powerbi-embed.json
+  render:
+    - "*.qmd"
+
+website:
+  title: "IR Lab"
+  description: "Practice exploratory analysis, statistics, and machine learning on real IPEDS data, in the browser."
+  favicon: favicon.svg
+  navbar:
+    background: light
+    logo: favicon.svg
+    left:
+      - href: eda.qmd
+        text: Explore
+      - href: stats.qmd
+        text: Test
+      - href: ml.qmd
+        text: Model
+    right:
+      - href: index.qmd#the-data
+        text: Data
+  page-footer:
+    left: "IPEDS 2023-24 complete data files, National Center for Education Statistics."
+    right: "R and Python run in your browser through webR and Pyodide. Embedded Power BI reports load from Microsoft when selected."
+
+format:
+  live-html:
+    theme:
+      - cosmo
+      - styles.scss
+    include-in-header: header.html
+    include-after-body:
+      text: |
+        <script src="lab.js"></script>
+        <script src="powerbi-embed.js" defer></script>
+    toc: true
+    toc-depth: 2
+    toc-location: right
+    toc-title: "On this page"
+    code-tools: false
+    code-copy: true
+    code-overflow: wrap
+    link-external-newwindow: true
+    smooth-scroll: true
+    grid:
+      body-width: 860px
+      sidebar-width: 0px
+      margin-width: 240px
+    webr:
+      cell-options:
+        fig-width: 8
+        fig-height: 4.5
+    pyodide:
+      cell-options:
+        fig-width: 8
+        fig-height: 4.5
+
+engine: knitr
+
+execute:
+  echo: false
+  warning: false
+  message: false
+  freeze: false
+
+knitr:
+  opts_chunk:
+    comment: "#>"

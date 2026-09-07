@@ -1,0 +1,277 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.12.0/schema.json",
+  "name": "lookup",
+  "position": {
+    "x": 24,
+    "y": 620,
+    "z": 9,
+    "height": 258,
+    "width": 1232,
+    "tabOrder": 6224
+  },
+  "visual": {
+    "visualType": "tableEx",
+    "query": {
+      "queryState": {
+        "Values": {
+          "projections": [
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "institutions"
+                    }
+                  },
+                  "Property": "name"
+                }
+              },
+              "queryRef": "institutions.name",
+              "nativeQueryRef": "name",
+              "displayName": "Institution"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "institutions"
+                    }
+                  },
+                  "Property": "state"
+                }
+              },
+              "queryRef": "institutions.state",
+              "nativeQueryRef": "state",
+              "displayName": "State"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "institutions"
+                    }
+                  },
+                  "Property": "sector"
+                }
+              },
+              "queryRef": "institutions.sector",
+              "nativeQueryRef": "sector",
+              "displayName": "Sector"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "institutions"
+                    }
+                  },
+                  "Property": "headcount"
+                }
+              },
+              "queryRef": "institutions.headcount",
+              "nativeQueryRef": "headcount",
+              "displayName": "12-month enrollment"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "institutions"
+                    }
+                  },
+                  "Property": "bach_cohort"
+                }
+              },
+              "queryRef": "institutions.bach_cohort",
+              "nativeQueryRef": "bach_cohort",
+              "displayName": "Bachelor cohort"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "institutions"
+                    }
+                  },
+                  "Property": "grad_rate_bach_6yr"
+                }
+              },
+              "queryRef": "institutions.grad_rate_bach_6yr",
+              "nativeQueryRef": "grad_rate_bach_6yr",
+              "displayName": "6-year completion"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "institutions"
+                    }
+                  },
+                  "Property": "net_price"
+                }
+              },
+              "queryRef": "institutions.net_price",
+              "nativeQueryRef": "net_price",
+              "displayName": "Net price (2022–23)"
+            }
+          ]
+        }
+      }
+    },
+    "visualContainerObjects": {
+      "title": [
+        {
+          "properties": {
+            "show": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            },
+            "text": {
+              "expr": {
+                "Literal": {
+                  "Value": "'Institution lookup'"
+                }
+              }
+            },
+            "titleWrap": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            },
+            "fontColor": {
+              "solid": {
+                "color": {
+                  "expr": {
+                    "Literal": {
+                      "Value": "'#14213d'"
+                    }
+                  }
+                }
+              }
+            },
+            "fontSize": {
+              "expr": {
+                "Literal": {
+                  "Value": "12D"
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  "filterConfig": {
+    "filters": [
+      {
+        "name": "987f337bf2fe7426febb",
+        "field": {
+          "Column": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "institutions"
+              }
+            },
+            "Property": "name"
+          }
+        },
+        "type": "Categorical"
+      },
+      {
+        "name": "91d459680c9265be06ab",
+        "field": {
+          "Column": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "institutions"
+              }
+            },
+            "Property": "state"
+          }
+        },
+        "type": "Categorical"
+      },
+      {
+        "name": "25ccee132d0241f8bf1f",
+        "field": {
+          "Column": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "institutions"
+              }
+            },
+            "Property": "sector"
+          }
+        },
+        "type": "Categorical"
+      },
+      {
+        "name": "73e1fdb4d60c28d5bcc2",
+        "field": {
+          "Column": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "institutions"
+              }
+            },
+            "Property": "headcount"
+          }
+        },
+        "type": "Advanced"
+      },
+      {
+        "name": "7670b033b64d9357d244",
+        "field": {
+          "Column": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "institutions"
+              }
+            },
+            "Property": "bach_cohort"
+          }
+        },
+        "type": "Advanced"
+      },
+      {
+        "name": "c6d7f8c47666223311c6",
+        "field": {
+          "Column": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "institutions"
+              }
+            },
+            "Property": "grad_rate_bach_6yr"
+          }
+        },
+        "type": "Advanced"
+      },
+      {
+        "name": "f2aabd9d5791e72366be",
+        "field": {
+          "Column": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "institutions"
+              }
+            },
+            "Property": "net_price"
+          }
+        },
+        "type": "Advanced"
+      }
+    ]
+  }
+}

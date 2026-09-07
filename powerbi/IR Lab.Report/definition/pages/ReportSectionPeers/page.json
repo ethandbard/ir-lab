@@ -1,0 +1,27 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/page/2.1.0/schema.json",
+  "name": "ReportSectionPeers",
+  "displayName": "04 · Peer groups",
+  "displayOption": "FitToPage",
+  "height": 900,
+  "width": 1280,
+  "objects": {
+    "background": [
+      {
+        "properties": {
+          "color": {
+            "solid": {
+              "color": {
+                "expr": {
+                  "Literal": {
+                    "Value": "'#f8f9fc'"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    ]
+  }
+}

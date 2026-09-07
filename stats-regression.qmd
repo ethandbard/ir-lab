@@ -1,0 +1,522 @@
+---
+title: "A line through the cloud"
+subtitle: "Simple linear regression: least squares, residuals, and reading a coefficient"
+webr:
+  packages:
+    - dplyr
+    - ggplot2
+    - broom
+  resources:
+    - data/institutions.csv
+pyodide:
+  packages:
+    - pandas
+    - matplotlib
+    - statsmodels
+  resources:
+    - data/institutions.csv
+---
+
+{{< include ./_extensions/r-wasm/live/_knitr.qmd >}}
+
+```{r}
+#| include: false
+source("_common.R")
+reg <- filter(institutions, level == "4-year", !is.na(pct_pell), !is.na(grad_rate_bach_6yr), bach_cohort >= 30)
+fit <- lm(grad_rate_bach_6yr ~ pct_pell, data = reg)
+slope <- round(coef(fit)[2], 2)
+r2 <- round(summary(fit)$r.squared, 2)
+```
+
+::: {.lesson-eyebrow}
+Test · Lesson 5 of 6
+:::
+
+The most requested chart in institutional research is a scatterplot with a line through it. This lesson is about what that line is, how it is chosen, and what its slope does and does not say. The example pairs `r v("pct_pell")`, the share of undergraduates receiving Pell grants, with `r v("grad_rate_bach_6yr")` across `r fmt(nrow(reg))` four-year institutions with a bachelor's cohort of at least 30.
+
+**You will be able to:** fit a least-squares line, read the slope and intercept in units, use residuals to judge the fit, and explain R-squared without overselling it.
+
+## Watch it move {.beat data-beat="1 · Watch it move"}
+
+Every dot is an institution. Drag the sliders to place your own line, and watch the residuals, the vertical gaps from each dot to the line. The sum of their squares is the score. Then switch to least squares to see the line that makes that score as small as it can be.
+
+::: {.lab-anim}
+
+```{ojs}
+//| echo: false
+inst = FileAttachment("data/institutions.csv").csv({typed: true})
+reg = inst.filter(d => d.level === "4-year" && d.pct_pell != null && d.grad_rate_bach_6yr != null && d.bach_cohort >= 30)
+ols = {
+  const mx = d3.mean(reg, d => d.pct_pell), my = d3.mean(reg, d => d.grad_rate_bach_6yr);
+  let sxy = 0, sxx = 0;
+  for (const d of reg) { sxy += (d.pct_pell - mx) * (d.grad_rate_bach_6yr - my); sxx += (d.pct_pell - mx) ** 2; }
+  const slope = sxy / sxx;
+  return {slope, intercept: my - slope * mx};
+}
+sse = (b0, b1) => d3.sum(reg, d => (d.grad_rate_bach_6yr - (b0 + b1 * d.pct_pell)) ** 2)
+```
+
+::: {.lab-controls}
+```{ojs}
+//| echo: false
+viewof fitmode = Inputs.radio(["Your line", "Least squares"], {label: "Line", value: "Your line"})
+viewof intercept = Inputs.range([0, 120], {label: "Intercept", step: 0.5, value: 50})
+viewof slope = Inputs.range([-2, 1], {label: "Slope", step: 0.01, value: 0})
+viewof showResid = Inputs.toggle({label: "Draw residuals", value: true})
+```
+:::
+
+```{ojs}
+//| echo: false
+scatterNode = d3.create("svg").attr("class", "lab-svg").node()
+
+scatter = {
+  const width = 860, height = 440, margin = {top: 20, right: 20, bottom: 48, left: 52};
+  const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const dur = reduce ? 0 : 500;
+  const b0 = fitmode === "Least squares" ? ols.intercept : intercept;
+  const b1 = fitmode === "Least squares" ? ols.slope : slope;
+  const x = d3.scaleLinear().domain([0, 100]).range([margin.left, width - margin.right]);
+  const y = d3.scaleLinear().domain([0, 100]).range([height - margin.bottom, margin.top]);
+  const residSample = reg.filter((d, i) => i % 6 === 0);
+
+  const svg = d3.select(scatterNode);
+  svg.attr("viewBox", [0, 0, width, height]);
+  const layer = name => { let g = svg.select(`g.${name}`); if (g.empty()) g = svg.append("g").attr("class", name); return g; };
+  const gx = layer("axis"), gy = layer("axisy"), gr = layer("resid"), gd = layer("dots"), gl = layer("fitline"), glab = layer("labels");
+
+  if (gx.selectAll("*").empty()) {
+    gx.attr("transform", `translate(0,${height - margin.bottom})`).call(d3.axisBottom(x).ticks(10).tickSizeOuter(0));
+    gy.attr("transform", `translate(${margin.left},0)`).call(d3.axisLeft(y).ticks(10).tickSizeOuter(0));
+    glab.append("text").attr("class", "axis-label").attr("x", width - margin.right).attr("y", height - 10).attr("text-anchor", "end").text("Percent of undergraduates with Pell grants");
+    glab.append("text").attr("class", "axis-label").attr("transform", `translate(14,${margin.top}) rotate(-90)`).attr("text-anchor", "end").text("6-year bachelor's completion (%)");
+    gd.selectAll("circle").data(reg, d => d.unitid).join("circle")
+      .attr("r", 2.6).attr("fill", "var(--lab-primary)").attr("fill-opacity", 0.5)
+      .attr("cx", d => x(d.pct_pell)).attr("cy", d => y(d.grad_rate_bach_6yr))
+      .append("title").text(d => `${d.name}\nPell ${d.pct_pell}%, completion ${d.grad_rate_bach_6yr}%`);
+    gl.append("line").attr("stroke-width", 3).attr("stroke-linecap", "round");
+  }
+
+  const t = svg.transition().duration(dur).ease(d3.easeCubicOut);
+  gl.select("line").attr("stroke", fitmode === "Least squares" ? "var(--lab-ink)" : "var(--lab-accent)")
+    .transition(t)
+    .attr("x1", x(0)).attr("y1", y(b0)).attr("x2", x(100)).attr("y2", y(b0 + 100 * b1));
+
+  gr.selectAll("line").data(showResid ? residSample : [], d => d.unitid)
+    .join(
+      enter => enter.append("line").attr("stroke", "var(--lab-accent)").attr("stroke-opacity", 0.55).attr("stroke-width", 1)
+        .attr("x1", d => x(d.pct_pell)).attr("x2", d => x(d.pct_pell))
+        .attr("y1", d => y(d.grad_rate_bach_6yr)).attr("y2", d => y(d.grad_rate_bach_6yr)),
+      update => update,
+      exit => exit.remove()
+    )
+    .transition(t)
+    .attr("y1", d => y(d.grad_rate_bach_6yr)).attr("y2", d => y(b0 + b1 * d.pct_pell));
+
+  return svg.node();
+}
+```
+
+```{ojs}
+//| echo: false
+regReadout = {
+  const b0 = fitmode === "Least squares" ? ols.intercept : intercept;
+  const b1 = fitmode === "Least squares" ? ols.slope : slope;
+  const yours = sse(b0, b1), best = sse(ols.intercept, ols.slope);
+  const my = d3.mean(reg, d => d.grad_rate_bach_6yr);
+  const sst = d3.sum(reg, d => (d.grad_rate_bach_6yr - my) ** 2);
+  const r2 = 1 - yours / sst;
+  const pct = d3.format(".0%")(best / yours);
+  return html`<div class="lab-readout">
+    <div><span class="k">Intercept</span><span class="val ${fitmode === "Least squares" ? "" : "accent"}">${d3.format(".1f")(b0)}</span></div>
+    <div><span class="k">Slope</span><span class="val ${fitmode === "Least squares" ? "" : "accent"}">${d3.format("+.2f")(b1)}</span></div>
+    <div><span class="k">Sum of squared residuals</span><span class="val">${d3.format(",.0f")(yours)}</span></div>
+    <div><span class="k">Least-squares minimum</span><span class="val">${d3.format(",.0f")(best)}</span></div>
+    <div><span class="k">R squared of this line</span><span class="val">${d3.format(".2f")(Math.max(r2, -9.99))}</span></div>
+  </div>
+  <p class="lab-hint">${fitmode === "Least squares" ? "This is the line no other line can beat on squared residuals. Its R squared is the share of variance in completion it accounts for." : `Your line's squared residuals are ${d3.format(",.0f")(yours - best)} above the minimum; least squares gets to ${pct} of your score. R squared goes negative when the line does worse than a flat line at the mean.`}</p>`;
+}
+```
+
+:::
+
+Three things to try:
+
+1. **Start flat.** Set the slope to 0 and move the intercept until the residuals look balanced. You just found the mean of completion by hand. R squared is zero there: a flat line explains none of the variance, and that is the baseline every regression is measured against.
+2. **Tilt it.** Pull the slope negative. Watch the residual lines shorten on the right and lengthen on the left until they balance. Least squares is doing exactly this search, but with calculus instead of a slider.
+3. **Read the slope in units.** At least squares the slope is about `r slope`. That is "each additional percentage point of Pell share goes with about `r abs(slope)` points lower completion", across institutions, this year. It is not "Pell lowers completion", and it is not a prediction for any one campus.
+
+## Do it {.beat data-beat="2 · Do it"}
+
+::: {.panel-tabset group="language"}
+
+### R
+
+```{webr}
+#| autorun: true
+#| caption: Load and filter
+library(dplyr)
+library(ggplot2)
+library(broom)
+
+inst <- read.csv("data/institutions.csv")
+reg <- inst |>
+  filter(level == "4-year", !is.na(pct_pell), !is.na(grad_rate_bach_6yr), bach_cohort >= 30)
+
+nrow(reg)
+```
+
+`lm()` fits by least squares. `tidy()` gives the coefficient table, `glance()` the fit statistics.
+
+```{webr}
+#| autorun: true
+#| caption: Fit the line
+fit <- lm(grad_rate_bach_6yr ~ pct_pell, data = reg)
+tidy(fit)
+glance(fit) |> select(r.squared, sigma, nobs)
+```
+
+Read `sigma` as the typical size of a residual: how far, in completion points, an institution usually sits from the line. That number is more useful to a reader than R squared.
+
+```{webr}
+#| autorun: true
+#| caption: The scatter with the fitted line
+ggplot(reg, aes(pct_pell, grad_rate_bach_6yr)) +
+  geom_point(alpha = 0.35, color = "#2a78d6") +
+  geom_smooth(method = "lm", se = TRUE, color = "#14213d", fill = "#14213d", alpha = 0.15) +
+  labs(x = "Percent of undergraduates with Pell grants", y = "6-year bachelor's completion (%)") +
+  theme_minimal(base_size = 13)
+```
+
+A residual plot should look like noise. A curve, a fan, or a cluster means the line is missing something.
+
+```{webr}
+#| autorun: true
+#| caption: Residuals against fitted values
+augment(fit) |>
+  ggplot(aes(.fitted, .resid)) +
+  geom_hline(yintercept = 0, color = "#eb6834") +
+  geom_point(alpha = 0.35, color = "#2a78d6") +
+  geom_smooth(se = FALSE, color = "#14213d", method = "loess", formula = y ~ x) +
+  labs(x = "Fitted completion (%)", y = "Residual") +
+  theme_minimal(base_size = 13)
+```
+
+Add a second predictor and the slope on `pct_pell` changes. That change is the whole reason to add controls: the simple slope was carrying the sector differences too.
+
+```{webr}
+#| autorun: true
+#| caption: Add control as a covariate
+fit2 <- lm(grad_rate_bach_6yr ~ pct_pell + control, data = reg)
+tidy(fit2)
+```
+
+### Python
+
+```{pyodide}
+#| autorun: true
+#| caption: Load and filter
+import pandas as pd
+import matplotlib.pyplot as plt
+import statsmodels.formula.api as smf
+
+inst = pd.read_csv("data/institutions.csv")
+reg = inst[(inst["level"] == "4-year") & inst["pct_pell"].notna() & inst["grad_rate_bach_6yr"].notna() & (inst["bach_cohort"] >= 30)].copy()
+
+len(reg)
+```
+
+```{pyodide}
+#| autorun: true
+#| caption: Fit the line
+fit = smf.ols("grad_rate_bach_6yr ~ pct_pell", data=reg).fit()
+print(fit.params.round(3))
+print(f"R squared: {fit.rsquared:.3f}   residual std. error: {fit.resid.std():.2f}")
+```
+
+```{pyodide}
+#| autorun: true
+#| caption: The scatter with the fitted line
+fig, ax = plt.subplots(figsize=(8, 4.5))
+ax.scatter(reg["pct_pell"], reg["grad_rate_bach_6yr"], s=10, alpha=0.35, color="#2a78d6")
+xs = pd.Series(range(0, 101))
+ax.plot(xs, fit.params["Intercept"] + fit.params["pct_pell"] * xs, color="#14213d", linewidth=2)
+ax.set_xlabel("Percent of undergraduates with Pell grants")
+ax.set_ylabel("6-year bachelor's completion (%)")
+plt.show()
+```
+
+```{pyodide}
+#| autorun: true
+#| caption: Residuals against fitted values
+fig, ax = plt.subplots(figsize=(8, 4.5))
+ax.axhline(0, color="#eb6834")
+ax.scatter(fit.fittedvalues, fit.resid, s=10, alpha=0.35, color="#2a78d6")
+ax.set_xlabel("Fitted completion (%)")
+ax.set_ylabel("Residual")
+plt.show()
+```
+
+```{pyodide}
+#| autorun: true
+#| caption: Add control as a covariate
+fit2 = smf.ols("grad_rate_bach_6yr ~ pct_pell + C(control)", data=reg).fit()
+fit2.params.round(3)
+```
+
+:::
+
+## Practice {.beat data-beat="3 · Practice"}
+
+```{webr}
+#| setup: true
+#| exercise:
+#|   - stats1_fit
+#|   - stats1_predict
+inst <- read.csv("data/institutions.csv")
+reg <- dplyr::filter(inst, level == "4-year", !is.na(pct_pell), !is.na(grad_rate_bach_6yr), bach_cohort >= 30)
+fit <- lm(grad_rate_bach_6yr ~ pct_pell, data = reg)
+```
+
+::: {.lab-exercise data-exercise="stats1_fit"}
+
+### Retention as the outcome
+
+Fit a line predicting full-time retention, `retention_ft`, from `pct_pell` on the `reg` table. Return the fitted model.
+
+```{webr}
+#| exercise: stats1_fit
+lm(______ ~ ______, data = reg)
+```
+
+::: {.hint exercise="stats1_fit"}
+::: {.callout-note collapse="false"}
+## Hint
+The outcome goes on the left of the tilde, the predictor on the right. `lm()` drops rows where either is missing.
+:::
+:::
+
+::: {.solution exercise="stats1_fit"}
+::: {.callout-tip collapse="false"}
+## Solution
+```r
+lm(retention_ft ~ pct_pell, data = reg)
+```
+The slope is negative again but smaller in magnitude than for completion. Retention is a one-year outcome and varies less.
+:::
+:::
+
+```{webr}
+#| exercise: stats1_fit
+#| check: true
+expected <- coef(lm(retention_ft ~ pct_pell, data = reg))
+ok <- inherits(.result, "lm") &&
+  identical(names(coef(.result)), c("(Intercept)", "pct_pell")) &&
+  isTRUE(all.equal(unname(coef(.result)), unname(expected), tolerance = 1e-6))
+if (ok) {
+  list(correct = TRUE, message = sprintf("Correct. Slope %.3f: each point of Pell share goes with %.2f points of retention.", expected[2], abs(expected[2])))
+} else if (inherits(.result, "lm")) {
+  list(correct = FALSE, message = "That is a model, but not this one. Check the outcome is retention_ft and the only predictor is pct_pell.")
+} else {
+  list(correct = FALSE, message = "Not yet. The last line should be the lm() call itself so the model is returned.")
+}
+```
+
+:::
+
+::: {.lab-exercise data-exercise="stats1_predict"}
+
+### Predict for one institution
+
+Using `fit`, the completion model from the setup, return the predicted six-year completion rate for an institution where 45% of undergraduates receive Pell grants.
+
+```{webr}
+#| exercise: stats1_predict
+predict(fit, newdata = data.frame(______ = ______))
+```
+
+::: {.hint exercise="stats1_predict"}
+::: {.callout-note collapse="false"}
+## Hint
+`newdata` needs a column with the same name as the predictor in the model, `pct_pell`, holding the value 45.
+:::
+:::
+
+::: {.solution exercise="stats1_predict"}
+::: {.callout-tip collapse="false"}
+## Solution
+```r
+predict(fit, newdata = data.frame(pct_pell = 45))
+```
+This is the line's value at 45, not a forecast for any real campus. Add `interval = "prediction"` to see how wide the honest range is.
+:::
+:::
+
+```{webr}
+#| exercise: stats1_predict
+#| check: true
+expected <- unname(predict(fit, newdata = data.frame(pct_pell = 45)))
+val <- suppressWarnings(as.numeric(unlist(.result))[1])
+if (is.numeric(val) && length(val) == 1 && isTRUE(abs(val - expected) < 0.05)) {
+  list(correct = TRUE, message = sprintf("Correct: about %.1f%%. The typical residual is around 15 points, so an individual campus at 45%% Pell could easily sit anywhere from %.0f to %.0f.", expected, expected - 15, expected + 15))
+} else {
+  list(correct = FALSE, message = "Not yet. Expected a single predicted value from predict() with pct_pell = 45.")
+}
+```
+
+:::
+
+::: {.lab-exercise data-exercise="stats1_py_fit"}
+
+### The same fit in Python
+
+Fit completion on Pell share with statsmodels and return the fitted result object.
+
+```{pyodide}
+#| setup: true
+#| exercise: stats1_py_fit
+import pandas as pd
+import statsmodels.formula.api as smf
+inst = pd.read_csv("data/institutions.csv")
+reg = inst[(inst["level"] == "4-year") & inst["pct_pell"].notna() & inst["grad_rate_bach_6yr"].notna() & (inst["bach_cohort"] >= 30)].copy()
+```
+
+```{pyodide}
+#| exercise: stats1_py_fit
+smf.ols("______ ~ ______", data=reg).______()
+```
+
+::: {.hint exercise="stats1_py_fit"}
+::: {.callout-note collapse="false"}
+## Hint
+The formula is the same as in R: outcome on the left, predictor on the right. The model object needs `.fit()` called on it.
+:::
+:::
+
+::: {.solution exercise="stats1_py_fit"}
+::: {.callout-tip collapse="false"}
+## Solution
+```python
+smf.ols("grad_rate_bach_6yr ~ pct_pell", data=reg).fit()
+```
+:::
+:::
+
+```{pyodide}
+#| exercise: stats1_py_fit
+#| check: true
+expected = smf.ols("grad_rate_bach_6yr ~ pct_pell", data=reg).fit()
+ok = hasattr(result, "params") and "pct_pell" in result.params and abs(result.params["pct_pell"] - expected.params["pct_pell"]) < 1e-6
+if ok:
+    feedback = {"correct": True, "message": f"Correct. Slope {expected.params['pct_pell']:.3f}, the same as the R fit."}
+else:
+    feedback = {"correct": False, "message": "Not yet. Expected a fitted statsmodels result with a pct_pell coefficient."}
+feedback
+```
+
+:::
+
+## In your stack {.beat data-beat="4 · In your stack"}
+
+The `regression` sheet in [ir-lab.xlsx](data/ir-lab.xlsx) holds the filtered rows (columns D and E) with every formula below already in place.
+
+::: {.panel-tabset group="stack"}
+
+### Excel
+
+Four functions give you the whole simple regression. The ranges below match the sheet.
+
+| Quantity | Formula |
+|---|---|
+| Slope | `=SLOPE(E2:E1800, D2:D1800)` |
+| Intercept | `=INTERCEPT(E2:E1800, D2:D1800)` |
+| R squared | `=RSQ(E2:E1800, D2:D1800)` |
+| Standard error of estimate | `=STEYX(E2:E1800, D2:D1800)` |
+
+`LINEST(y, x, TRUE, TRUE)` returns all of it at once as a 5 x 2 block: slope and intercept on row one, their standard errors on row two, R squared and the standard error on row three, then the F statistic and residual degrees of freedom, then the regression and residual sums of squares. `INDEX(LINEST(...), 2, 1)` picks out the slope's standard error, which is what you divide the slope by to get a t statistic.
+
+Predicted and residual columns are one formula each, `=$K$5 + $K$4 * D2` and `=E2 - F2`, and a scatter of those residuals against column F is the diagnostic plot from the R tab.
+
+For the full output table, including the ANOVA block and confidence intervals, use Data, Data Analysis, Regression. If Data Analysis is missing, enable the Analysis ToolPak under File, Options, Add-ins.
+
+### Power BI
+
+::: {.ir-powerbi data-powerbi-page="regression" data-powerbi-title="Pell and completion"}
+**Interactive report: not connected yet.** Download the [Power BI project](data/ir-lab-powerbi.zip) to explore this lesson in Power BI Desktop. The embedded report will appear here once it is connected.
+:::
+
+DAX has had regression built in since `LINESTX` arrived. It returns a one-row table, so wrap it to get a scalar measure:
+
+```dax
+Pell Slope =
+VAR t = FILTER (
+        institutions,
+        institutions[level] = "4-year"
+            && NOT ISBLANK ( institutions[pct_pell] )
+            && NOT ISBLANK ( institutions[grad_rate_bach_6yr] )
+            && institutions[bach_cohort] >= 30
+    )
+VAR n = COUNTROWS ( t )
+VAR sx = IF ( n > 1, STDEVX.S ( t, institutions[pct_pell] ) )
+RETURN IF (
+    n > 2 && sx > 0,
+    MAXX ( LINESTX ( t, institutions[grad_rate_bach_6yr], institutions[pct_pell] ), [Slope1] )
+)
+```
+
+```dax
+Pell Intercept =
+VAR t = FILTER (
+        institutions,
+        institutions[level] = "4-year"
+            && NOT ISBLANK ( institutions[pct_pell] )
+            && NOT ISBLANK ( institutions[grad_rate_bach_6yr] )
+            && institutions[bach_cohort] >= 30
+    )
+VAR n = COUNTROWS ( t )
+VAR sx = IF ( n > 1, STDEVX.S ( t, institutions[pct_pell] ) )
+RETURN IF (
+    n > 2 && sx > 0,
+    MAXX ( LINESTX ( t, institutions[grad_rate_bach_6yr], institutions[pct_pell] ), [Intercept] )
+)
+```
+
+```dax
+Pell R Squared =
+VAR t = FILTER (
+        institutions,
+        institutions[level] = "4-year"
+            && NOT ISBLANK ( institutions[pct_pell] )
+            && NOT ISBLANK ( institutions[grad_rate_bach_6yr] )
+            && institutions[bach_cohort] >= 30
+    )
+VAR n = COUNTROWS ( t )
+VAR sx = IF ( n > 1, STDEVX.S ( t, institutions[pct_pell] ) )
+RETURN IF (
+    n > 2 && sx > 0,
+    MAXX ( LINESTX ( t, institutions[grad_rate_bach_6yr], institutions[pct_pell] ), [CoefficientOfDetermination] )
+)
+```
+
+A DAX measure must return a scalar. Keep the filtered table in a local variable inside each measure. The guards return blank when a selection has too few institutions or no variation in Pell share. The project already includes these measures and the residual standard error.
+
+**Predict for one institution** is a measure with a what-if parameter. Create a numeric parameter `Pell What If` from 0 to 100, then:
+
+```dax
+Predicted Completion = [Pell Intercept] + [Pell Slope] * [Pell What If Value]
+```
+
+**The chart.** A scatter chart with `pct_pell` on X, `grad_rate_bach_6yr` on Y, and `unitid` in Values so each institution is its own point. The Analytics pane adds a trend line, which is this regression drawn for you; the measures above are how you get its numbers onto a card. Because the slope changes when a slicer changes, the report answers "does this relationship hold within our sector?" by itself.
+
+:::
+
+## Before you leave
+
+::: {.takeaways}
+1. **Least squares is a rule, not a truth.** It picks the line that minimizes squared vertical gaps. Different rule, different line.
+2. **Say the slope in units.** "About `r abs(slope)` points of completion per point of Pell share, across institutions." Never "Pell reduces completion."
+3. **Sigma beats R squared for readers.** "Institutions typically sit 15 points from the line" is something a dean can use. "R squared is `r r2`" is not.
+4. **Check the residuals before the coefficient.** A pattern in the residuals means the line is the wrong shape, and the coefficient is describing the wrong thing.
+:::
+
+Next in this track: **Yes or no**, logistic regression for outcomes that are either true or false, with odds explained in words.

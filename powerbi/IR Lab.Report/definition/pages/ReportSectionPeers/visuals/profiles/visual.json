@@ -1,0 +1,202 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.12.0/schema.json",
+  "name": "profiles",
+  "position": {
+    "x": 24,
+    "y": 616,
+    "z": 9,
+    "height": 262,
+    "width": 1232,
+    "tabOrder": 6184
+  },
+  "visual": {
+    "visualType": "tableEx",
+    "query": {
+      "queryState": {
+        "Values": {
+          "projections": [
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "peers"
+                    }
+                  },
+                  "Property": "peer_group"
+                }
+              },
+              "queryRef": "peers.peer_group",
+              "nativeQueryRef": "peer_group",
+              "displayName": "Peer group"
+            },
+            {
+              "field": {
+                "Measure": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "peers"
+                    }
+                  },
+                  "Property": "Peer Institutions"
+                }
+              },
+              "queryRef": "peers.Peer Institutions",
+              "nativeQueryRef": "Peer Institutions",
+              "displayName": "Peer Institutions"
+            },
+            {
+              "field": {
+                "Measure": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "peers"
+                    }
+                  },
+                  "Property": "Peer Median Pell"
+                }
+              },
+              "queryRef": "peers.Peer Median Pell",
+              "nativeQueryRef": "Peer Median Pell",
+              "displayName": "Peer Median Pell"
+            },
+            {
+              "field": {
+                "Measure": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "peers"
+                    }
+                  },
+                  "Property": "Peer Median Completion"
+                }
+              },
+              "queryRef": "peers.Peer Median Completion",
+              "nativeQueryRef": "Peer Median Completion",
+              "displayName": "Peer Median Completion"
+            },
+            {
+              "field": {
+                "Measure": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "peers"
+                    }
+                  },
+                  "Property": "Peer Median Net Price"
+                }
+              },
+              "queryRef": "peers.Peer Median Net Price",
+              "nativeQueryRef": "Peer Median Net Price",
+              "displayName": "Peer Median Net Price"
+            },
+            {
+              "field": {
+                "Measure": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "peers"
+                    }
+                  },
+                  "Property": "Peer Median Retention"
+                }
+              },
+              "queryRef": "peers.Peer Median Retention",
+              "nativeQueryRef": "Peer Median Retention",
+              "displayName": "Peer Median Retention"
+            },
+            {
+              "field": {
+                "Measure": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "peers"
+                    }
+                  },
+                  "Property": "Peer Median Student Faculty Ratio"
+                }
+              },
+              "queryRef": "peers.Peer Median Student Faculty Ratio",
+              "nativeQueryRef": "Peer Median Student Faculty Ratio",
+              "displayName": "Peer Median Student Faculty Ratio"
+            }
+          ]
+        }
+      }
+    },
+    "visualContainerObjects": {
+      "title": [
+        {
+          "properties": {
+            "show": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            },
+            "text": {
+              "expr": {
+                "Literal": {
+                  "Value": "'Profile groups in original units'"
+                }
+              }
+            },
+            "titleWrap": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            },
+            "fontColor": {
+              "solid": {
+                "color": {
+                  "expr": {
+                    "Literal": {
+                      "Value": "'#14213d'"
+                    }
+                  }
+                }
+              }
+            },
+            "fontSize": {
+              "expr": {
+                "Literal": {
+                  "Value": "12D"
+                }
+              }
+            }
+          }
+        }
+      ],
+      "subTitle": [
+        {
+          "properties": {
+            "show": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            },
+            "text": {
+              "expr": {
+                "Literal": {
+                  "Value": "'Medians of selected institutions • Group numbers are ordered by standardized Pell center, not quality'"
+                }
+              }
+            },
+            "titleWrap": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

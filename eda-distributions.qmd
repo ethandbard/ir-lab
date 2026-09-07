@@ -1,0 +1,562 @@
+---
+title: "The shape of a rate"
+subtitle: "Histograms, bin width, and why the mean and median disagree"
+webr:
+  packages:
+    - dplyr
+    - ggplot2
+    - tidyr
+  resources:
+    - data/institutions.csv
+pyodide:
+  packages:
+    - pandas
+    - matplotlib
+  resources:
+    - data/institutions.csv
+---
+
+{{< include ./_extensions/r-wasm/live/_knitr.qmd >}}
+
+```{r}
+#| include: false
+source("_common.R")
+four <- filter(institutions, level == "4-year", !is.na(grad_rate_bach_6yr))
+```
+
+::: {.lesson-eyebrow}
+Explore · Lesson 1 of 6
+:::
+
+A completion rate looks like one number. Across `r fmt(nrow(four))` four-year institutions it is a shape, and the shape decides which summary you should report. This lesson is about seeing that shape before trusting any average.
+
+**You will be able to:** read a histogram's shape, choose a bin width on purpose, decide between mean and median, and spot the floor, ceiling, and small-cohort effects that IPEDS rates carry.
+
+## Watch it move {.beat data-beat="1 · Watch it move"}
+
+Each dot is one four-year institution. Change the variable and the dots re-sort into the new histogram. Drag the bin count to see how much of the shape is the data and how much is your choice.
+
+::: {.lab-anim}
+
+```{ojs}
+//| echo: false
+inst = FileAttachment("data/institutions.csv").csv({typed: true})
+four = inst.filter(d => d.level === "4-year")
+
+metrics = new Map([
+  ["6-year bachelor's completion (%)", "grad_rate_bach_6yr"],
+  ["4-year bachelor's completion (%)", "grad_rate_bach_4yr"],
+  ["Full-time retention (%)", "retention_ft"],
+  ["Percent Pell", "pct_pell"],
+  ["Net price ($)", "net_price"],
+  ["Student-faculty ratio", "stu_fac_ratio"],
+  ["12-month headcount", "headcount"]
+])
+```
+
+::: {.lab-controls}
+```{ojs}
+//| echo: false
+viewof metric = Inputs.select(metrics, {label: "Variable", value: "grad_rate_bach_6yr", width: 300})
+viewof bins = Inputs.range([5, 60], {label: "Bins", step: 1, value: 20})
+viewof logx = Inputs.toggle({label: "Log scale", value: false})
+viewof marks = Inputs.checkbox(["Mean", "Median"], {label: "Show", value: ["Mean", "Median"]})
+```
+:::
+
+```{ojs}
+//| echo: false
+histNode = d3.create("svg").attr("class", "lab-svg").node()
+
+dotHist = {
+  const width = 860, height = 400, margin = {top: 28, right: 16, bottom: 44, left: 16};
+  const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const dur = reduce ? 0 : 750;
+  const val = d => logx ? Math.log10(Math.max(d[metric], 1)) : d[metric];
+  const rows = four.filter(d => d[metric] != null && Number.isFinite(d[metric]));
+  const values = rows.map(val);
+  const x = d3.scaleLinear().domain(d3.extent(values)).nice(bins).range([margin.left, width - margin.right]);
+  const binned = d3.bin().domain(x.domain()).thresholds(x.ticks(bins)).value(val)(rows);
+  const maxCount = d3.max(binned, b => b.length);
+  const binW = x(binned[0].x1) - x(binned[0].x0);
+  const plotH = height - margin.top - margin.bottom;
+  const s = Math.min(9, Math.sqrt(binW * plotH / maxCount) * 0.97);
+  const r = s / 2;
+  const perRow = Math.max(1, Math.floor(binW / s));
+  const pos = new Map();
+  for (const b of binned) {
+    const x0 = x(b.x0) + (binW - perRow * s) / 2;
+    b.forEach((d, i) => {
+      pos.set(d.unitid, {
+        cx: x0 + r + (i % perRow) * s,
+        cy: height - margin.bottom - r - Math.floor(i / perRow) * s
+      });
+    });
+  }
+  const fmt = logx ? (v => d3.format("~s")(10 ** v)) : metric === "net_price" ? d3.format("$,.0f") : metric === "headcount" ? d3.format(",.0f") : d3.format(".1f");
+  const tickFmt = logx ? (v => d3.format("~s")(10 ** v)) : metric === "net_price" ? d3.format("$~s") : metric === "headcount" ? d3.format("~s") : d3.format("~f");
+  const mean = d3.mean(values), median = d3.median(values);
+
+  const svg = d3.select(histNode);
+  svg.attr("viewBox", [0, 0, width, height]);
+  let dots = svg.select("g.dots");
+  if (dots.empty()) dots = svg.append("g").attr("class", "dots");
+  let axis = svg.select("g.axis");
+  if (axis.empty()) axis = svg.append("g").attr("class", "axis");
+  let lines = svg.select("g.lines");
+  if (lines.empty()) lines = svg.append("g").attr("class", "lines");
+
+  axis.attr("transform", `translate(0,${height - margin.bottom})`)
+    .transition().duration(dur)
+    .call(d3.axisBottom(x).ticks(9).tickFormat(tickFmt).tickSizeOuter(0));
+
+  const t = svg.transition().duration(dur).ease(d3.easeCubicInOut);
+  dots.selectAll("circle").data(rows, d => d.unitid)
+    .join(
+      enter => enter.append("circle").attr("r", 0).attr("fill", "var(--lab-primary)").attr("fill-opacity", 0.85)
+        .attr("cx", d => pos.get(d.unitid).cx).attr("cy", height - margin.bottom - r)
+        .call(e => e.append("title")),
+      update => update,
+      exit => exit.transition(t).attr("r", 0).remove()
+    )
+    .call(sel => sel.select("title").text(d => `${d.name}\n${fmt(val(d))}`))
+    .transition(t).delay((d, i) => reduce ? 0 : (i % 60) * 4)
+    .attr("r", Math.max(1.2, r * 0.9))
+    .attr("cx", d => pos.get(d.unitid).cx)
+    .attr("cy", d => pos.get(d.unitid).cy);
+
+  const markData = [
+    {name: "Mean", v: mean, color: "var(--lab-accent)", dy: 0},
+    {name: "Median", v: median, color: "var(--lab-ink)", dy: 14}
+  ].filter(m => marks.includes(m.name));
+  lines.selectAll("g.mark").data(markData, d => d.name)
+    .join(
+      enter => {
+        const g = enter.append("g").attr("class", "mark");
+        g.append("line").attr("y1", margin.top - 4).attr("y2", height - margin.bottom).attr("stroke-width", 2).attr("stroke-dasharray", "4 3");
+        g.append("text").attr("font-size", 12).attr("font-weight", 700).attr("dx", 6);
+        return g;
+      },
+      update => update,
+      exit => exit.remove()
+    )
+    .each(function (m) {
+      const g = d3.select(this);
+      g.select("line").attr("stroke", m.color).transition(t).attr("x1", x(m.v)).attr("x2", x(m.v));
+      g.select("text").attr("fill", m.color).attr("y", margin.top - 8 + m.dy)
+        .text(`${m.name} ${fmt(m.v)}`)
+        .attr("text-anchor", x(m.v) > width * 0.75 ? "end" : "start")
+        .attr("dx", x(m.v) > width * 0.75 ? -6 : 6)
+        .transition(t).attr("x", x(m.v));
+    });
+
+  return svg.node();
+}
+```
+
+```{ojs}
+//| echo: false
+readout = {
+  const val = d => logx ? Math.log10(Math.max(d[metric], 1)) : d[metric];
+  const rows = four.filter(d => d[metric] != null && Number.isFinite(d[metric]));
+  const raw = rows.map(d => d[metric]);
+  const mean = d3.mean(raw), median = d3.median(raw), sd = d3.deviation(raw);
+  const skew = d3.mean(raw, v => ((v - mean) / sd) ** 3);
+  const fmt = metric === "net_price" ? d3.format("$,.0f") : metric === "headcount" ? d3.format(",.0f") : d3.format(".1f");
+  const shape = Math.abs(skew) < 0.3 ? "close to symmetric" : skew > 0 ? "right-skewed (long tail of high values)" : "left-skewed (long tail of low values)";
+  return html`<div class="lab-readout">
+    <div><span class="k">Institutions</span><span class="val">${d3.format(",")(rows.length)}</span></div>
+    <div><span class="k">Missing</span><span class="val">${d3.format(",")(four.length - rows.length)}</span></div>
+    <div><span class="k">Mean</span><span class="val accent">${fmt(mean)}</span></div>
+    <div><span class="k">Median</span><span class="val">${fmt(median)}</span></div>
+    <div><span class="k">Std. dev.</span><span class="val">${fmt(sd)}</span></div>
+    <div><span class="k">Skewness</span><span class="val">${d3.format("+.2f")(skew)}</span></div>
+  </div>
+  <p class="lab-hint">Skewness is computed on the raw values, so it is the same with or without the log scale. This distribution is ${shape}.</p>`;
+}
+```
+
+:::
+
+Three things to try:
+
+1. **Bins.** Push the bin count to 5, then to 60. At 5 the completion rate looks like a smooth hill; at 60 it is a comb. Neither is wrong. The question is what you want the reader to see.
+2. **Headcount.** Switch to 12-month headcount. Almost every dot lands in the first bin because a few institutions enroll over 100,000 students. Turn on the log scale and the shape reappears. When the mean is far from the median, one of them is being dragged by a tail.
+3. **Net price.** The mean sits above the median. That gap is the private institutions with very high prices pulling the average up, and it is why "average net price" in a press release and "typical net price" are not the same number.
+
+## Do it {.beat data-beat="2 · Do it"}
+
+The cells below run in your browser. Edit anything and press Run. The R and Python tabs do the same work; pick the one you use, or compare them.
+
+::: {.panel-tabset group="language"}
+
+### R
+
+```{webr}
+#| autorun: true
+#| caption: Load the institution table
+library(dplyr)
+library(ggplot2)
+
+inst <- read.csv("data/institutions.csv")
+four <- inst |>
+  filter(level == "4-year", !is.na(grad_rate_bach_6yr))
+
+nrow(four)
+```
+
+The five-number summary plus the mean is the fastest read on a shape. If the mean and median differ by more than a few points, look for a tail.
+
+```{webr}
+#| autorun: true
+#| caption: Summary statistics
+four |>
+  summarise(
+    n = n(),
+    mean = mean(grad_rate_bach_6yr),
+    median = median(grad_rate_bach_6yr),
+    sd = sd(grad_rate_bach_6yr),
+    q25 = quantile(grad_rate_bach_6yr, 0.25),
+    q75 = quantile(grad_rate_bach_6yr, 0.75),
+    min = min(grad_rate_bach_6yr),
+    max = max(grad_rate_bach_6yr)
+  )
+```
+
+The histogram. Change `binwidth` and re-run. Try 2, 5, and 20.
+
+```{webr}
+#| autorun: true
+#| caption: Histogram
+ggplot(four, aes(grad_rate_bach_6yr)) +
+  geom_histogram(binwidth = 5, boundary = 0, fill = "#2a78d6", color = "white") +
+  geom_vline(xintercept = mean(four$grad_rate_bach_6yr), color = "#eb6834", linewidth = 1) +
+  geom_vline(xintercept = median(four$grad_rate_bach_6yr), color = "#14213d", linetype = "dashed") +
+  labs(
+    x = "6-year bachelor's completion (%)", y = "Institutions",
+    title = "Six-year completion at 4-year institutions",
+    subtitle = "Solid line: mean. Dashed line: median."
+  ) +
+  theme_minimal(base_size = 13)
+```
+
+One histogram hides three sectors. Faceting shows that the overall shape is really a mix of three different shapes.
+
+```{webr}
+#| autorun: true
+#| caption: The same histogram by control
+ggplot(four, aes(grad_rate_bach_6yr)) +
+  geom_histogram(binwidth = 5, boundary = 0, fill = "#2a78d6", color = "white") +
+  facet_wrap(~ control, ncol = 1, scales = "free_y") +
+  labs(x = "6-year bachelor's completion (%)", y = "Institutions") +
+  theme_minimal(base_size = 13)
+```
+
+### Python
+
+```{pyodide}
+#| autorun: true
+#| caption: Load the institution table
+import pandas as pd
+import matplotlib.pyplot as plt
+
+inst = pd.read_csv("data/institutions.csv")
+four = inst[(inst["level"] == "4-year") & inst["grad_rate_bach_6yr"].notna()].copy()
+
+len(four)
+```
+
+```{pyodide}
+#| autorun: true
+#| caption: Summary statistics
+four["grad_rate_bach_6yr"].describe().round(1)
+```
+
+```{pyodide}
+#| autorun: true
+#| caption: Histogram
+rate = four["grad_rate_bach_6yr"]
+
+fig, ax = plt.subplots(figsize=(8, 4.5))
+ax.hist(rate, bins=range(0, 105, 5), color="#2a78d6", edgecolor="white")
+ax.axvline(rate.mean(), color="#eb6834", linewidth=2, label=f"Mean {rate.mean():.1f}")
+ax.axvline(rate.median(), color="#14213d", linestyle="--", label=f"Median {rate.median():.1f}")
+ax.set_xlabel("6-year bachelor's completion (%)")
+ax.set_ylabel("Institutions")
+ax.set_title("Six-year completion at 4-year institutions")
+ax.legend(frameon=False)
+plt.show()
+```
+
+```{pyodide}
+#| autorun: true
+#| caption: The same histogram by control
+fig, axes = plt.subplots(3, 1, figsize=(8, 7), sharex=True)
+for ax, (ctrl, grp) in zip(axes, four.groupby("control")):
+    ax.hist(grp["grad_rate_bach_6yr"], bins=range(0, 105, 5), color="#2a78d6", edgecolor="white")
+    ax.set_title(ctrl, loc="left", fontsize=11)
+axes[-1].set_xlabel("6-year bachelor's completion (%)")
+plt.tight_layout()
+plt.show()
+```
+
+:::
+
+## Practice {.beat data-beat="3 · Practice"}
+
+Fill in the blanks and press Run. The check reads the value your code returns, so make the last line the answer.
+
+```{webr}
+#| setup: true
+#| exercise:
+#|   - eda1_median
+#|   - eda1_small
+inst <- read.csv("data/institutions.csv")
+four <- dplyr::filter(inst, level == "4-year", !is.na(grad_rate_bach_6yr))
+```
+
+::: {.lab-exercise data-exercise="eda1_median"}
+
+### Median completion by control
+
+The overall median hides the sectors. Return one row per `control` with the count of institutions and the **median** six-year completion rate, in a column named `median_rate`.
+
+```{webr}
+#| exercise: eda1_median
+four |>
+  group_by(______) |>
+  summarise(n = n(), median_rate = ______(grad_rate_bach_6yr))
+```
+
+::: {.hint exercise="eda1_median"}
+::: {.callout-note collapse="false"}
+## Hint
+The grouping column is `control`. The summary function you want is `median()`, not `mean()`.
+:::
+:::
+
+::: {.solution exercise="eda1_median"}
+::: {.callout-tip collapse="false"}
+## Solution
+```r
+four |>
+  group_by(control) |>
+  summarise(n = n(), median_rate = median(grad_rate_bach_6yr))
+```
+Private nonprofits have the highest median, and for-profits the lowest, with the widest spread.
+:::
+:::
+
+```{webr}
+#| exercise: eda1_median
+#| check: true
+expected <- four |>
+  dplyr::group_by(control) |>
+  dplyr::summarise(median_rate = median(grad_rate_bach_6yr))
+ok <- is.data.frame(.result) &&
+  all(c("control", "median_rate") %in% names(.result)) &&
+  nrow(.result) == 3 &&
+  isTRUE(all.equal(sort(.result$median_rate), sort(expected$median_rate)))
+if (ok) {
+  list(correct = TRUE, message = "Correct. Three sectors, three different medians. Compare them with the overall median from the summary cell above.")
+} else if (is.data.frame(.result) && "median_rate" %in% names(.result)) {
+  list(correct = FALSE, message = "The column is there but the values are off. Check that you grouped by control and used median().")
+} else {
+  list(correct = FALSE, message = "Not yet. The result should be a data frame with a column named median_rate.")
+}
+```
+
+:::
+
+::: {.lab-exercise data-exercise="eda1_small"}
+
+### How many rates rest on tiny cohorts?
+
+A completion rate on a cohort of 12 students moves 8 points when one student changes. Return the **share** (a number between 0 and 1) of four-year institutions in `four` whose bachelor's cohort, `bach_cohort`, is under 50 students.
+
+```{webr}
+#| exercise: eda1_small
+mean(four$bach_cohort ______ 50, na.rm = TRUE)
+```
+
+::: {.hint exercise="eda1_small"}
+::: {.callout-note collapse="false"}
+## Hint
+A logical vector's mean is the share of `TRUE` values. You need the comparison operator for "less than".
+:::
+:::
+
+::: {.solution exercise="eda1_small"}
+::: {.callout-tip collapse="false"}
+## Solution
+```r
+mean(four$bach_cohort < 50, na.rm = TRUE)
+```
+Roughly one in four four-year institutions computes its headline completion rate on fewer than 50 students. Any histogram of rates is partly a histogram of cohort sizes.
+:::
+:::
+
+```{webr}
+#| exercise: eda1_small
+#| check: true
+expected <- mean(four$bach_cohort < 50, na.rm = TRUE)
+if (is.numeric(.result) && length(.result) == 1 && isTRUE(abs(.result - expected) < 1e-6)) {
+  list(correct = TRUE, message = sprintf("Correct: %.1f%% of these institutions have a bachelor's cohort under 50. Their rates are noisy by construction.", 100 * expected))
+} else if (is.numeric(.result) && length(.result) == 1 &&
+           (isTRUE(abs(.result - mean(four$bach_cohort >= 50, na.rm = TRUE)) < 1e-6) ||
+            isTRUE(abs(.result - mean(four$bach_cohort > 50, na.rm = TRUE)) < 1e-6))) {
+  list(correct = FALSE, message = "That is the share at or above 50. Flip the comparison.")
+} else {
+  list(correct = FALSE, message = "Not yet. The answer is a single number between 0 and 1.")
+}
+```
+
+:::
+
+::: {.lab-exercise data-exercise="eda1_py_median"}
+
+### The same grouping in Python
+
+Return a Series of the median six-year completion rate by `control`.
+
+```{pyodide}
+#| setup: true
+#| exercise: eda1_py_median
+import pandas as pd
+inst = pd.read_csv("data/institutions.csv")
+four = inst[(inst["level"] == "4-year") & inst["grad_rate_bach_6yr"].notna()].copy()
+```
+
+```{pyodide}
+#| exercise: eda1_py_median
+four.groupby("______")["grad_rate_bach_6yr"].______()
+```
+
+::: {.hint exercise="eda1_py_median"}
+::: {.callout-note collapse="false"}
+## Hint
+Group by the `control` column, select the rate column, then call the `.median()` aggregation.
+:::
+:::
+
+::: {.solution exercise="eda1_py_median"}
+::: {.callout-tip collapse="false"}
+## Solution
+```python
+four.groupby("control")["grad_rate_bach_6yr"].median()
+```
+:::
+:::
+
+```{pyodide}
+#| exercise: eda1_py_median
+#| check: true
+import pandas as pd
+expected = four.groupby("control")["grad_rate_bach_6yr"].median()
+ok = isinstance(result, pd.Series) and len(result) == 3 and abs(result.sort_index().values - expected.sort_index().values).max() < 1e-6
+if ok:
+    feedback = {"correct": True, "message": "Correct. Same three medians as the R version."}
+else:
+    feedback = {"correct": False, "message": "Not yet. Expected a Series with one median per control value."}
+feedback
+```
+
+:::
+
+## In your stack {.beat data-beat="4 · In your stack"}
+
+The same distribution in the tools most IR offices report from. The workbook [ir-lab.xlsx](data/ir-lab.xlsx) has the institution table and a `distributions` sheet already built.
+
+::: {.panel-tabset group="stack"}
+
+### Excel
+
+The `distributions` sheet computes every statistic from the summary cell above with a filter on the Institutions table, so it updates if the data does. The array-style formulas need Excel 365 or 2021.
+
+| Statistic | Formula |
+|---|---|
+| Count | `=COUNTIFS(Institutions[level],"4-year",Institutions[grad_rate_bach_6yr],"<>")` |
+| Mean | `=AVERAGEIFS(Institutions[grad_rate_bach_6yr],Institutions[level],"4-year")` |
+| Median | `=MEDIAN(IF(Institutions[level]="4-year",Institutions[grad_rate_bach_6yr]))` |
+| Standard deviation | `=STDEV.S(IF(Institutions[level]="4-year",Institutions[grad_rate_bach_6yr]))` |
+| Skewness | `=SKEW(IF(Institutions[level]="4-year",Institutions[grad_rate_bach_6yr]))` |
+| 25th percentile | `=PERCENTILE.INC(IF(Institutions[level]="4-year",Institutions[grad_rate_bach_6yr]),0.25)` |
+
+The frequency table uses one `COUNTIFS` per bin, with the bin edges in cells so you can change the width by editing two numbers:
+
+```
+=COUNTIFS(Institutions[level],"4-year",
+          Institutions[grad_rate_bach_6yr],">="&D5,
+          Institutions[grad_rate_bach_6yr],"<"&E5)
+```
+
+Excel's built-in Histogram chart (Insert, Statistic Chart) bins automatically but cannot filter, so it will silently include two-year institutions if you point it at the whole column. Point it at a filtered copy, or chart the `COUNTIFS` table as a column chart.
+
+**Median by control**, the first exercise, is one `MEDIAN(IF())` per sector, or a PivotTable with `control` on rows if you are on a version without dynamic arrays. PivotTables offer average but not median, so the formula is the honest route.
+
+### Power BI
+
+::: {.ir-powerbi data-powerbi-page="distributions" data-powerbi-title="Completion distributions"}
+**Interactive report: not connected yet.** Download the [Power BI project](data/ir-lab-powerbi.zip) to explore this lesson in Power BI Desktop. The embedded report will appear here once it is connected.
+:::
+
+Load `institutions.csv` with Get Data, or paste this into a blank query in the Advanced Editor:
+
+```powerquery
+let
+    Source = Csv.Document(File.Contents("C:\path\to\institutions.csv"), [Delimiter = ",", Encoding = 65001, QuoteStyle = QuoteStyle.Csv]),
+    Promoted = Table.PromoteHeaders(Source, [PromoteAllScalars = true]),
+    Typed = Table.TransformColumnTypes(Promoted, {
+        {"unitid", Int64.Type}, {"grad_rate_bach_6yr", type number}, {"bach_cohort", Int64.Type},
+        {"net_price", Int64.Type}, {"pct_pell", type number}, {"headcount", Int64.Type}
+    })
+in
+    Typed
+```
+
+Blanks arrive as `null`, which is what you want. Do not replace them with 0.
+
+**Bins.** The quickest histogram is the built-in grouping: right-click `grad_rate_bach_6yr` in the Fields pane, choose New group, set Bin size to 5. That makes a column you can put on the axis of a clustered column chart with Count of unitid as the value. A calculated column gives you control over labels and sort order:
+
+```dax
+Completion Bin =
+VAR r = institutions[grad_rate_bach_6yr]
+VAR lo = MIN ( 95, FLOOR ( r, 5 ) )
+RETURN IF ( ISBLANK ( r ), BLANK (), FORMAT ( lo, "0" ) & IF ( lo = 95, "–100", "–<" & FORMAT ( lo + 5, "0" ) ) )
+
+Completion Bin Sort =
+VAR r = institutions[grad_rate_bach_6yr]
+RETURN IF ( ISBLANK ( r ), BLANK (), MIN ( 95, FLOOR ( r, 5 ) ) )
+```
+
+Bins are left-closed and right-open, except the final 95–100 bin includes 100%.
+
+Set the sort-by column of `Completion Bin` to `Completion Bin Sort`, then filter the visual to `level = "4-year"`.
+
+**Summary measures.** `MEDIAN` and `AVERAGE` ignore blanks. DAX has no skewness function, so it is one measure with the definition written out:
+
+```dax
+Median Completion = MEDIAN ( institutions[grad_rate_bach_6yr] )
+Mean Completion   = AVERAGE ( institutions[grad_rate_bach_6yr] )
+
+Completion Skewness =
+VAR t = FILTER ( institutions, NOT ISBLANK ( institutions[grad_rate_bach_6yr] ) )
+VAR m = AVERAGEX ( t, institutions[grad_rate_bach_6yr] )
+VAR s = STDEVX.S ( t, institutions[grad_rate_bach_6yr] )
+RETURN AVERAGEX ( t, POWER ( ( institutions[grad_rate_bach_6yr] - m ) / s, 3 ) )
+```
+
+A card visual for each, with a slicer on `control`, is the exercise above as a report page.
+
+:::
+
+## Before you leave
+
+::: {.takeaways}
+1. **The shape picks the summary.** Symmetric: mean and standard deviation. Skewed: median and quartiles. Report the one that describes the typical institution.
+2. **Bin width is a choice, so make it on purpose.** Show a colleague two widths before settling on one, and say which you picked.
+3. **A rate is only as steady as its denominator.** Filter or flag small cohorts before ranking anything.
+4. **Facet before you conclude.** One histogram over three sectors is usually three histograms in a trench coat.
+:::
+
+Next in this track: **Missing on purpose**, on what a blank cell means in IPEDS and how the imputation flags tell you whether a number was reported or filled in.

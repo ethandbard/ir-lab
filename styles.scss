@@ -1,0 +1,720 @@
+/*-- scss:defaults --*/
+// Tokens. Paper is a cool near-white; ink is a deep navy; cobalt carries
+// links and the single-series marks; orange is the one attention color and
+// is reserved for "what you are controlling" in the animations.
+$lab-paper: #f8f9fc;
+$lab-ink: #14213d;
+$lab-body: #262d3a;
+$lab-muted: #5c6674;
+$lab-rule: #dde2ea;
+$lab-panel: #eef1f6;
+$lab-primary: #2a78d6;
+$lab-primary-dark: #1c5cab;
+$lab-accent: #eb6834;
+$lab-aqua: #1baf7a;
+$lab-mark: #fff1a3;
+
+$primary: $lab-primary;
+$link-color: $lab-primary-dark;
+$body-bg: $lab-paper;
+$body-color: $lab-body;
+$font-family-sans-serif: "Source Sans 3", "Segoe UI", system-ui, -apple-system, sans-serif;
+$font-family-monospace: "JetBrains Mono", "Cascadia Mono", Consolas, monospace;
+$headings-font-family: "Bricolage Grotesque", "Source Sans 3", "Segoe UI", sans-serif;
+$headings-font-weight: 700;
+$headings-color: $lab-ink;
+$font-size-root: 17px;
+$toc-font-size: 0.82rem;
+$code-block-bg: #ffffff;
+$code-color: $lab-primary-dark;
+$navbar-bg: $lab-paper;
+
+/*-- scss:rules --*/
+:root {
+  --lab-paper: #{$lab-paper};
+  --lab-ink: #{$lab-ink};
+  --lab-muted: #{$lab-muted};
+  --lab-rule: #{$lab-rule};
+  --lab-panel: #{$lab-panel};
+  --lab-primary: #{$lab-primary};
+  --lab-primary-dark: #{$lab-primary-dark};
+  --lab-accent: #{$lab-accent};
+  --lab-aqua: #{$lab-aqua};
+  --lab-series-4: #eda100;
+  --lab-series-5: #e87ba4;
+  --lab-mark: #{$lab-mark};
+}
+
+body {
+  font-size: 1rem;
+  line-height: 1.55;
+}
+
+// ---- Navbar --------------------------------------------------------------
+
+.navbar {
+  border-bottom: 1px solid $lab-rule;
+  font-family: "Bricolage Grotesque", sans-serif;
+
+  .navbar-brand {
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    color: $lab-ink;
+  }
+
+  .navbar-brand img {
+    height: 22px;
+    margin-right: 0.45rem;
+  }
+
+  .nav-link {
+    font-weight: 600;
+    font-size: 0.95rem;
+  }
+}
+
+// ---- Type ----------------------------------------------------------------
+
+#title-block-header .title {
+  font-size: 2.6rem;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  line-height: 1.05;
+  font-variation-settings: "opsz" 96;
+}
+
+#title-block-header .subtitle {
+  font-family: "Source Sans 3", sans-serif;
+  font-size: 1.15rem;
+  color: $lab-muted;
+  margin-top: 0.4rem;
+}
+
+h2 {
+  font-size: 1.55rem;
+  letter-spacing: -0.02em;
+  margin-top: 3rem;
+  padding-bottom: 0.35rem;
+  border-bottom: 1px solid $lab-rule;
+}
+
+h3 {
+  font-size: 1.15rem;
+  margin-top: 1.8rem;
+  letter-spacing: -0.01em;
+}
+
+h4 {
+  font-family: "Source Sans 3", sans-serif;
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: $lab-muted;
+  margin-top: 1.4rem;
+}
+
+// Section markers: the four fixed beats of every lesson.
+h2[data-beat]::before,
+h2.beat::before {
+  content: attr(data-beat);
+  display: block;
+  font-family: "Source Sans 3", sans-serif;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: $lab-primary;
+  margin-bottom: 0.15rem;
+}
+
+.lesson-eyebrow {
+  font-family: "Source Sans 3", sans-serif;
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: $lab-primary;
+  margin: -0.5rem 0 1.4rem;
+}
+
+.lead {
+  font-size: 1.15rem;
+  color: $lab-body;
+}
+
+// ---- Variable chips: the signature element ------------------------------
+// A highlighter mark over the IPEDS-derived column name. Hover or focus shows
+// the NCES label and source variable.
+
+code.v {
+  position: relative;
+  display: inline-block;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.82em;
+  font-weight: 500;
+  color: $lab-ink;
+  background: linear-gradient(transparent 12%, $lab-mark 12%, $lab-mark 88%, transparent 88%);
+  padding: 0 0.3em;
+  border-radius: 2px;
+  cursor: help;
+  white-space: nowrap;
+}
+
+code.v::after {
+  content: attr(data-label);
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 6px);
+  z-index: 50;
+  width: max-content;
+  max-width: 320px;
+  padding: 0.45rem 0.6rem;
+  font-family: "Source Sans 3", sans-serif;
+  font-size: 0.8rem;
+  font-weight: 400;
+  line-height: 1.35;
+  white-space: normal;
+  color: #fff;
+  background: $lab-ink;
+  border-radius: 4px;
+  box-shadow: 0 4px 14px rgba(20, 33, 61, 0.18);
+  opacity: 0;
+  transform: translateY(4px);
+  pointer-events: none;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+code.v:hover::after,
+code.v:focus-visible::after {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+code.v:focus-visible {
+  outline: 2px solid $lab-primary;
+  outline-offset: 2px;
+}
+
+// ---- Animation panels ------------------------------------------------------
+
+.lab-anim {
+  background: #fff;
+  border: 1px solid $lab-rule;
+  border-radius: 8px;
+  padding: 1rem 1.1rem 0.6rem;
+  margin: 1.2rem 0 1.6rem;
+
+  form {
+    margin-bottom: 0.4rem;
+  }
+
+  // Observable inputs, tuned to the page.
+  form label {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: $lab-muted;
+  }
+
+  input[type="range"] {
+    accent-color: $lab-accent;
+  }
+
+  select,
+  input[type="text"] {
+    font-family: "Source Sans 3", sans-serif;
+  }
+
+  .lab-svg {
+    display: block;
+    width: 100%;
+    height: auto;
+    font-family: "Source Sans 3", sans-serif;
+  }
+
+  .lab-svg .axis text {
+    font-size: 12px;
+    fill: $lab-muted;
+  }
+
+  .lab-svg .axis line,
+  .lab-svg .axis path {
+    stroke: $lab-rule;
+  }
+
+  .lab-svg .axis-label {
+    font-size: 12px;
+    fill: $lab-muted;
+  }
+}
+
+.lab-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 1.6rem;
+  align-items: flex-end;
+  padding-bottom: 0.6rem;
+  margin-bottom: 0.4rem;
+  border-bottom: 1px solid $lab-rule;
+
+  // One OJS chunk renders as one .cell holding several outputs; let the
+  // forms inside be the flex items.
+  > .cell,
+  > .cell > .cell-output,
+  > .cell > .cell-output > div {
+    display: contents;
+  }
+
+  form {
+    margin-bottom: 0;
+    width: auto;
+  }
+
+  form label {
+    width: auto;
+    margin-right: 0.5rem;
+  }
+}
+
+// Observable Inputs.button inherits Bootstrap's button reset and ends up
+// dark on dark. Give it the page's own button look.
+.lab-anim form button {
+  font-family: "Source Sans 3", sans-serif;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: $lab-ink;
+  background: #fff;
+  border: 1px solid $lab-rule;
+  border-radius: 6px;
+  padding: 0.3rem 0.8rem;
+  margin-right: 0.4rem;
+  cursor: pointer;
+  transition: border-color 0.12s ease, background 0.12s ease;
+
+  &:hover {
+    border-color: $lab-primary;
+    background: $lab-panel;
+  }
+
+  &:focus-visible {
+    outline: 2px solid $lab-primary;
+    outline-offset: 2px;
+  }
+}
+
+.lab-readout {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 0.6rem;
+  margin: 0.4rem 0 0.4rem;
+  padding-top: 0.6rem;
+  border-top: 1px solid $lab-rule;
+
+  .k {
+    display: block;
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: $lab-muted;
+  }
+
+  .val {
+    display: block;
+    font-family: "Bricolage Grotesque", sans-serif;
+    font-size: 1.35rem;
+    font-weight: 700;
+    color: $lab-ink;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.01em;
+  }
+
+  .val.accent {
+    color: $lab-accent;
+  }
+
+  .val.primary {
+    color: $lab-primary-dark;
+  }
+}
+
+.lab-hint {
+  font-size: 0.88rem;
+  color: $lab-muted;
+  margin: 0.2rem 0 0.4rem;
+}
+
+// ---- Live code cells -------------------------------------------------------
+
+// OJS cells with echo: false still emit a hidden source block plus a copy
+// button; hide the scaffold so the button does not float over the output.
+.code-copy-outer-scaffold:has(> .cell-code.hidden) {
+  display: none;
+}
+
+.card.exercise-editor {
+  border: 1px solid $lab-rule;
+  border-radius: 8px;
+  overflow: hidden;
+  margin: 1rem 0;
+
+  .card-header {
+    background: $lab-panel;
+    font-family: "Source Sans 3", sans-serif;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: $lab-ink;
+  }
+
+  .cm-editor {
+    font-size: 0.86rem;
+  }
+}
+
+.cell-output-webr,
+.cell-output-pyodide {
+  font-size: 0.85rem;
+}
+
+div.sourceCode {
+  border: 1px solid $lab-rule;
+  border-radius: 6px;
+  font-size: 0.84rem;
+}
+
+pre code {
+  line-height: 1.45;
+}
+
+// Exercise wrapper drives progress tracking (see lab.js).
+.lab-exercise {
+  position: relative;
+  border-left: 3px solid $lab-primary;
+  padding-left: 1rem;
+  margin: 1.8rem 0;
+
+  > h3:first-child,
+  > h4:first-child {
+    margin-top: 0;
+  }
+
+  &.is-done {
+    border-left-color: $lab-aqua;
+  }
+
+  .lab-done-badge {
+    display: none;
+    position: absolute;
+    right: 0;
+    top: 0.1rem;
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: #0b6b4a;
+    background: #d8f3e8;
+    border-radius: 999px;
+    padding: 0.15rem 0.6rem;
+  }
+
+  &.is-done .lab-done-badge {
+    display: inline-block;
+  }
+}
+
+// ---- Panels, callouts, tabsets --------------------------------------------
+
+.panel-tabset > .nav-tabs {
+  border-bottom: 1px solid $lab-rule;
+
+  .nav-link {
+    font-family: "Source Sans 3", sans-serif;
+    font-weight: 600;
+    font-size: 0.9rem;
+    color: $lab-muted;
+  }
+
+  .nav-link.active {
+    color: $lab-ink;
+    border-color: $lab-rule $lab-rule $lab-paper;
+  }
+}
+
+.callout {
+  font-size: 0.92rem;
+  border-radius: 6px;
+}
+
+.callout.callout-style-default > .callout-header {
+  font-family: "Source Sans 3", sans-serif;
+  font-weight: 700;
+}
+
+.takeaways {
+  background: $lab-panel;
+  border-radius: 8px;
+  padding: 1rem 1.3rem;
+  margin: 1.2rem 0;
+
+  ol {
+    margin-bottom: 0;
+    padding-left: 1.2rem;
+  }
+
+  li {
+    margin-bottom: 0.45rem;
+  }
+}
+
+// ---- Index page ------------------------------------------------------------
+
+.hero {
+  margin: 0.5rem 0 2rem;
+
+  .hero-title {
+    font-family: "Bricolage Grotesque", sans-serif;
+    font-size: clamp(2.4rem, 6vw, 4.2rem);
+    font-weight: 800;
+    letter-spacing: -0.04em;
+    line-height: 0.98;
+    color: $lab-ink;
+    margin: 0 0 0.8rem;
+    font-variation-settings: "opsz" 96;
+  }
+
+  .hero-title em {
+    font-style: normal;
+    color: $lab-primary;
+  }
+
+  .hero-lede {
+    font-size: 1.2rem;
+    max-width: 44rem;
+    color: $lab-body;
+  }
+}
+
+.index-page #title-block-header {
+  display: none;
+}
+
+.tracks {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1rem;
+  margin: 1.4rem 0 2rem;
+}
+
+.track {
+  display: block;
+  background: #fff;
+  border: 1px solid $lab-rule;
+  border-radius: 10px;
+  padding: 1.1rem 1.2rem 1rem;
+  color: inherit;
+  text-decoration: none;
+  transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+
+  &:hover,
+  &:focus-visible {
+    transform: translateY(-2px);
+    border-color: $lab-primary;
+    box-shadow: 0 8px 24px rgba(20, 33, 61, 0.08);
+    color: inherit;
+    text-decoration: none;
+  }
+
+  .track-verb {
+    display: block;
+    font-family: "Bricolage Grotesque", sans-serif;
+    font-size: 1.7rem;
+    font-weight: 800;
+    letter-spacing: -0.03em;
+    color: $lab-ink;
+    line-height: 1;
+  }
+
+  .track-name {
+    display: block;
+    font-size: 0.78rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: $lab-primary;
+    margin: 0.35rem 0 0.6rem;
+  }
+
+  p {
+    font-size: 0.92rem;
+    margin-bottom: 0.7rem;
+    color: $lab-body;
+  }
+
+  .lab-progress {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: $lab-muted;
+  }
+}
+
+.beats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.8rem;
+  margin: 1rem 0 1.5rem;
+
+  div {
+    border-top: 3px solid $lab-primary;
+    padding-top: 0.5rem;
+  }
+
+  b {
+    display: block;
+    font-family: "Bricolage Grotesque", sans-serif;
+    font-size: 1.05rem;
+    font-weight: 700;
+    color: $lab-ink;
+    letter-spacing: -0.01em;
+  }
+
+  span {
+    font-size: 0.88rem;
+    color: $lab-muted;
+  }
+}
+
+// ---- Track pages: lesson lists ---------------------------------------------
+
+.lessons {
+  list-style: none;
+  padding: 0;
+  margin: 1rem 0 2rem;
+  counter-reset: lesson;
+
+  li {
+    display: grid;
+    grid-template-columns: 2.4rem 1fr auto;
+    gap: 0.8rem;
+    align-items: baseline;
+    padding: 0.75rem 0;
+    border-bottom: 1px solid $lab-rule;
+    counter-increment: lesson;
+  }
+
+  li::before {
+    content: counter(lesson, decimal-leading-zero);
+    font-family: "Bricolage Grotesque", sans-serif;
+    font-weight: 700;
+    color: $lab-primary;
+    font-size: 1.05rem;
+  }
+
+  a {
+    font-family: "Bricolage Grotesque", sans-serif;
+    font-weight: 700;
+    font-size: 1.1rem;
+    color: $lab-ink;
+    letter-spacing: -0.01em;
+    text-decoration: none;
+  }
+
+  a:hover,
+  a:focus-visible {
+    color: $lab-primary-dark;
+    text-decoration: underline;
+    text-decoration-thickness: 2px;
+    text-underline-offset: 3px;
+  }
+
+  a:hover .lesson-blurb {
+    text-decoration: none;
+  }
+
+  .lesson-blurb {
+    display: block;
+    font-size: 0.9rem;
+    color: $lab-muted;
+    font-family: "Source Sans 3", sans-serif;
+    font-weight: 400;
+  }
+
+  .lesson-status {
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: $lab-muted;
+    white-space: nowrap;
+  }
+
+  .lesson-status.live {
+    color: #0b6b4a;
+  }
+
+  li.planned a {
+    color: $lab-muted;
+    pointer-events: none;
+  }
+}
+
+// ---- Tables ------------------------------------------------------------------
+
+table {
+  font-size: 0.9rem;
+}
+
+.table > :not(caption) > * > * {
+  padding: 0.35rem 0.6rem;
+}
+
+// ---- Responsive ------------------------------------------------------------
+
+@media (max-width: 900px) {
+  .tracks,
+  .beats {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 600px) {
+  #title-block-header .title {
+    font-size: 2rem;
+  }
+
+  .lessons li {
+    grid-template-columns: 2rem 1fr;
+  }
+
+  .lessons .lesson-status {
+    grid-column: 2;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .track,
+  code.v::after {
+    transition: none;
+  }
+}
+
+// Embedded Power BI lessons. Keep the fallback useful before a report is connected.
+.ir-powerbi {
+  margin: 1.25rem 0;
+  padding: 1rem;
+  background: #ffffff;
+  border: 1px solid $lab-rule;
+  border-radius: 8px;
+  p:last-child { margin-bottom: 0; }
+}
+.ir-powerbi-frame {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1280 / 970;
+  min-height: 440px;
+  border: 0;
+  margin-bottom: 0.75rem;
+}
+@media (max-width: 640px) {
+  .ir-powerbi { padding: 0.5rem; }
+  .ir-powerbi-frame { min-height: 520px; }
+}

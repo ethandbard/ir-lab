@@ -1,0 +1,18 @@
+---
+title: "Model"
+subtitle: "Machine learning: predict, group, and reduce"
+toc: false
+---
+
+Machine learning in institutional research is mostly three jobs: predict an outcome for a student or an institution, group similar things together, and compress many variables into a few. These lessons do each one on the institution table, with the evaluation discipline that keeps the results honest.
+
+<ul class="lessons">
+<li class="planned"><a>Split before you fit<span class="lesson-blurb">Train and test sets, cross-validation, and the leakage that makes a model look better than it is.</span></a><span class="lesson-status">Planned</span></li>
+<li class="planned"><a>Predict a rate<span class="lesson-blurb">Regularized regression and tree models for completion rates, compared on held-out data.</span></a><span class="lesson-status">Planned</span></li>
+<li class="planned"><a>Predict a yes or no<span class="lesson-blurb">Classification, thresholds, and the confusion matrix behind every early-alert model.</span></a><span class="lesson-status">Planned</span></li>
+<li><a href="ml-clustering.html">Peer groups<span class="lesson-blurb">k-means clustering: the algorithm step by step, choosing k, and naming what you found.</span></a><span class="lesson-status live">Live</span></li>
+<li class="planned"><a>Fewer dimensions<span class="lesson-blurb">Principal components on the institution profile, and what each component means.</span></a><span class="lesson-status">Planned</span></li>
+<li class="planned"><a>Next fall<span class="lesson-blurb">Forecasting enrollment from a short history without fooling yourself.</span></a><span class="lesson-status">Planned</span></li>
+</ul>
+
+<p class="lab-progress" data-exercises="ml1_scale ml1_elbow ml1_py_fit"></p>
