@@ -17,8 +17,14 @@ A practice site for exploratory data analysis, statistics, and machine learning 
 | `index.qmd` | Home: institution swarm, track cards, data dictionary. |
 | `eda.qmd`, `stats.qmd`, `ml.qmd` | Track pages listing lessons. Live lessons link; planned ones are placeholders. |
 | `eda-distributions.qmd` | Explore, lesson 1: histograms and skew. |
+| `eda-missing.qmd` | Explore, lesson 2: missingness patterns and complete-case bias. |
+| `eda-compare.qmd` | Explore, lesson 3: boxplots, small multiples, and variance explained by a grouping. |
+| `stats-sampling.qmd` | Test, lesson 1: bootstrap and confidence intervals. |
 | `stats-regression.qmd` | Test, lesson 5: simple linear regression. |
+| `stats-logistic.qmd` | Test, lesson 6: logistic regression and odds ratios. |
+| `ml-split.qmd` | Model, lesson 1: train/test splits, cross-validation, and leakage. |
 | `ml-clustering.qmd` | Model, lesson 4: k-means peer groups. |
+| `ml-pca.qmd` | Model, lesson 5: principal components. |
 | `build_data.R` | Builds `data/` from `../ipeds/data/raw`. |
 | `build_workbook.R` | Builds `data/ir-lab.xlsx` with one worked sheet per lesson. Called by `build_data.R`. |
 | `_common.R` | Helpers for pre-rendered parts: `v()` variable chips, `fmt()`. |
@@ -28,7 +34,7 @@ A practice site for exploratory data analysis, statistics, and machine learning 
 
 ## Build
 
-R is not on PATH on this machine; see the memory note on toolchain paths.
+`build_data.R` needs the raw IPEDS files in `../ipeds/data/raw`. Without them, `build_workbook.R` can still be run on its own against the CSVs in `data/` (it needs the openxlsx package).
 
 ```sh
 Rscript setup.R          # once: installs build packages

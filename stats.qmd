@@ -7,12 +7,12 @@ toc: false
 Institutional research lives on comparisons: this year against last, this group against that, this institution against its peers. These lessons cover the tools for saying how much of a difference is real, and for stating a model's claim in plain words.
 
 <ul class="lessons">
-<li class="planned"><a>Sampling and uncertainty<span class="lesson-blurb">Bootstrap a statistic, watch the interval form, and learn what a confidence interval promises.</span></a><span class="lesson-status">Planned</span></li>
+<li><a href="stats-sampling.html">Sampling and uncertainty<span class="lesson-blurb">Bootstrap a statistic, watch the interval form, and learn what a confidence interval promises.</span></a><span class="lesson-status live">Live</span></li>
 <li class="planned"><a>Two groups<span class="lesson-blurb">t-tests, effect sizes, and why a significant difference can still be tiny.</span></a><span class="lesson-status">Planned</span></li>
 <li class="planned"><a>Many groups<span class="lesson-blurb">ANOVA, multiple comparisons, and the cost of asking many questions at once.</span></a><span class="lesson-status">Planned</span></li>
 <li class="planned"><a>Counts and proportions<span class="lesson-blurb">Chi-square tests and proportion intervals for categorical outcomes.</span></a><span class="lesson-status">Planned</span></li>
 <li><a href="stats-regression.html">A line through the cloud<span class="lesson-blurb">Simple linear regression: least squares, residuals, and reading a coefficient.</span></a><span class="lesson-status live">Live</span></li>
-<li class="planned"><a>Yes or no<span class="lesson-blurb">Logistic regression for retention and completion outcomes, with odds explained.</span></a><span class="lesson-status">Planned</span></li>
+<li><a href="stats-logistic.html">Yes or no<span class="lesson-blurb">Logistic regression for a yes-or-no outcome, with odds ratios and probabilities explained.</span></a><span class="lesson-status live">Live</span></li>
 </ul>
 
-<p class="lab-progress" data-exercises="stats1_fit stats1_predict stats1_py_fit"></p>
+<p class="lab-progress" data-exercises="stats1_fit stats1_predict stats1_py_fit stats2_fit stats2_predict stats2_py_fit stats3_boot stats3_ci stats3_py_boot"></p>

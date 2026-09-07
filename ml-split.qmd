@@ -1,0 +1,739 @@
+---
+title: "Split before you fit"
+subtitle: "Train and test sets, cross-validation, and the leakage that makes a model look better than it is"
+webr:
+  packages:
+    - dplyr
+    - ggplot2
+    - tidyr
+  resources:
+    - data/institutions.csv
+pyodide:
+  packages:
+    - pandas
+    - matplotlib
+    - scikit-learn
+  resources:
+    - data/institutions.csv
+---
+
+{{< include ./_extensions/r-wasm/live/_knitr.qmd >}}
+
+```{r}
+#| include: false
+source("_common.R")
+four <- institutions |>
+  filter(level == "4-year", bach_cohort >= 30) |>
+  select(pct_pell, net_price, stu_fac_ratio, headcount, control, grad_rate_bach_4yr, grad_rate_bach_6yr) |>
+  na.omit()
+```
+
+::: {.lesson-eyebrow}
+Model · Lesson 1 of 6
+:::
+
+A model that has seen the answers will get them right. That is the whole problem with judging a prediction model on the rows it was fitted to: the score measures memory, not skill. Every lesson in this track ends with a number that says how well a model predicts, and every one of those numbers comes from rows the model never saw. This lesson sets up that habit on `r fmt(nrow(four))` four-year institutions, predicting six-year completion from what an institution looks like.
+
+**You will be able to:** split a table into training and test rows, report error on the test rows only, run k-fold cross-validation by hand, and recognize the two kinds of leakage that make a test score a lie.
+
+## Watch it move {.beat data-beat="1 · Watch it move"}
+
+Each dot is one institution: Pell share across, six-year completion up. The blue dots are the training set, and the model, a polynomial in Pell share, is fitted to them alone. The orange dots are the test set, held back. The readout scores the fit on both. Start small and flexible, then make the sample larger, and watch which of the two errors you can trust.
+
+::: {.lab-anim}
+
+```{ojs}
+//| echo: false
+inst = FileAttachment("data/institutions.csv").csv({typed: true})
+fitRows = inst.filter(d => d.level === "4-year" && d.bach_cohort >= 30 && d.pct_pell != null && d.grad_rate_bach_6yr != null)
+
+sizeOptions = new Map([["40", 40], ["150", 150], ["All", 100000]])
+shareOptions = new Map([["50%", 0.5], ["70%", 0.7], ["90%", 0.9]])
+degreeOptions = new Map([["Line (degree 1)", 1], ["Curve (degree 3)", 3], ["Wiggle (degree 8)", 8]])
+
+solveLeastSquares = (X, y) => {
+  const p = X[0].length;
+  const A = d3.range(p).map(() => new Array(p + 1).fill(0));
+  for (let r = 0; r < X.length; r++) {
+    for (let i = 0; i < p; i++) {
+      for (let j = 0; j < p; j++) A[i][j] += X[r][i] * X[r][j];
+      A[i][p] += X[r][i] * y[r];
+    }
+  }
+  for (let i = 0; i < p; i++) A[i][i] += 1e-9;
+  for (let c = 0; c < p; c++) {
+    let piv = c;
+    for (let r = c + 1; r < p; r++) if (Math.abs(A[r][c]) > Math.abs(A[piv][c])) piv = r;
+    [A[c], A[piv]] = [A[piv], A[c]];
+    for (let r = 0; r < p; r++) {
+      if (r === c) continue;
+      const f = A[r][c] / A[c][c];
+      for (let k = c; k <= p; k++) A[r][k] -= f * A[c][k];
+    }
+  }
+  return A.map((row, i) => row[p] / row[i]);
+}
+```
+
+::: {.lab-controls}
+```{ojs}
+//| echo: false
+viewof sampleN = Inputs.radio(sizeOptions, {label: "Institutions used", value: 40})
+viewof trainShare = Inputs.radio(shareOptions, {label: "Training share", value: 0.7})
+viewof degree = Inputs.radio(degreeOptions, {label: "Model flexibility", value: 1})
+viewof seed = Inputs.radio([1, 2, 3], {label: "Shuffle", value: 1})
+```
+:::
+
+```{ojs}
+//| echo: false
+splitFit = {
+  const shuffle = d3.shuffler(d3.randomLcg(seed / 10));
+  const rows = shuffle(fitRows.slice()).slice(0, Math.min(sampleN, fitRows.length));
+  const nTrain = Math.min(rows.length - 1, Math.max(degree + 2, Math.round(trainShare * rows.length)));
+  const train = rows.slice(0, nTrain), test = rows.slice(nTrain);
+  const lo = d3.min(train, d => d.pct_pell), hi = d3.max(train, d => d.pct_pell);
+  const sx = v => hi > lo ? (2 * (v - lo) / (hi - lo)) - 1 : 0;
+  const feats = v => d3.range(degree + 1).map(p => sx(v) ** p);
+  const beta = solveLeastSquares(train.map(d => feats(d.pct_pell)), train.map(d => d.grad_rate_bach_6yr));
+  const predict = v => d3.sum(feats(v), (f, i) => f * beta[i]);
+  const rmse = set => set.length ? Math.sqrt(d3.mean(set, d => (d.grad_rate_bach_6yr - predict(d.pct_pell)) ** 2)) : NaN;
+  const meanTrain = d3.mean(train, d => d.grad_rate_bach_6yr);
+  const baseline = test.length ? Math.sqrt(d3.mean(test, d => (d.grad_rate_bach_6yr - meanTrain) ** 2)) : NaN;
+  const curve = d3.range(0, 101, 1).map(v => ({x: v, y: predict(v)}));
+  return {train, test, rmseTrain: rmse(train), rmseTest: rmse(test), baseline, curve, lo, hi};
+}
+
+splitNode = d3.create("svg").attr("class", "lab-svg").node()
+
+splitPlot = {
+  const width = 860, height = 440, margin = {top: 16, right: 20, bottom: 48, left: 56};
+  const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const dur = reduce ? 0 : 500;
+  const x = d3.scaleLinear().domain([0, 100]).range([margin.left, width - margin.right]);
+  const y = d3.scaleLinear().domain([0, 100]).range([height - margin.bottom, margin.top]);
+  const {train, test, curve, lo, hi} = splitFit;
+  const pts = [...train.map(d => ({...d, set: "train"})), ...test.map(d => ({...d, set: "test"}))];
+  const line = d3.line().defined(d => d.y >= -2 && d.y <= 102).x(d => x(d.x)).y(d => y(d.y)).curve(d3.curveMonotoneX);
+  const inRange = curve.filter(d => d.x >= lo && d.x <= hi);
+  const outRange = curve.filter(d => d.x < lo || d.x > hi).map(d => d.x < lo ? {...d, seg: "lo"} : {...d, seg: "hi"});
+
+  const svg = d3.select(splitNode);
+  svg.attr("viewBox", [0, 0, width, height]);
+  const layer = name => { let g = svg.select(`g.${name}`); if (g.empty()) g = svg.append("g").attr("class", name); return g; };
+  const gx = layer("axis"), gy = layer("axisy"), glab = layer("labels"), gd = layer("dots"), gc = layer("curve"), gleg = layer("legend");
+
+  if (gx.selectAll("*").empty()) {
+    gx.attr("transform", `translate(0,${y(0)})`).call(d3.axisBottom(x).ticks(10).tickSizeOuter(0));
+    gy.attr("transform", `translate(${x(0)},0)`).call(d3.axisLeft(y).ticks(10).tickSizeOuter(0));
+    glab.append("text").attr("class", "axis-label").attr("x", x(100)).attr("y", height - 10).attr("text-anchor", "end")
+      .attr("font-size", 12).attr("fill", "currentColor").text("Percent of undergraduates awarded Pell");
+    glab.append("text").attr("class", "axis-label").attr("transform", `translate(14,${margin.top}) rotate(-90)`).attr("text-anchor", "end")
+      .attr("font-size", 12).attr("fill", "currentColor").text("6-year bachelor's completion (%)");
+    gc.append("path").attr("class", "extrap lo").attr("fill", "none").attr("stroke", "var(--lab-ink)").attr("stroke-width", 1.2).attr("stroke-dasharray", "3 4").attr("stroke-opacity", 0.6);
+    gc.append("path").attr("class", "extrap hi").attr("fill", "none").attr("stroke", "var(--lab-ink)").attr("stroke-width", 1.2).attr("stroke-dasharray", "3 4").attr("stroke-opacity", 0.6);
+    gc.append("path").attr("class", "fit").attr("fill", "none").attr("stroke", "var(--lab-ink)").attr("stroke-width", 2.4).attr("stroke-linecap", "round");
+    const leg = gleg.attr("transform", `translate(${width - margin.right - 190},${margin.top + 4})`).attr("font-size", 12);
+    leg.append("circle").attr("cx", 6).attr("cy", 6).attr("r", 4.5).attr("fill", "var(--lab-primary)").attr("fill-opacity", 0.75);
+    leg.append("text").attr("x", 16).attr("y", 10).attr("fill", "currentColor").text("Training (fitted on)");
+    leg.append("circle").attr("cx", 6).attr("cy", 26).attr("r", 4.5).attr("fill", "none").attr("stroke", "var(--lab-accent)").attr("stroke-width", 1.8);
+    leg.append("text").attr("x", 16).attr("y", 30).attr("fill", "currentColor").text("Test (held back)");
+  }
+
+  const t = svg.transition().duration(dur).ease(d3.easeCubicOut);
+
+  gd.selectAll("circle").data(pts, d => d.unitid)
+    .join(
+      enter => enter.append("circle").attr("r", 0)
+        .attr("cx", d => x(d.pct_pell)).attr("cy", d => y(d.grad_rate_bach_6yr))
+        .call(e => e.append("title")),
+      update => update,
+      exit => exit.transition(t).attr("r", 0).remove()
+    )
+    .call(sel => sel.select("title").text(d => `${d.name}\n${d.set === "train" ? "Training" : "Test"} set\nPell ${d.pct_pell}%, completion ${d.grad_rate_bach_6yr}%`))
+    .transition(t)
+    .attr("r", d => pts.length > 400 ? 2.4 : 4.2)
+    .attr("fill", d => d.set === "train" ? "var(--lab-primary)" : "none")
+    .attr("fill-opacity", pts.length > 400 ? 0.45 : 0.75)
+    .attr("stroke", d => d.set === "train" ? "none" : "var(--lab-accent)")
+    .attr("stroke-width", pts.length > 400 ? 1.2 : 1.8);
+
+  gc.select("path.fit").transition(t).attr("d", line(inRange));
+  gc.select("path.extrap.lo").transition(t).attr("d", line(outRange.filter(d => d.seg === "lo")) || "");
+  gc.select("path.extrap.hi").transition(t).attr("d", line(outRange.filter(d => d.seg === "hi")) || "");
+
+  return svg.node();
+}
+```
+
+```{ojs}
+//| echo: false
+splitReadout = {
+  const {train, test, rmseTrain, rmseTest, baseline} = splitFit;
+  const f = d3.format(",.0f"), f1 = d3.format(".1f"), s1 = d3.format("+.1f");
+  const gap = rmseTest - rmseTrain;
+  const small = train.length < 60, wiggly = degree >= 8;
+  const hint = wiggly && small
+    ? "The wiggle threads the blue dots and the training error drops, but the orange dots do not move with it. That gap is overfitting, and only the test error sees it."
+    : wiggly
+      ? "With hundreds of training rows even a degree-8 polynomial cannot bend much. The two errors sit close together: flexibility is only dangerous when the data is thin."
+      : small
+        ? "A line on a handful of rows: the training error jumps around with each shuffle, and the test error tells the truth about the next institution."
+        : "The line does about as well on rows it never saw as on rows it fitted. That is what a model that has learned a pattern, rather than a sample, looks like.";
+  return html`<div class="lab-readout">
+    <div><span class="k">Training rows</span><span class="val primary">${f(train.length)}</span></div>
+    <div><span class="k">Test rows</span><span class="val accent">${f(test.length)}</span></div>
+    <div><span class="k">Training RMSE</span><span class="val primary">${f1(rmseTrain)}</span></div>
+    <div><span class="k">Test RMSE</span><span class="val accent">${Number.isFinite(rmseTest) ? f1(rmseTest) : "–"}</span></div>
+    <div><span class="k">Gap (test − train)</span><span class="val">${Number.isFinite(gap) ? s1(gap) : "–"}</span></div>
+    <div><span class="k">Guess the mean, test</span><span class="val">${Number.isFinite(baseline) ? f1(baseline) : "–"}</span></div>
+  </div>
+  <p class="lab-hint">${hint} RMSE is in percentage points of completion. The dashed tails show the curve outside the training range of Pell share.</p>`;
+}
+```
+
+:::
+
+Three things to try:
+
+1. **Thin data, flexible model.** Keep 40 institutions, set flexibility to Wiggle. The training error falls below the line's and the test error climbs above it, often past the error you would get by guessing the training mean. A model that is worse than the mean has learned the sample, not the pattern.
+2. **Shuffle.** Change the shuffle with 40 institutions and watch both numbers move by several points. The test set is a sample too, and a test error from 12 rows has a wide margin. That is the case for cross-validation below.
+3. **Feed it.** Switch to all institutions. Now the wiggle barely bends and the three errors nearly agree. Overfitting is a ratio of flexibility to data, and the cure is either less of the first or more of the second.
+
+## Do it {.beat data-beat="2 · Do it"}
+
+The frame is four-year institutions with a bachelor's cohort of at least 30 and a value in every column the models will use. The rule below is the one to keep: the split happens first, and nothing after it looks at the test rows until the very last line.
+
+::: {.panel-tabset group="language"}
+
+### R
+
+```{webr}
+#| autorun: true
+#| caption: Build the frame and split it
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+
+inst <- read.csv("data/institutions.csv")
+four <- inst |>
+  filter(level == "4-year", bach_cohort >= 30) |>
+  mutate(log_headcount = log10(headcount)) |>
+  select(unitid, name, control, pct_pell, net_price, stu_fac_ratio, log_headcount,
+         grad_rate_bach_4yr, grad_rate_bach_6yr) |>
+  na.omit()
+
+set.seed(2024)
+is_train <- sample(c(TRUE, FALSE), nrow(four), replace = TRUE, prob = c(0.7, 0.3))
+train <- four[is_train, ]
+test <- four[!is_train, ]
+
+rmse <- function(actual, predicted) sqrt(mean((actual - predicted)^2))
+c(training = nrow(train), test = nrow(test))
+```
+
+Three models, each fitted on `train` only and scored on both. The first "model" predicts the training mean for everyone; it is the floor any real model has to beat. Root mean squared error is in percentage points of completion, so a value of 15 means a typical miss of 15 points.
+
+```{webr}
+#| autorun: true
+#| caption: Score on rows the model has never seen
+m_mean <- lm(grad_rate_bach_6yr ~ 1, data = train)
+m_pell <- lm(grad_rate_bach_6yr ~ pct_pell, data = train)
+m_five <- lm(grad_rate_bach_6yr ~ pct_pell + net_price + stu_fac_ratio + log_headcount + control,
+             data = train)
+
+score <- function(model, label) {
+  data.frame(
+    model = label,
+    train_rmse = rmse(train$grad_rate_bach_6yr, predict(model, train)),
+    test_rmse = rmse(test$grad_rate_bach_6yr, predict(model, test))
+  )
+}
+
+bind_rows(score(m_mean, "Training mean"), score(m_pell, "Pell only"), score(m_five, "Five predictors")) |>
+  mutate(across(where(is.numeric), ~ round(.x, 2)))
+```
+
+With over a thousand training rows the two errors agree, and that agreement is the good news: nothing is being memorized. Overfitting needs thin data. Fit the same polynomial family on forty institutions and the story changes.
+
+```{webr}
+#| autorun: true
+#| caption: Overfitting on forty institutions
+set.seed(11)
+small_rows <- sample(nrow(four), 40)
+tiny <- four[small_rows, ]
+rest <- four[-small_rows, ]
+
+curve <- bind_rows(lapply(1:10, function(k) {
+  m <- lm(grad_rate_bach_6yr ~ poly(pct_pell, k), data = tiny)
+  data.frame(degree = k,
+             Training = rmse(tiny$grad_rate_bach_6yr, predict(m, tiny)),
+             Test = rmse(rest$grad_rate_bach_6yr, predict(m, rest)))
+})) |>
+  pivot_longer(-degree, names_to = "set", values_to = "rmse")
+
+ggplot(curve, aes(degree, rmse, color = set)) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 2.5) +
+  scale_x_continuous(breaks = 1:10) +
+  scale_color_manual(values = c(Training = "#2a78d6", Test = "#eb6834")) +
+  coord_cartesian(ylim = c(10, 50)) +
+  labs(x = "Polynomial degree", y = "RMSE (percentage points)", color = NULL,
+       title = "Training error only goes down. Test error turns around.") +
+  theme_minimal(base_size = 13) +
+  theme(legend.position = "top")
+```
+
+One split gives one test score, and the animation showed how much that score moves with the shuffle. k-fold cross-validation reuses the data: cut the rows into ten folds, hold each one out in turn, fit on the other nine, and average the ten held-out errors. No package needed; it is a loop.
+
+```{webr}
+#| autorun: true
+#| caption: Ten-fold cross-validation, by hand
+set.seed(1)
+fold <- sample(rep(1:10, length.out = nrow(four)))
+
+cv_rmse <- function(formula) {
+  errs <- numeric(10)
+  for (k in 1:10) {
+    fit <- lm(formula, data = four[fold != k, ])
+    errs[k] <- rmse(four$grad_rate_bach_6yr[fold == k], predict(fit, four[fold == k, ]))
+  }
+  errs
+}
+
+cv <- data.frame(
+  model = c("Pell only", "Five predictors"),
+  cv_rmse = c(mean(cv_rmse(grad_rate_bach_6yr ~ pct_pell)),
+              mean(cv_rmse(grad_rate_bach_6yr ~ pct_pell + net_price + stu_fac_ratio + log_headcount + control))),
+  fold_sd = c(sd(cv_rmse(grad_rate_bach_6yr ~ pct_pell)),
+              sd(cv_rmse(grad_rate_bach_6yr ~ pct_pell + net_price + stu_fac_ratio + log_headcount + control)))
+)
+mutate(cv, across(where(is.numeric), ~ round(.x, 2)))
+```
+
+The fold standard deviation is the honest margin on the score: two models whose cross-validated errors differ by less than it are not distinguishable on this data.
+
+Now the trap. The table also carries `grad_rate_bach_4yr`, the same cohort's completion two years earlier. Add it and the test error halves. The test set did its job, and the number is still a lie, because the four-year rate is the six-year rate in disguise: most of the same students, counted earlier. Whether that is leakage depends on the question. To forecast a cohort's six-year rate once its four-year rate is in, it is a fair predictor. To say what kind of institution completes students, or to predict for a cohort that just enrolled, it is the answer key.
+
+```{webr}
+#| autorun: true
+#| caption: Leakage passes the test set
+m_leak <- lm(grad_rate_bach_6yr ~ pct_pell + net_price + stu_fac_ratio + log_headcount + control +
+               grad_rate_bach_4yr, data = train)
+
+bind_rows(score(m_five, "Five predictors"), score(m_leak, "Plus the 4-year rate")) |>
+  mutate(across(where(is.numeric), ~ round(.x, 2)))
+```
+
+### Python
+
+```{pyodide}
+#| autorun: true
+#| caption: Build the frame and split it
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from sklearn.model_selection import train_test_split, KFold, cross_val_score
+from sklearn.linear_model import LinearRegression
+from sklearn.preprocessing import PolynomialFeatures, MinMaxScaler, StandardScaler
+from sklearn.pipeline import make_pipeline
+from sklearn.metrics import mean_squared_error
+
+inst = pd.read_csv("data/institutions.csv")
+cols = ["pct_pell", "net_price", "stu_fac_ratio", "log_headcount", "grad_rate_bach_4yr", "grad_rate_bach_6yr"]
+four = inst[(inst["level"] == "4-year") & (inst["bach_cohort"] >= 30)].copy()
+four["log_headcount"] = np.log10(four["headcount"])
+four = four.dropna(subset=cols)
+four = pd.concat([four, pd.get_dummies(four["control"], prefix="control", drop_first=True, dtype=float)], axis=1)
+
+train, test = train_test_split(four, test_size=0.3, random_state=2024)
+y_train, y_test = train["grad_rate_bach_6yr"], test["grad_rate_bach_6yr"]
+
+def rmse(actual, predicted):
+    return float(np.sqrt(mean_squared_error(actual, predicted)))
+
+pd.Series({"training": len(train), "test": len(test)})
+```
+
+```{pyodide}
+#| autorun: true
+#| caption: Score on rows the model has never seen
+five = ["pct_pell", "net_price", "stu_fac_ratio", "log_headcount", "control_Private nonprofit", "control_Public"]
+
+def score(features, label):
+    if features:
+        model = LinearRegression().fit(train[features], y_train)
+        pred_train, pred_test = model.predict(train[features]), model.predict(test[features])
+    else:
+        pred_train = np.full(len(train), y_train.mean())
+        pred_test = np.full(len(test), y_train.mean())
+    return {"model": label, "train_rmse": rmse(y_train, pred_train), "test_rmse": rmse(y_test, pred_test)}
+
+pd.DataFrame([score([], "Training mean"), score(["pct_pell"], "Pell only"), score(five, "Five predictors")]).round(2)
+```
+
+```{pyodide}
+#| autorun: true
+#| caption: Overfitting on forty institutions
+tiny = four.sample(40, random_state=11)
+rest = four.drop(tiny.index)
+
+rows = []
+for k in range(1, 11):
+    poly = make_pipeline(MinMaxScaler((-1, 1)), PolynomialFeatures(k), LinearRegression())
+    poly.fit(tiny[["pct_pell"]], tiny["grad_rate_bach_6yr"])
+    rows.append({"degree": k,
+                 "Training": rmse(tiny["grad_rate_bach_6yr"], poly.predict(tiny[["pct_pell"]])),
+                 "Test": rmse(rest["grad_rate_bach_6yr"], poly.predict(rest[["pct_pell"]]))})
+curve = pd.DataFrame(rows).set_index("degree")
+
+fig, ax = plt.subplots(figsize=(8, 4.5))
+ax.plot(curve.index, curve["Training"], marker="o", color="#2a78d6", label="Training")
+ax.plot(curve.index, curve["Test"], marker="o", color="#eb6834", label="Test")
+ax.set_xticks(range(1, 11))
+ax.set_ylim(10, 50)
+ax.set_xlabel("Polynomial degree")
+ax.set_ylabel("RMSE (percentage points)")
+ax.set_title("Training error only goes down. Test error turns around.", loc="left", fontsize=11)
+ax.legend(frameon=False)
+plt.show()
+```
+
+```{pyodide}
+#| autorun: true
+#| caption: Ten-fold cross-validation
+folds = KFold(n_splits=10, shuffle=True, random_state=1)
+y = four["grad_rate_bach_6yr"]
+
+def cv_rmse(features):
+    pipe = make_pipeline(StandardScaler(), LinearRegression())
+    scores = -cross_val_score(pipe, four[features], y, cv=folds, scoring="neg_root_mean_squared_error")
+    return {"cv_rmse": scores.mean(), "fold_sd": scores.std(ddof=1)}
+
+pd.DataFrame({"Pell only": cv_rmse(["pct_pell"]), "Five predictors": cv_rmse(five)}).T.round(2)
+```
+
+The pipeline matters more than it looks. The scaler inside it is refitted on the nine training folds each time, so the held-out fold's mean and spread never reach the model. Scaling or imputing the whole table first, then cross-validating, is the second kind of leakage: quieter than the first, and it flatters every score by a little.
+
+```{pyodide}
+#| autorun: true
+#| caption: Leakage passes the test set
+pd.DataFrame([score(five, "Five predictors"), score(five + ["grad_rate_bach_4yr"], "Plus the 4-year rate")]).round(2)
+```
+
+:::
+
+Two leaks, then. The loud one is a predictor that carries the outcome: a later measurement, a subtotal that includes it, a flag set after the fact. The quiet one is any step that looked at the test rows before the model did: scaling on the full table, imputing from the full table, choosing variables by looking at the full table. The split comes first, and everything downstream of it is fitted on the training side.
+
+## Practice {.beat data-beat="3 · Practice"}
+
+Fill in the blanks and press Run. The check reads the value your code returns, so make the last line the answer.
+
+```{webr}
+#| setup: true
+#| exercise:
+#|   - ml3_split
+#|   - ml3_cv
+inst <- read.csv("data/institutions.csv")
+four <- inst |>
+  dplyr::filter(level == "4-year", bach_cohort >= 30) |>
+  dplyr::mutate(log_headcount = log10(headcount)) |>
+  dplyr::select(unitid, name, control, pct_pell, net_price, stu_fac_ratio, log_headcount,
+                grad_rate_bach_4yr, grad_rate_bach_6yr) |>
+  na.omit()
+rmse <- function(actual, predicted) sqrt(mean((actual - predicted)^2))
+set.seed(7)
+train_rows <- sample(nrow(four), round(0.7 * nrow(four)))
+train <- four[train_rows, ]
+test <- four[-train_rows, ]
+set.seed(1)
+fold <- sample(rep(1:10, length.out = nrow(four)))
+```
+
+::: {.lab-exercise data-exercise="ml3_split"}
+
+### Fit on one side, score on the other
+
+`train` and `test` are a 70/30 split of `four`. Fit a model of six-year completion on Pell share and net price, then return its RMSE on the **test** rows. A single number.
+
+```{webr}
+#| exercise: ml3_split
+fit <- lm(grad_rate_bach_6yr ~ pct_pell + net_price, data = ______)
+rmse(test$grad_rate_bach_6yr, predict(fit, newdata = ______))
+```
+
+::: {.hint exercise="ml3_split"}
+::: {.callout-note collapse="false"}
+## Hint
+The model is fitted on `train`. The prediction, and the RMSE, use `test`. The two blanks are different tables.
+:::
+:::
+
+::: {.solution exercise="ml3_split"}
+::: {.callout-tip collapse="false"}
+## Solution
+```r
+fit <- lm(grad_rate_bach_6yr ~ pct_pell + net_price, data = train)
+rmse(test$grad_rate_bach_6yr, predict(fit, newdata = test))
+```
+About fourteen and a half points. Fitting on `test` would give a lower number and no information: the model would be scoring its own memory.
+:::
+:::
+
+```{webr}
+#| exercise: ml3_split
+#| check: true
+fit_ok <- lm(grad_rate_bach_6yr ~ pct_pell + net_price, data = train)
+expected <- rmse(test$grad_rate_bach_6yr, predict(fit_ok, newdata = test))
+on_train <- rmse(train$grad_rate_bach_6yr, predict(fit_ok, newdata = train))
+fit_test <- lm(grad_rate_bach_6yr ~ pct_pell + net_price, data = test)
+cheat <- rmse(test$grad_rate_bach_6yr, predict(fit_test, newdata = test))
+if (is.numeric(.result) && length(.result) == 1 && isTRUE(abs(.result - expected) < 1e-3)) {
+  list(correct = TRUE, message = sprintf("Correct: a test RMSE of %.2f points, from rows the model never saw.", expected))
+} else if (is.numeric(.result) && length(.result) == 1 && isTRUE(abs(.result - cheat) < 1e-3)) {
+  list(correct = FALSE, message = "That model was fitted on the test rows, so it is scoring its own memory. Fit on train.")
+} else if (is.numeric(.result) && length(.result) == 1 && isTRUE(abs(.result - on_train) < 1e-3)) {
+  list(correct = FALSE, message = "That is the training RMSE. Predict for test and compare with test$grad_rate_bach_6yr.")
+} else {
+  list(correct = FALSE, message = "Not yet. The answer is a single number: the RMSE of the model's predictions on test.")
+}
+```
+
+:::
+
+::: {.lab-exercise data-exercise="ml3_cv"}
+
+### Ten folds
+
+`fold` assigns each row of `four` to one of ten folds. Complete the loop so that each pass fits on every row **except** fold `k` and scores on fold `k` alone, then return the mean of the ten errors.
+
+```{webr}
+#| exercise: ml3_cv
+errs <- numeric(10)
+for (k in 1:10) {
+  fit <- lm(grad_rate_bach_6yr ~ pct_pell + net_price + stu_fac_ratio + log_headcount + control,
+            data = four[fold ______ k, ])
+  held <- four[fold ______ k, ]
+  errs[k] <- rmse(held$grad_rate_bach_6yr, predict(fit, held))
+}
+mean(errs)
+```
+
+::: {.hint exercise="ml3_cv"}
+::: {.callout-note collapse="false"}
+## Hint
+The training rows are the ones where `fold != k`. The held-out rows are the ones where `fold == k`. Fit on the first, score on the second.
+:::
+:::
+
+::: {.solution exercise="ml3_cv"}
+::: {.callout-tip collapse="false"}
+## Solution
+```r
+errs <- numeric(10)
+for (k in 1:10) {
+  fit <- lm(grad_rate_bach_6yr ~ pct_pell + net_price + stu_fac_ratio + log_headcount + control,
+            data = four[fold != k, ])
+  held <- four[fold == k, ]
+  errs[k] <- rmse(held$grad_rate_bach_6yr, predict(fit, held))
+}
+mean(errs)
+```
+Around thirteen and a third points, with the ten fold errors spread less than a point either side. Every row was a test row exactly once.
+:::
+:::
+
+```{webr}
+#| exercise: ml3_cv
+#| check: true
+f_cv <- grad_rate_bach_6yr ~ pct_pell + net_price + stu_fac_ratio + log_headcount + control
+ok_errs <- sapply(1:10, function(k) {
+  fit <- lm(f_cv, data = four[fold != k, ])
+  rmse(four$grad_rate_bach_6yr[fold == k], predict(fit, four[fold == k, ]))
+})
+swapped <- sapply(1:10, function(k) {
+  fit <- lm(f_cv, data = four[fold == k, ])
+  rmse(four$grad_rate_bach_6yr[fold == k], predict(fit, four[fold == k, ]))
+})
+if (is.numeric(.result) && length(.result) == 1 && isTRUE(abs(.result - mean(ok_errs)) < 1e-3)) {
+  list(correct = TRUE, message = sprintf("Correct: a cross-validated RMSE of %.2f points (fold sd %.2f).", mean(ok_errs), sd(ok_errs)))
+} else if (is.numeric(.result) && length(.result) == 1 && isTRUE(abs(.result - mean(swapped)) < 1e-3)) {
+  list(correct = FALSE, message = "Each pass fitted and scored on the same fold. Train on fold != k and hold out fold == k.")
+} else if (is.numeric(.result) && length(.result) == 10) {
+  list(correct = FALSE, message = "Those are the ten fold errors. Return their mean.")
+} else {
+  list(correct = FALSE, message = "Not yet. The answer is a single number, the mean of the ten held-out RMSEs.")
+}
+```
+
+:::
+
+::: {.lab-exercise data-exercise="ml3_py_split"}
+
+### The same split in Python
+
+`X` holds Pell share and net price and `y` holds six-year completion. Split 70/30 with `random_state=7`, fit on the training side, and return the RMSE on the test side as a float.
+
+```{pyodide}
+#| setup: true
+#| exercise: ml3_py_split
+import numpy as np
+import pandas as pd
+from sklearn.model_selection import train_test_split
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import mean_squared_error
+inst = pd.read_csv("data/institutions.csv")
+cols = ["pct_pell", "net_price", "stu_fac_ratio", "headcount", "grad_rate_bach_4yr", "grad_rate_bach_6yr"]
+four = inst[(inst["level"] == "4-year") & (inst["bach_cohort"] >= 30)].dropna(subset=cols)
+X = four[["pct_pell", "net_price"]]
+y = four["grad_rate_bach_6yr"]
+```
+
+```{pyodide}
+#| exercise: ml3_py_split
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=7)
+model = LinearRegression().fit(______, ______)
+float(np.sqrt(mean_squared_error(y_test, model.predict(______))))
+```
+
+::: {.hint exercise="ml3_py_split"}
+::: {.callout-note collapse="false"}
+## Hint
+`.fit()` takes the training features and the training outcome. `.predict()` takes the test features, and the result is compared against `y_test`.
+:::
+:::
+
+::: {.solution exercise="ml3_py_split"}
+::: {.callout-tip collapse="false"}
+## Solution
+```python
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=7)
+model = LinearRegression().fit(X_train, y_train)
+float(np.sqrt(mean_squared_error(y_test, model.predict(X_test))))
+```
+:::
+:::
+
+```{pyodide}
+#| exercise: ml3_py_split
+#| check: true
+import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import mean_squared_error
+_Xtr, _Xte, _ytr, _yte = train_test_split(X, y, test_size=0.3, random_state=7)
+_m = LinearRegression().fit(_Xtr, _ytr)
+_expected = float(np.sqrt(mean_squared_error(_yte, _m.predict(_Xte))))
+_on_train = float(np.sqrt(mean_squared_error(_ytr, _m.predict(_Xtr))))
+_cheat = float(np.sqrt(mean_squared_error(_yte, LinearRegression().fit(_Xte, _yte).predict(_Xte))))
+try:
+    val = float(result)
+except Exception:
+    val = None
+if val is not None and abs(val - _expected) < 1e-3:
+    feedback = {"correct": True, "message": f"Correct: a test RMSE of {_expected:.2f} points, the same split rule as the R exercise."}
+elif val is not None and abs(val - _cheat) < 1e-3:
+    feedback = {"correct": False, "message": "That model was fitted on the test rows. Fit on X_train and y_train."}
+elif val is not None and abs(val - _on_train) < 1e-3:
+    feedback = {"correct": False, "message": "That is the training RMSE. Predict on X_test and compare with y_test."}
+else:
+    feedback = {"correct": False, "message": "Not yet. Expected a single float: the RMSE on the test rows."}
+feedback
+```
+
+:::
+
+## In your stack {.beat data-beat="4 · In your stack"}
+
+A held-out score needs two things: a split rule that anyone can reproduce, and a fit that only sees one side of it. The `split` sheet in [ir-lab.xlsx](data/ir-lab.xlsx) does both with ordinary formulas.
+
+::: {.panel-tabset group="stack"}
+
+### Excel
+
+`RAND()` is the wrong split rule in a spreadsheet: it changes on every recalculation and the test set with it. The sheet uses the last digit of the IPEDS unit ID instead. It is arbitrary, fixed, and documented, which is everything a split needs. Rows are sorted so the training rows come first, and `LINEST` is pointed at that block alone.
+
+| Step | Formula |
+|---|---|
+| Split rule, column G | `=IF(MOD(A2,10)<7,"train","test")` |
+| Intercept, from training rows only | `=INDEX(LINEST(F2:F1143,D2:E1143,TRUE,TRUE),1,3)` |
+| Pell coefficient | `=INDEX(LINEST(F2:F1143,D2:E1143,TRUE,TRUE),1,2)` |
+| Net price coefficient | `=INDEX(LINEST(F2:F1143,D2:E1143,TRUE,TRUE),1,1)` |
+| Prediction, column H | `=$L$6+$L$7*D2+$L$8*E2` |
+| Training RMSE | `=SQRT(SUMXMY2(F2:F1143,H2:H1143)/COUNT(F2:F1143))` |
+| Test RMSE | `=SQRT(SUMXMY2(F1144:F1619,H1144:H1619)/COUNT(F1144:F1619))` |
+
+`LINEST` returns coefficients in reverse column order, so the last predictor comes first and the intercept last. `SUMXMY2` is the sum of squared differences between two ranges, which is the numerator of every RMSE.
+
+Two habits:
+
+- **Never let the model see the test block.** If a `LINEST` range, an `AVERAGE` used for imputation, or a `STANDARDIZE` range runs to the bottom of the sheet, the test rows have leaked in.
+- **Cross-validation is where Excel stops being the right tool.** Ten folds means ten `LINEST` calls on ten non-contiguous ranges. `MOD(A2,10)` gives the fold number for free; the loop belongs in R or Python.
+
+### Power BI
+
+::: {.ir-powerbi data-powerbi-page="regression" data-powerbi-title="Pell and completion"}
+**Interactive report: not connected yet.** Download the [Power BI project](data/ir-lab-powerbi.zip) to explore this lesson in Power BI Desktop. The embedded report will appear here once it is connected.
+:::
+
+The split is a calculated column, and because it is derived from the unit ID it survives every refresh:
+
+```dax
+Split = IF ( MOD ( institutions[unitid], 10 ) < 7, "train", "test" )
+```
+
+Recent versions of Power BI Desktop have `LINESTX`, which fits a least-squares model over a table expression. Restricting that table to the training rows is the whole discipline in one `FILTER`:
+
+```dax
+Test RMSE =
+VAR fit =
+    LINESTX (
+        FILTER (
+            institutions,
+            institutions[Split] = "train"
+                && institutions[level] = "4-year"
+                && institutions[bach_cohort] >= 30
+                && NOT ISBLANK ( institutions[pct_pell] )
+                && NOT ISBLANK ( institutions[net_price] )
+                && NOT ISBLANK ( institutions[grad_rate_bach_6yr] )
+        ),
+        institutions[grad_rate_bach_6yr],
+        institutions[pct_pell],
+        institutions[net_price]
+    )
+VAR b0 = MAXX ( fit, [Intercept] )
+VAR b1 = MAXX ( fit, [Slope1] )
+VAR b2 = MAXX ( fit, [Slope2] )
+RETURN
+    SQRT (
+        AVERAGEX (
+            FILTER (
+                institutions,
+                institutions[Split] = "test"
+                    && institutions[level] = "4-year"
+                    && institutions[bach_cohort] >= 30
+                    && NOT ISBLANK ( institutions[pct_pell] )
+                    && NOT ISBLANK ( institutions[net_price] )
+                    && NOT ISBLANK ( institutions[grad_rate_bach_6yr] )
+            ),
+            ( institutions[grad_rate_bach_6yr] - ( b0 + b1 * institutions[pct_pell] + b2 * institutions[net_price] ) ) ^ 2
+        )
+    )
+```
+
+Swap `"test"` for `"train"` in the second filter for the training RMSE, and put the two on cards side by side. On a Desktop without `LINESTX`, fit in R or Python, paste the coefficients into a small parameter table, and let a calculated column do the scoring; the split column and the RMSE measure work the same way.
+
+Watch the slicers. A measure that refits inside a filter context refits on whatever the visual is showing, so a slicer on `control` quietly changes the training set. Wrap the training filter in `ALL ( institutions )` if the fit should stay fixed while the page is sliced.
+
+:::
+
+## Before you leave
+
+::: {.takeaways}
+1. **Split first.** Training rows fit, test rows score, and nothing in between looks at the test side. The split is line two of the script, not line twenty.
+2. **A training score is not a score.** It only goes down as a model gets more flexible. The test score turns around, and where it turns is the model you want.
+3. **One split is one draw.** Cross-validate when the data is small or two models are close, and report the spread across folds with the mean.
+4. **Leakage is about the question, not the column.** A predictor that will not exist when the prediction is needed, or a preprocessing step that saw the test rows, makes the test score a lie the test set cannot catch.
+:::
+
+Next in this track: **Predict a rate**, on regularized regression and tree models for completion rates, compared on held-out data.

@@ -1,0 +1,616 @@
+---
+title: "Fewer dimensions"
+subtitle: "Principal components on the institution profile, and what each component means"
+webr:
+  packages:
+    - dplyr
+    - ggplot2
+    - tidyr
+  resources:
+    - data/institutions.csv
+pyodide:
+  packages:
+    - pandas
+    - matplotlib
+    - scikit-learn
+  resources:
+    - data/institutions.csv
+---
+
+{{< include ./_extensions/r-wasm/live/_knitr.qmd >}}
+
+```{r}
+#| include: false
+source("_common.R")
+prof <- institutions |>
+  filter(level == "4-year", control != "Private for-profit", bach_cohort >= 100) |>
+  mutate(log_headcount = log10(headcount)) |>
+  select(unitid, name, control, pct_pell, net_price, grad_rate_bach_6yr, retention_ft, stu_fac_ratio, log_headcount) |>
+  na.omit()
+pca <- prcomp(select(prof, -unitid, -name, -control), scale. = TRUE)
+share <- pca$sdev^2 / sum(pca$sdev^2)
+pc1 <- round(100 * share[1])
+pc2 <- round(100 * share[2])
+pc12 <- round(100 * sum(share[1:2]))
+r_pg <- round(cor(prof$pct_pell, prof$grad_rate_bach_6yr), 2)
+share_pg <- round(100 * (1 + abs(r_pg)) / 2)
+```
+
+::: {.lesson-eyebrow}
+Model · Lesson 5 of 6
+:::
+
+An institution profile has as many dimensions as you have variables. Six variables means six axes, and nobody can look at six axes at once. Principal component analysis finds new axes, each a weighted mix of the originals, ordered so the first one carries as much of the spread as a single axis can. Keep the first two and you have a map. This lesson builds that map for `r fmt(nrow(prof))` public and private nonprofit four-year institutions and, more importantly, works out what each axis on it means.
+
+**You will be able to:** explain a principal component as a direction of maximum variance, read a loading table, decide how many components to keep from a scree plot, and give each component a name in plain words.
+
+## Watch it move {.beat data-beat="1 · Watch it move"}
+
+Two standardized variables, one candidate axis. Drag the angle and the dots project onto the axis: each institution becomes a single number, its position along the line. The readout shows how much of the total spread that one number keeps. Then snap to the first principal component, the angle where that share is as high as it can be.
+
+::: {.lab-anim}
+
+```{ojs}
+//| echo: false
+inst = FileAttachment("data/institutions.csv").csv({typed: true})
+profRows = inst
+  .filter(d => d.level === "4-year" && d.control !== "Private for-profit" && d.bach_cohort >= 100 &&
+    ["pct_pell", "net_price", "grad_rate_bach_6yr", "retention_ft", "stu_fac_ratio", "headcount"].every(v => d[v] != null))
+  .map(d => ({...d, log_headcount: Math.log10(d.headcount)}))
+
+pairOptions = new Map([
+  ["Pell share and completion", ["pct_pell", "grad_rate_bach_6yr"]],
+  ["Retention and completion", ["retention_ft", "grad_rate_bach_6yr"]],
+  ["Student-faculty ratio and headcount (log)", ["stu_fac_ratio", "log_headcount"]],
+  ["Net price and Pell share", ["net_price", "pct_pell"]]
+])
+
+labelOf = ({
+  pct_pell: "Pell share", grad_rate_bach_6yr: "6-year completion", retention_ft: "Full-time retention",
+  stu_fac_ratio: "Student-faculty ratio", log_headcount: "Headcount (log)", net_price: "Net price"
+})
+
+zpair = {
+  const [vx, vy] = pair;
+  const mx = d3.mean(profRows, d => d[vx]), sx = d3.deviation(profRows, d => d[vx]);
+  const my = d3.mean(profRows, d => d[vy]), sy = d3.deviation(profRows, d => d[vy]);
+  return profRows.map(d => ({unitid: d.unitid, name: d.name, zx: (d[vx] - mx) / sx, zy: (d[vy] - my) / sy}));
+}
+
+pairR = d3.sum(zpair, d => d.zx * d.zy) / (zpair.length - 1)
+
+pc1Angle = pairR >= 0 ? 45 : 135
+```
+
+::: {.lab-controls}
+```{ojs}
+//| echo: false
+viewof pair = Inputs.select(pairOptions, {label: "Variables", value: ["pct_pell", "grad_rate_bach_6yr"]})
+viewof axismode = Inputs.radio(["Your axis", "First principal component"], {label: "Axis", value: "Your axis"})
+viewof angle = Inputs.range([0, 180], {label: "Angle (degrees)", step: 1, value: 0})
+viewof showDrops = Inputs.toggle({label: "Draw projections", value: true})
+```
+:::
+
+```{ojs}
+//| echo: false
+pcaNode = d3.create("svg").attr("class", "lab-svg").node()
+
+pcaPlot = {
+  const width = 860, height = 480, margin = {top: 20, right: 20, bottom: 48, left: 56};
+  const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const dur = reduce ? 0 : 450;
+  const theta = (axismode === "First principal component" ? pc1Angle : angle) * Math.PI / 180;
+  const ux = Math.cos(theta), uy = Math.sin(theta);
+  const lim = 4;
+  const plotW = width - margin.left - margin.right, plotH = height - margin.top - margin.bottom;
+  const side = Math.min(plotW, plotH);
+  const x = d3.scaleLinear().domain([-lim, lim]).range([margin.left + (plotW - side) / 2, margin.left + (plotW - side) / 2 + side]);
+  const y = d3.scaleLinear().domain([-lim, lim]).range([margin.top + side, margin.top]);
+  const clamp = v => Math.max(-lim, Math.min(lim, v));
+  const rows = zpair.map(d => {
+    const s = d.zx * ux + d.zy * uy;
+    return {...d, s, px: clamp(s * ux), py: clamp(s * uy)};
+  });
+  const dropSample = rows.filter((d, i) => i % 5 === 0);
+
+  const svg = d3.select(pcaNode);
+  svg.attr("viewBox", [0, 0, width, height]);
+  const layer = name => { let g = svg.select(`g.${name}`); if (g.empty()) g = svg.append("g").attr("class", name); return g; };
+  const gx = layer("axis"), gy = layer("axisy"), gdrop = layer("drops"), gd = layer("dots"), gaxis = layer("pcaxis"), gproj = layer("proj"), glab = layer("labels");
+
+  if (gx.selectAll("*").empty()) {
+    gx.attr("transform", `translate(0,${y(-lim)})`).call(d3.axisBottom(x).ticks(8).tickSizeOuter(0));
+    gy.attr("transform", `translate(${x(-lim)},0)`).call(d3.axisLeft(y).ticks(8).tickSizeOuter(0));
+    glab.append("text").attr("class", "axis-label xlab").attr("x", x(lim)).attr("y", height - 10).attr("text-anchor", "end");
+    glab.append("text").attr("class", "axis-label ylab").attr("transform", `translate(14,${margin.top}) rotate(-90)`).attr("text-anchor", "end");
+    gaxis.append("line").attr("class", "second").attr("stroke", "var(--lab-muted)").attr("stroke-width", 1).attr("stroke-dasharray", "3 4");
+    gaxis.append("line").attr("class", "first").attr("stroke-width", 3).attr("stroke-linecap", "round");
+  }
+  glab.select("text.xlab").text(`${labelOf[pair[0]]} (standardized)`);
+  glab.select("text.ylab").text(`${labelOf[pair[1]]} (standardized)`);
+
+  const t = svg.transition().duration(dur).ease(d3.easeCubicOut);
+
+  gd.selectAll("circle").data(rows, d => d.unitid)
+    .join(
+      enter => enter.append("circle").attr("r", 2.6).attr("fill", "var(--lab-primary)").attr("fill-opacity", 0.4)
+        .attr("cx", d => x(clamp(d.zx))).attr("cy", d => y(clamp(d.zy)))
+        .call(e => e.append("title")),
+      update => update,
+      exit => exit.remove()
+    )
+    .call(sel => sel.select("title").text(d => `${d.name}\nscore along axis ${d3.format("+.2f")(d.s)}`))
+    .transition(t).attr("cx", d => x(clamp(d.zx))).attr("cy", d => y(clamp(d.zy)));
+
+  gaxis.select("line.first").attr("stroke", axismode === "First principal component" ? "var(--lab-ink)" : "var(--lab-accent)")
+    .transition(t)
+    .attr("x1", x(-lim * ux)).attr("y1", y(-lim * uy)).attr("x2", x(lim * ux)).attr("y2", y(lim * uy));
+  gaxis.select("line.second").transition(t)
+    .attr("x1", x(lim * uy)).attr("y1", y(-lim * ux)).attr("x2", x(-lim * uy)).attr("y2", y(lim * ux));
+
+  gproj.selectAll("circle").data(rows, d => d.unitid)
+    .join(enter => enter.append("circle").attr("r", 1.8).attr("fill", "var(--lab-accent)").attr("fill-opacity", 0.7)
+      .attr("cx", d => x(d.px)).attr("cy", d => y(d.py)))
+    .transition(t).attr("cx", d => x(d.px)).attr("cy", d => y(d.py));
+
+  gdrop.selectAll("line").data(showDrops ? dropSample : [], d => d.unitid)
+    .join(
+      enter => enter.append("line").attr("stroke", "var(--lab-accent)").attr("stroke-opacity", 0.35).attr("stroke-width", 1)
+        .attr("x1", d => x(clamp(d.zx))).attr("y1", d => y(clamp(d.zy))).attr("x2", d => x(d.px)).attr("y2", d => y(d.py)),
+      update => update,
+      exit => exit.remove()
+    )
+    .transition(t).attr("x1", d => x(clamp(d.zx))).attr("y1", d => y(clamp(d.zy))).attr("x2", d => x(d.px)).attr("y2", d => y(d.py));
+
+  return svg.node();
+}
+```
+
+```{ojs}
+//| echo: false
+pcaReadout = {
+  const isPc = axismode === "First principal component";
+  const deg = isPc ? pc1Angle : angle;
+  const theta = deg * Math.PI / 180, ux = Math.cos(theta), uy = Math.sin(theta);
+  const scores = zpair.map(d => d.zx * ux + d.zy * uy);
+  const along = d3.variance(scores);
+  const total = d3.variance(zpair, d => d.zx) + d3.variance(zpair, d => d.zy);
+  const best = 1 + Math.abs(pairR);
+  const f = d3.format(".2f"), p = d3.format(".0%");
+  return html`<div class="lab-readout">
+    <div><span class="k">Angle</span><span class="val ${isPc ? "" : "accent"}">${deg}°</span></div>
+    <div><span class="k">Weights (x, y)</span><span class="val ${isPc ? "" : "accent"}">${f(ux)}, ${f(uy)}</span></div>
+    <div><span class="k">Variance along axis</span><span class="val">${f(along)}</span></div>
+    <div><span class="k">Share of total</span><span class="val">${p(along / total)}</span></div>
+    <div><span class="k">Best possible share</span><span class="val">${p(best / total)}</span></div>
+    <div><span class="k">Correlation</span><span class="val">${d3.format("+.2f")(pairR)}</span></div>
+  </div>
+  <p class="lab-hint">${isPc
+    ? `With two standardized variables the first component always sits at ${pc1Angle}°, halfway between the axes, and keeps (1 + |r|) / 2 of the spread. The dashed line is the second component: everything the first one left out.`
+    : `The variance of the projected scores is what PCA maximizes. Move toward ${pc1Angle}° and watch it climb to ${f(best)} of the ${f(total)} total.`}</p>`;
+}
+```
+
+:::
+
+Three things to try:
+
+1. **Angle 0 and angle 90.** At 0° the axis is the horizontal variable and the score is just its z-score; at 90° it is the vertical one. Each keeps exactly half of the total spread, because each standardized variable has variance 1.
+2. **Halfway.** Move to 135° with Pell share and completion. The weights are equal and opposite: the score is "high completion and low Pell" against "low completion and high Pell". That one number keeps `r share_pg`% of the spread of the two, because they are correlated at `r r_pg`. The stronger the correlation, the more a single axis can hold.
+3. **A weak pair.** Switch to net price and Pell share, then to student-faculty ratio and headcount. The best share drops toward 50%: when two variables barely agree, no single axis summarizes them, and PCA says so.
+
+## Do it {.beat data-beat="2 · Do it"}
+
+Six variables now: Pell share, net price, completion, retention, student-faculty ratio, and headcount on a log scale. Standardizing first is not optional. PCA chases variance, and unscaled net price in dollars would be the whole first component by itself.
+
+::: {.panel-tabset group="language"}
+
+### R
+
+```{webr}
+#| autorun: true
+#| caption: Build the profile and fit
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+
+inst <- read.csv("data/institutions.csv")
+prof <- inst |>
+  filter(level == "4-year", control != "Private for-profit", bach_cohort >= 100) |>
+  mutate(log_headcount = log10(headcount)) |>
+  select(unitid, name, control, pct_pell, net_price, grad_rate_bach_6yr,
+         retention_ft, stu_fac_ratio, log_headcount) |>
+  na.omit()
+
+pca <- prcomp(select(prof, -unitid, -name, -control), scale. = TRUE)
+summary(pca)
+```
+
+Each component's share of variance is its standard deviation squared over the total, which for six standardized variables is six. The scree plot is that table as bars. Look for the point where the bars go flat: the components after it are mostly noise.
+
+```{webr}
+#| autorun: true
+#| caption: Scree plot
+scree <- data.frame(component = 1:6, share = pca$sdev^2 / sum(pca$sdev^2)) |>
+  mutate(cumulative = cumsum(share))
+
+ggplot(scree, aes(component, share)) +
+  geom_col(fill = "#2a78d6") +
+  geom_line(aes(y = cumulative), color = "#eb6834") +
+  geom_point(aes(y = cumulative), color = "#eb6834", size = 2.5) +
+  scale_x_continuous(breaks = 1:6) +
+  scale_y_continuous(labels = scales::percent) +
+  labs(x = "Principal component", y = "Share of variance", title = "Bars: each component. Line: cumulative.") +
+  theme_minimal(base_size = 13)
+```
+
+The loadings are the recipe for each component: the weight on every original variable. A component means whatever its heaviest loadings say it means. Signs are arbitrary, so read a component by which variables pull together and which pull apart.
+
+```{webr}
+#| autorun: true
+#| caption: Loadings for the first three components
+round(pca$rotation[, 1:3], 2)
+```
+
+The scores put every institution on the new axes. Plotting the first two is the map. The arrows are the loadings drawn onto it: an institution far out along an arrow is high on that variable.
+
+```{webr}
+#| autorun: true
+#| caption: The map, with loading arrows
+scores <- bind_cols(select(prof, name, control), as.data.frame(pca$x[, 1:2]))
+arrows <- as.data.frame(pca$rotation[, 1:2] * 4) |>
+  mutate(variable = rownames(pca$rotation))
+
+ggplot(scores, aes(PC1, PC2)) +
+  geom_point(aes(color = control), alpha = 0.45) +
+  geom_segment(data = arrows, aes(x = 0, y = 0, xend = PC1, yend = PC2),
+               arrow = arrow(length = unit(0.02, "npc")), color = "#14213d", linewidth = 0.7) +
+  geom_text(data = arrows, aes(label = variable), color = "#14213d", size = 3.3, vjust = -0.6) +
+  scale_color_manual(values = c("#eb6834", "#2a78d6")) +
+  coord_equal() +
+  labs(x = "PC1", y = "PC2", color = NULL) +
+  theme_minimal(base_size = 13) +
+  theme(legend.position = "top")
+```
+
+Naming a component is easier with examples. The institutions at each end of an axis tell you what it measures better than the loadings do.
+
+```{webr}
+#| autorun: true
+#| caption: The ends of each axis
+bind_rows(
+  scores |> slice_min(PC1, n = 4) |> mutate(end = "PC1 low"),
+  scores |> slice_max(PC1, n = 4) |> mutate(end = "PC1 high"),
+  scores |> slice_min(PC2, n = 4) |> mutate(end = "PC2 low"),
+  scores |> slice_max(PC2, n = 4) |> mutate(end = "PC2 high")
+) |>
+  select(end, name, control, PC1, PC2) |>
+  mutate(across(c(PC1, PC2), ~ round(.x, 2)))
+```
+
+### Python
+
+```{pyodide}
+#| autorun: true
+#| caption: Build the profile and fit
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA
+
+inst = pd.read_csv("data/institutions.csv")
+cols = ["pct_pell", "net_price", "grad_rate_bach_6yr", "retention_ft", "stu_fac_ratio", "log_headcount"]
+prof = inst[(inst["level"] == "4-year") & (inst["control"] != "Private for-profit") & (inst["bach_cohort"] >= 100)].copy()
+prof["log_headcount"] = np.log10(prof["headcount"])
+prof = prof.dropna(subset=cols)
+
+z = StandardScaler().fit_transform(prof[cols])
+pca = PCA().fit(z)
+pd.DataFrame({
+    "share": pca.explained_variance_ratio_,
+    "cumulative": pca.explained_variance_ratio_.cumsum(),
+}, index=[f"PC{i + 1}" for i in range(6)]).round(3)
+```
+
+```{pyodide}
+#| autorun: true
+#| caption: Scree plot
+share = pca.explained_variance_ratio_
+
+fig, ax = plt.subplots(figsize=(8, 4.5))
+ax.bar(range(1, 7), share, color="#2a78d6")
+ax.plot(range(1, 7), share.cumsum(), marker="o", color="#eb6834")
+ax.set_xlabel("Principal component")
+ax.set_ylabel("Share of variance")
+ax.set_title("Bars: each component. Line: cumulative.", loc="left", fontsize=11)
+plt.show()
+```
+
+```{pyodide}
+#| autorun: true
+#| caption: Loadings for the first three components
+loadings = pd.DataFrame(pca.components_.T, index=cols, columns=[f"PC{i + 1}" for i in range(6)])
+loadings.iloc[:, :3].round(2)
+```
+
+```{pyodide}
+#| autorun: true
+#| caption: The map, with loading arrows
+scores = pd.DataFrame(pca.transform(z)[:, :2], columns=["PC1", "PC2"], index=prof.index)
+scores["control"] = prof["control"]
+
+fig, ax = plt.subplots(figsize=(8, 6.5))
+for ctrl, color in [("Public", "#2a78d6"), ("Private nonprofit", "#eb6834")]:
+    sub = scores[scores["control"] == ctrl]
+    ax.scatter(sub["PC1"], sub["PC2"], s=10, alpha=0.45, color=color, label=ctrl)
+for var in cols:
+    lx, ly = loadings.loc[var, "PC1"] * 4, loadings.loc[var, "PC2"] * 4
+    ax.annotate("", xy=(lx, ly), xytext=(0, 0), arrowprops=dict(arrowstyle="->", color="#14213d", lw=1.2))
+    ax.text(lx, ly, var, fontsize=9, color="#14213d", ha="center", va="bottom")
+ax.set_xlabel("PC1")
+ax.set_ylabel("PC2")
+ax.set_aspect("equal")
+ax.legend(frameon=False, loc="upper left")
+plt.show()
+```
+
+```{pyodide}
+#| autorun: true
+#| caption: The ends of each axis
+scores["name"] = prof["name"]
+pd.concat([
+    scores.nsmallest(4, "PC1").assign(end="PC1 low"),
+    scores.nlargest(4, "PC1").assign(end="PC1 high"),
+    scores.nsmallest(4, "PC2").assign(end="PC2 low"),
+    scores.nlargest(4, "PC2").assign(end="PC2 high"),
+])[["end", "name", "control", "PC1", "PC2"]].round(2)
+```
+
+:::
+
+Read the two tables together. The first component pairs high completion, retention, and net price with low Pell share: one end is well-resourced, selective, and expensive, the other is open-access and low-priced. Call it **resources and outcomes**. The second component is carried by headcount and student-faculty ratio: **scale**. Large publics sit at one end and small conservatories and art colleges at the other. Two numbers per institution, `r pc12`% of the spread of six.
+
+## Practice {.beat data-beat="3 · Practice"}
+
+Fill in the blanks and press Run. The check reads the value your code returns, so make the last line the answer.
+
+```{webr}
+#| setup: true
+#| exercise:
+#|   - ml2_cum
+#|   - ml2_load
+inst <- read.csv("data/institutions.csv")
+prof <- inst |>
+  dplyr::filter(level == "4-year", control != "Private for-profit", bach_cohort >= 100) |>
+  dplyr::mutate(log_headcount = log10(headcount)) |>
+  dplyr::select(pct_pell, net_price, grad_rate_bach_6yr, retention_ft, stu_fac_ratio, log_headcount) |>
+  na.omit()
+pca <- prcomp(prof, scale. = TRUE)
+```
+
+::: {.lab-exercise data-exercise="ml2_cum"}
+
+### How much do two components keep?
+
+`pca` is the six-variable fit from above. Return the **cumulative** share of variance carried by the first two components together: a single number between 0 and 1.
+
+```{webr}
+#| exercise: ml2_cum
+cumsum(pca$sdev^2 / sum(pca$sdev^2))[______]
+```
+
+::: {.hint exercise="ml2_cum"}
+::: {.callout-note collapse="false"}
+## Hint
+`pca$sdev^2` is the variance of each component. Dividing by the total and taking `cumsum()` gives the running share; you want its second element.
+:::
+:::
+
+::: {.solution exercise="ml2_cum"}
+::: {.callout-tip collapse="false"}
+## Solution
+```r
+cumsum(pca$sdev^2 / sum(pca$sdev^2))[2]
+```
+About three quarters. Two numbers per institution stand in for six with a quarter of the detail lost, and the scree plot says most of what is lost is noise.
+:::
+:::
+
+```{webr}
+#| exercise: ml2_cum
+#| check: true
+shares <- cumsum(pca$sdev^2 / sum(pca$sdev^2))
+if (is.numeric(.result) && length(.result) == 1 && isTRUE(abs(.result - shares[2]) < 1e-4)) {
+  list(correct = TRUE, message = sprintf("Correct: %.1f%% of the variance in two components.", 100 * shares[2]))
+} else if (is.numeric(.result) && length(.result) == 1 && isTRUE(abs(.result - shares[1]) < 1e-4)) {
+  list(correct = FALSE, message = "That is the first component alone. You want the cumulative share through the second.")
+} else if (is.numeric(.result) && length(.result) > 1) {
+  list(correct = FALSE, message = "Pick one element of the cumulative vector: the second.")
+} else {
+  list(correct = FALSE, message = "Not yet. The answer is a single number between 0 and 1.")
+}
+```
+
+:::
+
+::: {.lab-exercise data-exercise="ml2_load"}
+
+### Which variable drives the first component?
+
+Return the **name** of the variable with the largest loading on PC1 in absolute value. The loadings are in `pca$rotation`, one column per component.
+
+```{webr}
+#| exercise: ml2_load
+names(which.max(abs(pca$rotation[, ______])))
+```
+
+::: {.hint exercise="ml2_load"}
+::: {.callout-note collapse="false"}
+## Hint
+`pca$rotation[, 1]` is the first column, PC1, as a named vector. `abs()` ignores the sign, `which.max()` finds the largest, and `names()` reads off the variable.
+:::
+:::
+
+::: {.solution exercise="ml2_load"}
+::: {.callout-tip collapse="false"}
+## Solution
+```r
+names(which.max(abs(pca$rotation[, 1])))
+```
+Six-year completion, with retention and Pell share close behind. That is why the first axis reads as an outcomes-and-resources axis rather than a size axis.
+:::
+:::
+
+```{webr}
+#| exercise: ml2_load
+#| check: true
+expected <- names(which.max(abs(pca$rotation[, 1])))
+second <- names(which.max(abs(pca$rotation[, 2])))
+if (is.character(.result) && length(.result) == 1 && identical(.result, expected)) {
+  list(correct = TRUE, message = sprintf("Correct: %s has the heaviest loading on PC1.", expected))
+} else if (is.character(.result) && length(.result) == 1 && identical(.result, second)) {
+  list(correct = FALSE, message = "That is the heaviest variable on PC2, the scale axis. Use the first column.")
+} else if (is.numeric(.result)) {
+  list(correct = FALSE, message = "That is a position or a loading, not a name. Wrap the result in names().")
+} else {
+  list(correct = FALSE, message = "Not yet. The answer is one variable name as a string.")
+}
+```
+
+:::
+
+::: {.lab-exercise data-exercise="ml2_py_fit"}
+
+### The first component in Python
+
+`z` holds the standardized six-variable profile. Fit a PCA and return the share of variance carried by the first component as a single number.
+
+```{pyodide}
+#| setup: true
+#| exercise: ml2_py_fit
+import numpy as np
+import pandas as pd
+from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA
+inst = pd.read_csv("data/institutions.csv")
+cols = ["pct_pell", "net_price", "grad_rate_bach_6yr", "retention_ft", "stu_fac_ratio", "log_headcount"]
+prof = inst[(inst["level"] == "4-year") & (inst["control"] != "Private for-profit") & (inst["bach_cohort"] >= 100)].copy()
+prof["log_headcount"] = np.log10(prof["headcount"])
+prof = prof.dropna(subset=cols)
+z = StandardScaler().fit_transform(prof[cols])
+```
+
+```{pyodide}
+#| exercise: ml2_py_fit
+pca = PCA().fit(z)
+float(pca.______[0])
+```
+
+::: {.hint exercise="ml2_py_fit"}
+::: {.callout-note collapse="false"}
+## Hint
+After `.fit()`, the share of variance per component is in the `explained_variance_ratio_` attribute. Index 0 is the first component.
+:::
+:::
+
+::: {.solution exercise="ml2_py_fit"}
+::: {.callout-tip collapse="false"}
+## Solution
+```python
+pca = PCA().fit(z)
+float(pca.explained_variance_ratio_[0])
+```
+:::
+:::
+
+```{pyodide}
+#| exercise: ml2_py_fit
+#| check: true
+from sklearn.decomposition import PCA
+_ratio = PCA().fit(z).explained_variance_ratio_
+try:
+    val = float(result)
+except Exception:
+    val = None
+if val is not None and abs(val - _ratio[0]) < 1e-4:
+    feedback = {"correct": True, "message": f"Correct: {100 * _ratio[0]:.1f}% of the variance on the first component, the same as prcomp() in R."}
+elif val is not None and abs(val - _ratio[0] * z.shape[1]) < 1e-3:
+    feedback = {"correct": False, "message": "That is the variance itself (explained_variance_). You want the ratio."}
+else:
+    feedback = {"correct": False, "message": "Not yet. Expected a single number between 0 and 1."}
+feedback
+```
+
+:::
+
+## In your stack {.beat data-beat="4 · In your stack"}
+
+Neither Excel nor DAX has PCA built in, but the arithmetic behind it is small enough to lay out. The `pca` sheet in [ir-lab.xlsx](data/ir-lab.xlsx) works the two-variable case exactly and the six-variable first component by iteration.
+
+::: {.panel-tabset group="stack"}
+
+### Excel
+
+**Two variables** need no iteration at all. With both standardized, the correlation matrix is 2 x 2 with the correlation off the diagonal, and its eigenvalues are one plus and one minus its absolute value. Everything in the animation reduces to three formulas:
+
+| Quantity | Formula |
+|---|---|
+| Correlation | `=CORREL(Institutions_pell, Institutions_completion)` |
+| Share on the first component | `=(1+ABS(r))/2` |
+| First-component score for a row | `=(z_pell - z_completion)/SQRT(2)` when the correlation is negative, `=(z_pell + z_completion)/SQRT(2)` when it is positive |
+
+**Six variables** need the largest eigenvector of a 6 x 6 correlation matrix, and Excel has no eigen function. The sheet finds it by power iteration: start from any vector, multiply by the correlation matrix, rescale to unit length, and repeat. Each round pulls the vector toward the first component, and eight rounds are enough here.
+
+1. Standardize each variable: `=STANDARDIZE(D2, AVERAGE(D$2:D$1449), STDEV.S(D$2:D$1449))`.
+2. Build the correlation matrix with `CORREL` on each pair of columns.
+3. Start with `v0 = 1/SQRT(6)` in every position.
+4. Multiply: element `i` of the next vector is `=SUMPRODUCT(<column i of the matrix>, <current vector>)`. The matrix is symmetric, so column `i` and row `i` are the same.
+5. Normalize: divide by `=SQRT(SUMPRODUCT(w, w))`. That length is also the eigenvalue, and the eigenvalue over 6 is the share of variance.
+6. Score every institution with `=MMULT(J2:O2, <final vector>)`.
+
+The second component needs one more step, subtracting the first from the matrix before iterating again. At that point the Real Statistics or XLSTAT add-ins, or the R tab, are the honest answer.
+
+### Power BI
+
+::: {.ir-powerbi data-powerbi-page="peers" data-powerbi-title="Peer groups"}
+**Interactive report: not connected yet.** Download the [Power BI project](data/ir-lab-powerbi.zip) to explore this lesson in Power BI Desktop. The embedded report will appear here once it is connected.
+:::
+
+DAX cannot find eigenvectors, so the fit happens in R or Python and Power BI does the scoring and the map. Fit once, copy the loadings and the standardization constants into a small table with Enter Data, and score each institution with a calculated column. The standardization uses the fit population's means and standard deviations, not the current filter's, so the scores stay stable when a slicer changes:
+
+```dax
+PC1 Score =
+VAR z_pell = DIVIDE ( institutions[pct_pell] - 33.1, 15.3 )
+VAR z_price = DIVIDE ( institutions[net_price] - 21349, 9220 )
+VAR z_grad = DIVIDE ( institutions[grad_rate_bach_6yr] - 56.7, 18.6 )
+VAR z_ret = DIVIDE ( institutions[retention_ft] - 75.7, 11.7 )
+VAR z_sfr = DIVIDE ( institutions[stu_fac_ratio] - 13.9, 4.24 )
+VAR z_size = DIVIDE ( LOG ( institutions[headcount], 10 ) - 3.64, 0.51 )
+RETURN
+    IF (
+        ISBLANK ( institutions[pct_pell] ) || ISBLANK ( institutions[net_price] )
+            || ISBLANK ( institutions[grad_rate_bach_6yr] ) || ISBLANK ( institutions[retention_ft] )
+            || ISBLANK ( institutions[stu_fac_ratio] ) || ISBLANK ( institutions[headcount] ),
+        BLANK (),
+        -0.458 * z_pell + 0.422 * z_price + 0.542 * z_grad + 0.482 * z_ret - 0.269 * z_sfr + 0.117 * z_size
+    )
+```
+
+The constants above are rounded from the R fit; the R tab prints the exact loadings, and the means and standard deviations come from the `pca` sheet. A second column with the PC2 loadings gives the other axis. A scatter chart with `PC1 Score` on X, `PC2 Score` on Y, and `unitid` in Values is the map, and a slicer on `control` or `size` shows which corner of it each group lives in.
+
+For a model that refits on refresh, the **Python visual** runs the `Do it` code inside the report. The Decomposition tree visual, despite the name, is a drill-down and not a dimension reduction.
+
+:::
+
+## Before you leave
+
+::: {.takeaways}
+1. **A component is a direction, and its share is how much spread lies along it.** The animation's rotating axis is the whole idea; six dimensions just means you cannot draw it.
+2. **Standardize first, always.** PCA on raw dollars and percentages is PCA on dollars.
+3. **Read components by their loadings and name them by their ends.** "Resources and outcomes" and "scale" are names. "PC1" and "PC2" are not.
+4. **Keep components, not variance targets.** Two components at `r pc12`% with a clear meaning beat four at 92% that nobody can explain.
+:::
+
+Next in this track: **Next fall**, forecasting enrollment from a short history without fooling yourself.

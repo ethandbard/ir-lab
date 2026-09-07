@@ -1,0 +1,606 @@
+---
+title: "Missing on purpose"
+subtitle: "Which blanks are structural, which are unreported, and who disappears when you drop them"
+webr:
+  packages:
+    - dplyr
+    - ggplot2
+    - tidyr
+  resources:
+    - data/institutions.csv
+pyodide:
+  packages:
+    - pandas
+    - matplotlib
+  resources:
+    - data/institutions.csv
+---
+
+{{< include ./_extensions/r-wasm/live/_knitr.qmd >}}
+
+```{r}
+#| include: false
+source("_common.R")
+n_all <- nrow(institutions)
+n_complete <- sum(complete.cases(institutions))
+four <- filter(institutions, level == "4-year")
+n_four <- nrow(four)
+n_four_complete <- sum(complete.cases(four[, c("pct_pell", "net_price", "grad_rate_bach_6yr", "retention_ft", "stu_fac_ratio")]))
+sfr_missing <- filter(four, is.na(stu_fac_ratio))
+sfr_reported <- filter(four, !is.na(stu_fac_ratio))
+hc_missing <- fmt(median(sfr_missing$headcount, na.rm = TRUE))
+hc_reported <- fmt(median(sfr_reported$headcount, na.rm = TRUE))
+pct_missing_under1k <- round(100 * mean(sfr_missing$size == "Under 1,000", na.rm = TRUE))
+```
+
+::: {.lesson-eyebrow}
+Explore · Lesson 2 of 6
+:::
+
+Of the `r fmt(n_all)` institutions in the table, `r n_complete` have a value in every column. That is not a data-quality failure. Most blanks in IPEDS are there because a question did not apply: a community college has no bachelor's cohort, a graduate school has no undergraduates. The rest are institutions that did not report, and they are not a random sample. This lesson is about telling the two apart before a blank cell decides your result for you.
+
+**You will be able to:** count and chart missingness, separate structural blanks from unreported values, describe who is dropped by a complete-case filter, and say why "replace blanks with zero" is the worst option.
+
+## Watch it move {.beat data-beat="1 · Watch it move"}
+
+Each dot is one institution, spread out by headcount. Tick the variables your analysis needs. Institutions with a blank in any of them turn grey: they are the rows a complete-case filter throws away. Watch where the grey collects.
+
+::: {.lab-anim}
+
+```{ojs}
+//| echo: false
+inst = FileAttachment("data/institutions.csv").csv({typed: true})
+plotRows = inst.filter(d => d.headcount != null && d.headcount > 0)
+
+needOptions = new Map([
+  ["6-year bachelor's completion", "grad_rate_bach_6yr"],
+  ["150% completion, all students", "grad_rate_150"],
+  ["Full-time retention", "retention_ft"],
+  ["Student-faculty ratio", "stu_fac_ratio"],
+  ["Percent Pell", "pct_pell"],
+  ["Net price", "net_price"],
+  ["Net price, income over $110k", "net_price_110k_plus"],
+  ["Undergraduate headcount", "undergrad"],
+  ["Carnegie classification", "carnegie"]
+])
+
+groupOptions = new Map([
+  ["Level", "level"],
+  ["Control", "control"],
+  ["Size", "size"]
+])
+
+groupOrder = ({
+  level: ["4-year", "2-year", "Less than 2-year"],
+  control: ["Public", "Private nonprofit", "Private for-profit"],
+  size: ["Under 1,000", "1,000-4,999", "5,000-9,999", "10,000-19,999", "20,000 and above"]
+})
+```
+
+::: {.lab-controls}
+```{ojs}
+//| echo: false
+viewof groupVar = Inputs.radio(groupOptions, {label: "Rows", value: "level"})
+viewof needed = Inputs.checkbox(needOptions, {label: "Require a value for", value: ["grad_rate_bach_6yr"]})
+```
+:::
+
+```{ojs}
+//| echo: false
+missNode = d3.create("svg").attr("class", "lab-svg").node()
+
+missPlot = {
+  const width = 860, rowH = 58, margin = {top: 8, right: 16, bottom: 36, left: 170};
+  const groups = groupOrder[groupVar];
+  const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const dur = reduce ? 0 : 700;
+  const rows = plotRows.filter(d => groups.includes(d[groupVar]));
+  const complete = d => needed.every(v => d[v] != null && d[v] !== "");
+  const height = margin.top + rowH * groups.length + margin.bottom;
+  const x = d3.scaleLog().domain([10, 200000]).range([margin.left, width - margin.right]).clamp(true);
+  const y = d3.scalePoint().domain(groups).range([margin.top + rowH / 2, margin.top + rowH * groups.length - rowH / 2]);
+  const jitter = d3.randomNormal.source(d3.randomLcg(7))(0, rowH * 0.18);
+  const jit = new Map(rows.map(d => [d.unitid, Math.max(-rowH * 0.4, Math.min(rowH * 0.4, jitter()))]));
+  const kept = d3.rollup(rows, v => d3.sum(v, complete), d => d[groupVar]);
+  const total = d3.rollup(rows, v => v.length, d => d[groupVar]);
+
+  const svg = d3.select(missNode);
+  svg.attr("viewBox", [0, 0, width, height]);
+  let axis = svg.select("g.axis");
+  if (axis.empty()) axis = svg.append("g").attr("class", "axis");
+  let labels = svg.select("g.labels");
+  if (labels.empty()) labels = svg.append("g").attr("class", "labels");
+  let dots = svg.select("g.dots");
+  if (dots.empty()) dots = svg.append("g").attr("class", "dots");
+
+  axis.attr("transform", `translate(0,${height - margin.bottom})`)
+    .call(d3.axisBottom(x).ticks(6, "~s").tickSizeOuter(0));
+  axis.selectAll("text.axis-title").data([0]).join("text").attr("class", "axis-title")
+    .attr("x", width - margin.right).attr("y", 32).attr("text-anchor", "end")
+    .attr("font-size", 12).attr("fill", "currentColor").text("12-month headcount (log scale)");
+
+  const t = svg.transition().duration(dur).ease(d3.easeCubicInOut);
+
+  labels.selectAll("g.row").data(groups, d => d)
+    .join(enter => {
+      const g = enter.append("g").attr("class", "row");
+      g.append("text").attr("class", "name").attr("font-size", 13).attr("font-weight", 600).attr("fill", "var(--lab-ink)");
+      g.append("text").attr("class", "count").attr("font-size", 11).attr("fill", "var(--lab-muted)");
+      return g;
+    })
+    .attr("transform", d => `translate(${margin.left - 12},${y(d)})`)
+    .call(g => {
+      g.select("text.name").attr("text-anchor", "end").attr("dy", "-0.2em").text(d => d);
+      g.select("text.count").attr("text-anchor", "end").attr("dy", "1.05em")
+        .text(d => `${d3.format(",")(kept.get(d) || 0)} of ${d3.format(",")(total.get(d))} kept`);
+    });
+
+  dots.selectAll("circle").data(rows, d => d.unitid)
+    .join(
+      enter => enter.append("circle")
+        .attr("r", 0)
+        .attr("cx", d => x(d.headcount))
+        .attr("cy", d => y(d[groupVar]) + jit.get(d.unitid))
+        .call(e => e.append("title")),
+      update => update,
+      exit => exit.transition(t).attr("r", 0).remove()
+    )
+    .call(sel => sel.select("title").text(d => {
+      const gaps = needed.filter(v => d[v] == null || d[v] === "");
+      return `${d.name}\n${d3.format(",")(d.headcount)} students\n${gaps.length ? "Missing: " + gaps.join(", ") : "Complete on the selected variables"}`;
+    }))
+    .transition(t).delay((d, i) => reduce ? 0 : (i % 40) * 5)
+    .attr("r", d => complete(d) ? 2.4 : 1.8)
+    .attr("cx", d => x(d.headcount))
+    .attr("cy", d => y(d[groupVar]) + jit.get(d.unitid))
+    .attr("fill", d => complete(d) ? "var(--lab-primary)" : "#b0b7bf")
+    .attr("fill-opacity", d => complete(d) ? 0.6 : 0.45);
+
+  return svg.node();
+}
+```
+
+```{ojs}
+//| echo: false
+missReadout = {
+  const complete = d => needed.every(v => d[v] != null && d[v] !== "");
+  const rows = plotRows;
+  const keptRows = rows.filter(complete), dropped = rows.filter(d => !complete(d));
+  const medKept = d3.median(keptRows, d => d.headcount), medDropped = d3.median(dropped, d => d.headcount);
+  const smallDropped = d3.mean(dropped, d => d.headcount < 1000);
+  const f = d3.format(",.0f"), p = d3.format(".0%");
+  return html`<div class="lab-readout">
+    <div><span class="k">Kept</span><span class="val primary">${f(keptRows.length)}</span></div>
+    <div><span class="k">Dropped</span><span class="val accent">${f(dropped.length)}</span></div>
+    <div><span class="k">Share dropped</span><span class="val">${p(dropped.length / rows.length)}</span></div>
+    <div><span class="k">Median headcount, kept</span><span class="val">${medKept == null ? "–" : f(medKept)}</span></div>
+    <div><span class="k">Median headcount, dropped</span><span class="val">${medDropped == null ? "–" : f(medDropped)}</span></div>
+    <div><span class="k">Dropped under 1,000</span><span class="val">${dropped.length ? p(smallDropped) : "–"}</span></div>
+  </div>
+  <p class="lab-hint">Counts cover the ${f(rows.length)} institutions with a reported headcount. Hover a grey dot to see which of the selected variables it is missing.</p>`;
+}
+```
+
+:::
+
+Three things to try:
+
+1. **Structural.** With only six-year completion ticked, the 2-year and less-than-2-year rows go entirely grey. Not one of those institutions failed to report. The question does not apply to them, and no filter or imputation should try to bring them back.
+2. **Unreported.** Untick completion and tick student-faculty ratio. Now the grey is scattered, but it piles up at the left of every row: the smallest institutions. The median headcount of the dropped rows falls to a few hundred. Dropping blanks here is dropping small colleges.
+3. **Stacking.** Tick completion, retention, Pell, net price, and student-faculty ratio together, the five variables a typical model wants. Group by size. The rows kept are mostly mid-sized and large institutions, and a result fitted on them is a result about them.
+
+## Do it {.beat data-beat="2 · Do it"}
+
+The cells below run in your browser. The first thing to notice is the `na.strings` argument in R: a blank cell in a text column is read as an empty string unless you say otherwise, and an empty string is not missing. pandas treats blanks as missing by default.
+
+::: {.panel-tabset group="language"}
+
+### R
+
+```{webr}
+#| autorun: true
+#| caption: Load the table and count blanks by column
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+inst <- read.csv("data/institutions.csv", na.strings = c("", "NA"))
+
+missing <- inst |>
+  summarise(across(everything(), ~ mean(is.na(.x)))) |>
+  pivot_longer(everything(), names_to = "variable", values_to = "share_missing") |>
+  arrange(desc(share_missing))
+
+head(missing, 12)
+```
+
+Most of the top of that list is structural. Splitting by `level` shows it: a share of exactly 1 means the question was never asked of that group.
+
+```{webr}
+#| autorun: true
+#| caption: Structural or unreported? Split by level
+inst |>
+  group_by(level) |>
+  summarise(
+    n = n(),
+    bach_6yr = mean(is.na(grad_rate_bach_6yr)),
+    grad_150 = mean(is.na(grad_rate_150)),
+    retention = mean(is.na(retention_ft)),
+    stu_fac = mean(is.na(stu_fac_ratio)),
+    net_price = mean(is.na(net_price))
+  ) |>
+  mutate(across(-c(level, n), ~ round(100 * .x, 1)))
+```
+
+Now the unreported kind. Compare four-year institutions that reported a student-faculty ratio with those that did not. If the two groups looked alike, dropping the blanks would cost you sample size and nothing else. They do not look alike.
+
+```{webr}
+#| autorun: true
+#| caption: Who is missing the student-faculty ratio?
+four <- filter(inst, level == "4-year")
+
+four |>
+  mutate(ratio_reported = !is.na(stu_fac_ratio)) |>
+  group_by(ratio_reported) |>
+  summarise(
+    n = n(),
+    median_headcount = median(headcount, na.rm = TRUE),
+    share_under_1000 = mean(size == "Under 1,000", na.rm = TRUE),
+    mean_completion = mean(grad_rate_bach_6yr, na.rm = TRUE)
+  )
+```
+
+A missingness matrix shows the whole pattern at once. Each column is an institution, each row a variable, and orange is a blank. The structural blocks show up as solid bars; the unreported values show up as speckle.
+
+```{webr}
+#| autorun: true
+#| caption: Missingness matrix for a random 400 institutions
+set.seed(1)
+show <- c("headcount", "undergrad", "pct_pell", "net_price", "net_price_110k_plus",
+          "stu_fac_ratio", "retention_ft", "grad_rate_150", "bach_cohort",
+          "grad_rate_bach_6yr", "bachelors_awarded", "doctorates_awarded")
+
+sample_rows <- inst |>
+  slice_sample(n = 400) |>
+  arrange(level, desc(headcount)) |>
+  mutate(row = row_number())
+
+sample_rows |>
+  select(row, level, all_of(show)) |>
+  pivot_longer(all_of(show), names_to = "variable", values_to = "value") |>
+  mutate(
+    variable = factor(variable, levels = rev(show)),
+    status = if_else(is.na(value), "Missing", "Present")
+  ) |>
+  ggplot(aes(row, variable, fill = status)) +
+  geom_tile() +
+  scale_fill_manual(values = c(Missing = "#eb6834", Present = "#d9e3f2")) +
+  facet_grid(~ level, scales = "free_x", space = "free_x") +
+  labs(x = "Institutions, sorted by level then headcount", y = NULL, fill = NULL) +
+  theme_minimal(base_size = 12) +
+  theme(axis.text.x = element_blank(), panel.grid = element_blank(), legend.position = "top")
+```
+
+One more pattern that is easy to miss. Net price is reported in five family-income bands, and the bands empty out as income rises, because an institution with no aided students in a band has nothing to report. The mean for the top band is a mean over a different, richer-serving set of institutions than the mean for the bottom band.
+
+```{webr}
+#| autorun: true
+#| caption: Net price bands, reported count and mean
+four |>
+  select(starts_with("net_price_")) |>
+  pivot_longer(everything(), names_to = "band", values_to = "price") |>
+  mutate(band = factor(band, levels = unique(band))) |>
+  group_by(band) |>
+  summarise(reported = sum(!is.na(price)), mean_price = round(mean(price, na.rm = TRUE)))
+```
+
+### Python
+
+```{pyodide}
+#| autorun: true
+#| caption: Load the table and count blanks by column
+import pandas as pd
+import matplotlib.pyplot as plt
+
+inst = pd.read_csv("data/institutions.csv")
+
+missing = inst.isna().mean().sort_values(ascending=False).rename("share_missing")
+missing.head(12)
+```
+
+```{pyodide}
+#| autorun: true
+#| caption: Structural or unreported? Split by level
+cols = ["grad_rate_bach_6yr", "grad_rate_150", "retention_ft", "stu_fac_ratio", "net_price"]
+
+by_level = inst.groupby("level")[cols].apply(lambda g: g.isna().mean() * 100).round(1)
+by_level.insert(0, "n", inst.groupby("level").size())
+by_level
+```
+
+```{pyodide}
+#| autorun: true
+#| caption: Who is missing the student-faculty ratio?
+four = inst[inst["level"] == "4-year"].copy()
+four["ratio_reported"] = four["stu_fac_ratio"].notna()
+
+four.groupby("ratio_reported").agg(
+    n=("unitid", "size"),
+    median_headcount=("headcount", "median"),
+    share_under_1000=("size", lambda s: (s == "Under 1,000").mean()),
+    mean_completion=("grad_rate_bach_6yr", "mean"),
+).round(2)
+```
+
+```{pyodide}
+#| autorun: true
+#| caption: Missingness matrix for a random 400 institutions
+show = ["headcount", "undergrad", "pct_pell", "net_price", "net_price_110k_plus",
+        "stu_fac_ratio", "retention_ft", "grad_rate_150", "bach_cohort",
+        "grad_rate_bach_6yr", "bachelors_awarded", "doctorates_awarded"]
+order = ["4-year", "2-year", "Less than 2-year"]
+
+sample_rows = inst.sample(400, random_state=1)
+sample_rows["level"] = pd.Categorical(sample_rows["level"], categories=order, ordered=True)
+sample_rows = sample_rows.sort_values(["level", "headcount"], ascending=[True, False])
+
+fig, ax = plt.subplots(figsize=(8, 4.5))
+ax.imshow(sample_rows[show].isna().T, aspect="auto", cmap="Oranges", interpolation="nearest")
+ax.set_yticks(range(len(show)), show)
+ax.set_xticks([])
+ax.set_xlabel("Institutions, sorted by level then headcount")
+edges = sample_rows["level"].value_counts(sort=False).reindex(order).cumsum()
+for e in edges[:-1]:
+    ax.axvline(e - 0.5, color="#14213d", linewidth=1)
+ax.set_title("Orange is a blank cell", loc="left", fontsize=11)
+plt.tight_layout()
+plt.show()
+```
+
+```{pyodide}
+#| autorun: true
+#| caption: Net price bands, reported count and mean
+bands = [c for c in four.columns if c.startswith("net_price_")]
+pd.DataFrame({
+    "reported": four[bands].notna().sum(),
+    "mean_price": four[bands].mean().round(0),
+})
+```
+
+:::
+
+## Practice {.beat data-beat="3 · Practice"}
+
+Fill in the blanks and press Run. The check reads the value your code returns, so make the last line the answer.
+
+```{webr}
+#| setup: true
+#| exercise:
+#|   - eda2_share
+#|   - eda2_dropped
+inst <- read.csv("data/institutions.csv", na.strings = c("", "NA"))
+four <- dplyr::filter(inst, level == "4-year")
+```
+
+::: {.lab-exercise data-exercise="eda2_share"}
+
+### Share missing by level
+
+Retention is unreported at a share of institutions, and the share differs by level. Return one row per `level` with the share of institutions whose `retention_ft` is blank, in a column named `missing_share`.
+
+```{webr}
+#| exercise: eda2_share
+inst |>
+  group_by(______) |>
+  summarise(missing_share = mean(______(retention_ft)))
+```
+
+::: {.hint exercise="eda2_share"}
+::: {.callout-note collapse="false"}
+## Hint
+Group by `level`. The mean of a logical vector is the share of `TRUE` values, so you need the function that returns `TRUE` for a blank: `is.na()`.
+:::
+:::
+
+::: {.solution exercise="eda2_share"}
+::: {.callout-tip collapse="false"}
+## Solution
+```r
+inst |>
+  group_by(level) |>
+  summarise(missing_share = mean(is.na(retention_ft)))
+```
+Four-year institutions are the most likely to be missing a retention rate, and the reason is size: most of the blanks are institutions under 1,000 students.
+:::
+:::
+
+```{webr}
+#| exercise: eda2_share
+#| check: true
+expected <- inst |>
+  dplyr::group_by(level) |>
+  dplyr::summarise(missing_share = mean(is.na(retention_ft)))
+ok <- is.data.frame(.result) &&
+  all(c("level", "missing_share") %in% names(.result)) &&
+  nrow(.result) == 3 &&
+  isTRUE(all.equal(sort(.result$missing_share), sort(expected$missing_share)))
+if (ok) {
+  list(correct = TRUE, message = "Correct. Retention is blank at about a quarter of four-year institutions, and far fewer two-year ones.")
+} else if (is.data.frame(.result) && "missing_share" %in% names(.result) && nrow(.result) == 3 &&
+           isTRUE(all.equal(sort(.result$missing_share), sort(1 - expected$missing_share)))) {
+  list(correct = FALSE, message = "That is the share reported, not the share missing. Use is.na(), not !is.na().")
+} else if (is.data.frame(.result) && "missing_share" %in% names(.result)) {
+  list(correct = FALSE, message = "The column is there but the values are off. Check that you grouped by level and took the mean of is.na(retention_ft).")
+} else {
+  list(correct = FALSE, message = "Not yet. The result should be a data frame with a column named missing_share.")
+}
+```
+
+:::
+
+::: {.lab-exercise data-exercise="eda2_dropped"}
+
+### Who gets dropped?
+
+`four` holds the four-year institutions. Return the **median headcount** of the four-year institutions that have **no** reported student-faculty ratio. A single number.
+
+```{webr}
+#| exercise: eda2_dropped
+median(four$headcount[______(four$stu_fac_ratio)], na.rm = TRUE)
+```
+
+::: {.hint exercise="eda2_dropped"}
+::: {.callout-note collapse="false"}
+## Hint
+Subset `headcount` with a logical vector that is `TRUE` where `stu_fac_ratio` is blank.
+:::
+:::
+
+::: {.solution exercise="eda2_dropped"}
+::: {.callout-tip collapse="false"}
+## Solution
+```r
+median(four$headcount[is.na(four$stu_fac_ratio)], na.rm = TRUE)
+```
+The typical institution missing this ratio has a few hundred students. The typical institution reporting it has a few thousand. Drop the blanks and you have quietly dropped the small colleges.
+:::
+:::
+
+```{webr}
+#| exercise: eda2_dropped
+#| check: true
+expected <- median(four$headcount[is.na(four$stu_fac_ratio)], na.rm = TRUE)
+reported <- median(four$headcount[!is.na(four$stu_fac_ratio)], na.rm = TRUE)
+if (is.numeric(.result) && length(.result) == 1 && isTRUE(abs(.result - expected) < 0.5)) {
+  list(correct = TRUE, message = sprintf("Correct: a median of %s students, against %s for institutions that reported the ratio.", format(expected, big.mark = ","), format(reported, big.mark = ",")))
+} else if (is.numeric(.result) && length(.result) == 1 && isTRUE(abs(.result - reported) < 0.5)) {
+  list(correct = FALSE, message = "That is the median for institutions that did report the ratio. You want the blanks: is.na(), not !is.na().")
+} else {
+  list(correct = FALSE, message = "Not yet. The answer is a single number, the median headcount of the institutions with a blank student-faculty ratio.")
+}
+```
+
+:::
+
+::: {.lab-exercise data-exercise="eda2_py_share"}
+
+### The same share in Python
+
+Return a Series with the share of institutions missing `retention_ft`, one value per `level`.
+
+```{pyodide}
+#| setup: true
+#| exercise: eda2_py_share
+import pandas as pd
+inst = pd.read_csv("data/institutions.csv")
+```
+
+```{pyodide}
+#| exercise: eda2_py_share
+inst["retention_ft"].______().groupby(inst["level"]).mean()
+```
+
+::: {.hint exercise="eda2_py_share"}
+::: {.callout-note collapse="false"}
+## Hint
+The method that returns `True` for a missing value is `.isna()`. Its mean within each group is the share missing.
+:::
+:::
+
+::: {.solution exercise="eda2_py_share"}
+::: {.callout-tip collapse="false"}
+## Solution
+```python
+inst["retention_ft"].isna().groupby(inst["level"]).mean()
+```
+:::
+:::
+
+```{pyodide}
+#| exercise: eda2_py_share
+#| check: true
+import pandas as pd
+expected = inst["retention_ft"].isna().groupby(inst["level"]).mean()
+ok = isinstance(result, pd.Series) and len(result) == 3 and abs(result.sort_index().values - expected.sort_index().values).max() < 1e-6
+flipped = isinstance(result, pd.Series) and len(result) == 3 and abs(result.sort_index().values - (1 - expected.sort_index().values)).max() < 1e-6
+if ok:
+    feedback = {"correct": True, "message": "Correct. Same three shares as the R version."}
+elif flipped:
+    feedback = {"correct": False, "message": "That is the share reported. Use .isna(), not .notna()."}
+else:
+    feedback = {"correct": False, "message": "Not yet. Expected a Series with one share per level."}
+feedback
+```
+
+:::
+
+## In your stack {.beat data-beat="4 · In your stack"}
+
+The same counts in the tools most IR offices report from. The workbook [ir-lab.xlsx](data/ir-lab.xlsx) has a `missingness` sheet already built.
+
+::: {.panel-tabset group="stack"}
+
+### Excel
+
+Blank cells are the one thing Excel handles well by default: `AVERAGE`, `MEDIAN`, and `COUNT` all skip them. The mistakes come from turning blanks into something else. The `missingness` sheet counts blanks per column with one formula each, then splits by level.
+
+| Statistic | Formula |
+|---|---|
+| Blanks in a column | `=COUNTBLANK(Institutions[stu_fac_ratio])` |
+| Reported values | `=COUNT(Institutions[stu_fac_ratio])` |
+| Share missing | `=COUNTBLANK(Institutions[stu_fac_ratio])/ROWS(Institutions)` |
+| Share missing, 4-year only | `=COUNTIFS(Institutions[level],"4-year",Institutions[retention_ft],"")/COUNTIFS(Institutions[level],"4-year")` |
+| Median headcount of the blanks | `=MEDIAN(IF((Institutions[level]="4-year")*(Institutions[stu_fac_ratio]=""),Institutions[headcount]))` |
+
+An empty string as a `COUNTIFS` criterion matches blank cells, and comparing a column to `""` is `TRUE` on the blanks. The last formula needs Excel 365 or 2021 for the array `IF`.
+
+Three habits worth keeping:
+
+- **A PivotTable's Count counts rows, not values.** Use Count Numbers for a column, or compare Count of `unitid` against Count Numbers of the column to get the blanks.
+- **Never Find and Replace blanks with 0.** A zero completion rate is a real, terrible number, and `AVERAGE` will believe it. If a downstream tool needs a placeholder, add a separate flag column instead: `=IF(ISBLANK([@stu_fac_ratio]),"missing","reported")`.
+- **Charts show blanks as gaps.** That is correct. If a line chart is bridging over them, change it under Select Data, Hidden and Empty Cells.
+
+### Power BI
+
+::: {.ir-powerbi data-powerbi-page="overview" data-powerbi-title="Institution overview"}
+**Interactive report: not connected yet.** Download the [Power BI project](data/ir-lab-powerbi.zip) to explore this lesson in Power BI Desktop. The embedded report will appear here once it is connected.
+:::
+
+Blanks arrive from the CSV as `null`, and Power Query's View ribbon has the fastest missingness check there is: turn on Column quality and Column distribution, and every column shows its share of empty cells. Do not use Replace Values to turn `null` into 0. If a model needs a flag, add a conditional column instead.
+
+The four measures below are the exercises above as cards and a matrix. `COUNT` skips blanks, `COUNTBLANK` counts them, and `COUNTROWS` counts institutions regardless.
+
+```dax
+Institutions = COUNTROWS ( institutions )
+
+Ratio Reported = COUNT ( institutions[stu_fac_ratio] )
+
+Ratio Missing = COUNTBLANK ( institutions[stu_fac_ratio] )
+
+Ratio Missing Share = DIVIDE ( [Ratio Missing], [Institutions] )
+```
+
+```dax
+Median Headcount of Ratio Blanks =
+MEDIANX (
+    FILTER ( institutions, ISBLANK ( institutions[stu_fac_ratio] ) ),
+    institutions[headcount]
+)
+```
+
+A matrix with `level` on rows and the share measures as values is the split-by-level table from the R and Python cells. Put `size` on rows instead and the small-institution pattern appears on its own.
+
+Two things to watch. `AVERAGE` and `MEDIAN` ignore blanks, so a card can look unchanged after a filter that removed hundreds of institutions; put an `Institutions` card next to every average so the denominator is visible. And a matrix hides a group with no reported values unless you turn on Show items with no data, which is exactly the group you were looking for.
+
+:::
+
+## Before you leave
+
+::: {.takeaways}
+1. **Tell your reader function what blank means.** In R, `na.strings = c("", "NA")`; in pandas, nothing, because it already knows. Never let a blank become an empty string or a zero.
+2. **Split every missingness count by level.** A share of exactly 100% in a group is a question that was never asked. It is not a gap to fill.
+3. **Describe the dropped rows before you drop them.** Compare headcount, sector, and the outcome between reported and unreported. If they differ, say so in the report.
+4. **A blank in one band changes the mean of the others.** Net price by income is a mean over whoever had students in that band. Compare bands only within institutions that report all of them.
+:::
+
+Next in this track: **Compare groups**, on boxplots, ridgelines, and small multiples by sector, size, and locale.

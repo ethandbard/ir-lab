@@ -1,0 +1,710 @@
+---
+title: "Compare groups"
+subtitle: "Boxplots, ridgelines, and small multiples by sector, size, and locale"
+webr:
+  packages:
+    - dplyr
+    - ggplot2
+    - tidyr
+  resources:
+    - data/institutions.csv
+pyodide:
+  packages:
+    - pandas
+    - matplotlib
+  resources:
+    - data/institutions.csv
+---
+
+{{< include ./_extensions/r-wasm/live/_knitr.qmd >}}
+
+```{r}
+#| include: false
+source("_common.R")
+four <- institutions |>
+  filter(level == "4-year", bach_cohort >= 30, !is.na(grad_rate_bach_6yr))
+n_four <- nrow(four)
+by_control <- four |>
+  group_by(control) |>
+  summarise(n = n(), mean = mean(grad_rate_bach_6yr), median = median(grad_rate_bach_6yr),
+            p25 = quantile(grad_rate_bach_6yr, 0.25), p75 = quantile(grad_rate_bach_6yr, 0.75))
+pub <- filter(by_control, control == "Public")
+npf <- filter(by_control, control == "Private nonprofit")
+gap_mean <- round(npf$mean - pub$mean, 1)
+eta2 <- function(y, g) {
+  ok <- !is.na(g); y <- y[ok]; g <- g[ok]
+  1 - sum(tapply(y, g, function(v) sum((v - mean(v))^2))) / sum((y - mean(y))^2)
+}
+eta_control <- round(100 * eta2(four$grad_rate_bach_6yr, four$control))
+eta_size <- round(100 * eta2(four$grad_rate_bach_6yr, four$size))
+eta_locale <- round(100 * eta2(four$grad_rate_bach_6yr, four$locale))
+small <- filter(four, size == "Under 1,000")
+large <- filter(four, size == "20,000 and above")
+```
+
+::: {.lesson-eyebrow}
+Explore · Lesson 3 of 6
+:::
+
+The mean six-year completion rate at private nonprofit four-year institutions is `r gap_mean` points higher than at public ones. That sentence is true, it is the kind of sentence a bar chart produces, and it tells you almost nothing about what happens when you pick one public and one private at random. Control explains about `r eta_control`% of the spread in completion rates across the `r fmt(n_four)` four-year institutions with a cohort of at least 30. The other `r 100 - eta_control`% is inside the groups, and a bar chart of means hides all of it.
+
+**You will be able to:** read a boxplot's five numbers, compare distributions across groups without collapsing them to a mean, split a comparison into small multiples, and measure how much of the spread a grouping variable accounts for.
+
+## Watch it move {.beat data-beat="1 · Watch it move"}
+
+Each dot is a four-year institution, placed by its six-year completion rate. Change the grouping and the dots sort themselves into rows. Then switch the view: the bar shows the group means and nothing else, the dots show every institution, and the box shows the quartiles and median on top of them.
+
+::: {.lab-anim}
+
+```{ojs}
+//| echo: false
+inst = FileAttachment("data/institutions.csv").csv({typed: true})
+fourYear = inst.filter(d => d.level === "4-year" && d.bach_cohort != null && d.bach_cohort >= 30 && d.grad_rate_bach_6yr != null)
+
+cmpGroupOptions = new Map([
+  ["Control", "control"],
+  ["Size", "size"],
+  ["Locale", "locale"],
+  ["Region", "region"]
+])
+
+cmpViewOptions = new Map([
+  ["Bar of means", "means"],
+  ["Every institution", "dots"],
+  ["Boxplot", "box"]
+])
+
+cmpOrder = ({
+  control: ["Public", "Private nonprofit", "Private for-profit"],
+  size: ["Under 1,000", "1,000-4,999", "5,000-9,999", "10,000-19,999", "20,000 and above"],
+  locale: ["City", "Suburb", "Town", "Rural"],
+  region: ["New England", "Mid East", "Great Lakes", "Plains", "Southeast", "Southwest", "Rocky Mountains", "Far West", "Outlying areas", "US service schools"]
+})
+```
+
+::: {.lab-controls}
+```{ojs}
+//| echo: false
+viewof cmpGroup = Inputs.radio(cmpGroupOptions, {label: "Group by", value: "control"})
+viewof cmpView = Inputs.radio(cmpViewOptions, {label: "Show", value: "means"})
+```
+:::
+
+```{ojs}
+//| echo: false
+cmpNode = d3.create("svg").attr("class", "lab-svg").node()
+
+cmpStats = {
+  const groups = cmpOrder[cmpGroup];
+  const rows = fourYear.filter(d => groups.includes(d[cmpGroup]));
+  const stats = new Map();
+  for (const g of groups) {
+    const v = rows.filter(d => d[cmpGroup] === g).map(d => d.grad_rate_bach_6yr).sort(d3.ascending);
+    if (!v.length) continue;
+    const q1 = d3.quantileSorted(v, 0.25), med = d3.quantileSorted(v, 0.5), q3 = d3.quantileSorted(v, 0.75);
+    const iqr = q3 - q1;
+    const lo = d3.min(v.filter(x => x >= q1 - 1.5 * iqr)), hi = d3.max(v.filter(x => x <= q3 + 1.5 * iqr));
+    stats.set(g, {n: v.length, mean: d3.mean(v), q1, med, q3, lo, hi});
+  }
+  const all = rows.map(d => d.grad_rate_bach_6yr);
+  const grand = d3.mean(all);
+  const ssTotal = d3.sum(all, x => (x - grand) ** 2);
+  const ssBetween = d3.sum([...stats.values()], s => s.n * (s.mean - grand) ** 2);
+  return {rows, groups: groups.filter(g => stats.has(g)), stats, grand, eta2: ssBetween / ssTotal};
+}
+
+cmpPlot = {
+  const {rows, groups, stats} = cmpStats;
+  const width = 860, rowH = groups.length > 6 ? 46 : 58, margin = {top: 8, right: 16, bottom: 36, left: 170};
+  const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const dur = reduce ? 0 : 700;
+  const height = margin.top + rowH * groups.length + margin.bottom;
+  const x = d3.scaleLinear().domain([0, 100]).range([margin.left, width - margin.right]);
+  const y = d3.scalePoint().domain(groups).range([margin.top + rowH / 2, margin.top + rowH * groups.length - rowH / 2]);
+  const jitter = d3.randomNormal.source(d3.randomLcg(11))(0, rowH * 0.17);
+  const jit = new Map(rows.map(d => [d.unitid, Math.max(-rowH * 0.38, Math.min(rowH * 0.38, jitter()))]));
+  const showDots = cmpView !== "means", showBox = cmpView === "box", showBar = cmpView === "means";
+  const boxH = Math.min(26, rowH * 0.5);
+
+  const svg = d3.select(cmpNode);
+  svg.attr("viewBox", [0, 0, width, height]);
+  const layer = name => {
+    let g = svg.select(`g.${name}`);
+    if (g.empty()) g = svg.append("g").attr("class", name);
+    return g;
+  };
+  const axis = layer("axis"), labels = layer("labels"), bars = layer("bars"), dots = layer("dots"), boxes = layer("boxes");
+
+  axis.attr("transform", `translate(0,${height - margin.bottom})`)
+    .call(d3.axisBottom(x).ticks(10).tickFormat(d => d + "%").tickSizeOuter(0));
+  axis.selectAll("text.axis-title").data([0]).join("text").attr("class", "axis-title")
+    .attr("x", width - margin.right).attr("y", 32).attr("text-anchor", "end")
+    .attr("font-size", 12).attr("fill", "currentColor").text("6-year bachelor's completion");
+
+  const t = svg.transition().duration(dur).ease(d3.easeCubicInOut);
+
+  labels.selectAll("g.row").data(groups, d => d)
+    .join(enter => {
+      const g = enter.append("g").attr("class", "row");
+      g.append("text").attr("class", "name").attr("font-size", 13).attr("font-weight", 600).attr("fill", "var(--lab-ink)");
+      g.append("text").attr("class", "count").attr("font-size", 11).attr("fill", "var(--lab-muted)");
+      return g;
+    })
+    .attr("transform", d => `translate(${margin.left - 12},${y(d)})`)
+    .call(g => {
+      g.select("text.name").attr("text-anchor", "end").attr("dy", "-0.2em").text(d => d);
+      g.select("text.count").attr("text-anchor", "end").attr("dy", "1.05em")
+        .text(d => `n = ${d3.format(",")(stats.get(d).n)} · median ${d3.format(".1f")(stats.get(d).med)}%`);
+    });
+
+  bars.selectAll("rect").data(groups, d => d)
+    .join(enter => enter.append("rect").attr("x", x(0)).attr("height", boxH).attr("width", 0)
+      .attr("y", d => y(d) - boxH / 2).attr("fill", "var(--lab-primary)").attr("fill-opacity", 0.85).attr("rx", 2))
+    .transition(t)
+    .attr("y", d => y(d) - boxH / 2)
+    .attr("width", d => showBar ? x(stats.get(d).mean) - x(0) : 0)
+    .attr("fill-opacity", showBar ? 0.85 : 0);
+
+  dots.selectAll("circle").data(rows, d => d.unitid)
+    .join(
+      enter => enter.append("circle").attr("r", 0)
+        .attr("cx", d => x(d.grad_rate_bach_6yr))
+        .attr("cy", d => y(d[cmpGroup]) + jit.get(d.unitid))
+        .call(e => e.append("title")),
+      update => update,
+      exit => exit.transition(t).attr("r", 0).remove()
+    )
+    .call(sel => sel.select("title").text(d => `${d.name}\n${d.control} · ${d.size} · ${d.locale}\n${d.grad_rate_bach_6yr}% complete in 6 years`))
+    .transition(t).delay((d, i) => reduce ? 0 : (i % 40) * 5)
+    .attr("r", showDots ? 2.4 : 0)
+    .attr("cx", d => x(d.grad_rate_bach_6yr))
+    .attr("cy", d => y(d[cmpGroup]) + jit.get(d.unitid))
+    .attr("fill", "var(--lab-primary)")
+    .attr("fill-opacity", showBox ? 0.25 : 0.55);
+
+  const box = boxes.selectAll("g.box").data(groups, d => d)
+    .join(enter => {
+      const g = enter.append("g").attr("class", "box");
+      g.append("line").attr("class", "whisker").attr("stroke", "var(--lab-ink)").attr("stroke-width", 1.2);
+      g.append("rect").attr("class", "iqr").attr("fill", "#fff").attr("fill-opacity", 0.7).attr("stroke", "var(--lab-ink)").attr("stroke-width", 1.4);
+      g.append("line").attr("class", "median").attr("stroke", "var(--lab-accent)").attr("stroke-width", 3);
+      return g;
+    });
+  box.attr("transform", d => `translate(0,${y(d)})`)
+    .transition(t)
+    .attr("opacity", showBox ? 1 : 0);
+  box.select("line.whisker").transition(t)
+    .attr("x1", d => x(stats.get(d).lo)).attr("x2", d => x(stats.get(d).hi)).attr("y1", 0).attr("y2", 0);
+  box.select("rect.iqr").transition(t)
+    .attr("x", d => x(stats.get(d).q1)).attr("width", d => x(stats.get(d).q3) - x(stats.get(d).q1))
+    .attr("y", -boxH / 2).attr("height", boxH);
+  box.select("line.median").transition(t)
+    .attr("x1", d => x(stats.get(d).med)).attr("x2", d => x(stats.get(d).med)).attr("y1", -boxH / 2).attr("y2", boxH / 2);
+
+  return svg.node();
+}
+```
+
+```{ojs}
+//| echo: false
+cmpReadout = {
+  const {groups, stats, grand, eta2, rows} = cmpStats;
+  const byMed = groups.slice().sort((a, b) => stats.get(b).med - stats.get(a).med);
+  const top = byMed[0], bottom = byMed[byMed.length - 1];
+  const f1 = d3.format(".1f"), p = d3.format(".0%"), f = d3.format(",");
+  const widest = groups.slice().sort((a, b) => (stats.get(b).q3 - stats.get(b).q1) - (stats.get(a).q3 - stats.get(a).q1))[0];
+  return html`<div class="lab-readout">
+    <div><span class="k">Spread explained by grouping</span><span class="val primary">${p(eta2)}</span></div>
+    <div><span class="k">Highest median</span><span class="val">${top}: ${f1(stats.get(top).med)}%</span></div>
+    <div><span class="k">Lowest median</span><span class="val">${bottom}: ${f1(stats.get(bottom).med)}%</span></div>
+    <div><span class="k">Gap between them</span><span class="val accent">${f1(stats.get(top).med - stats.get(bottom).med)} points</span></div>
+    <div><span class="k">Widest middle half</span><span class="val">${widest}: ${f1(stats.get(widest).q3 - stats.get(widest).q1)} points</span></div>
+    <div><span class="k">All groups</span><span class="val">${f(rows.length)} institutions, mean ${f1(grand)}%</span></div>
+  </div>
+  <p class="lab-hint">Four-year institutions with a bachelor's cohort of at least 30. "Spread explained" is the between-group share of the total sum of squares, the same number an ANOVA calls eta squared.</p>`;
+}
+```
+
+:::
+
+Three things to try:
+
+1. **Control, bar to dots.** The bars say private nonprofits lead publics by about `r gap_mean` points. Switch to every institution. The two clouds sit almost on top of each other, and there are publics above nearly every private and privates below nearly every public. The grouping explains `r eta_control`% of the spread.
+2. **Size, boxplot.** Group by size and show the boxes. The medians climb from `r round(median(small$grad_rate_bach_6yr), 1)`% under 1,000 students to `r round(median(large$grad_rate_bach_6yr), 1)`% at 20,000 and above, and the spread explained more than doubles to `r eta_size`%. Size is a better first cut than sector for this outcome, and the boxes still overlap.
+3. **Region, every institution.** Ten rows, and two of them have so few institutions that a box would be misleading. The dots show the sample size for free. Watch the US service schools: five institutions, all above 85%.
+
+## Do it {.beat data-beat="2 · Do it"}
+
+The cells below run in your browser. Every comparison starts with the same filter: four-year institutions with a bachelor's cohort of at least 30, so a college with six graduates and a 100% rate does not sit at the top of every group.
+
+::: {.panel-tabset group="language"}
+
+### R
+
+```{webr}
+#| autorun: true
+#| caption: Load, filter, and summarise by control
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+inst <- read.csv("data/institutions.csv", na.strings = c("", "NA"))
+
+four <- inst |>
+  filter(level == "4-year", bach_cohort >= 30, !is.na(grad_rate_bach_6yr))
+
+four |>
+  group_by(control) |>
+  summarise(
+    n = n(),
+    mean = mean(grad_rate_bach_6yr),
+    median = median(grad_rate_bach_6yr),
+    p25 = quantile(grad_rate_bach_6yr, 0.25),
+    p75 = quantile(grad_rate_bach_6yr, 0.75),
+    sd = sd(grad_rate_bach_6yr)
+  ) |>
+  mutate(across(where(is.numeric) & !n, ~ round(.x, 1)))
+```
+
+The table already says more than a bar chart: the interquartile ranges are about 25 points wide and the medians are 8 points apart. A boxplot draws exactly those numbers. The box is the middle half, the line is the median, the whiskers reach the last point within 1.5 box-widths, and everything past that is drawn on its own.
+
+```{webr}
+#| autorun: true
+#| caption: Boxplot by control, with the institutions behind it
+control_order <- c("Public", "Private nonprofit", "Private for-profit")
+
+ggplot(four, aes(factor(control, control_order), grad_rate_bach_6yr)) +
+  geom_jitter(width = 0.25, height = 0, alpha = 0.25, size = 1, color = "#2a78d6") +
+  geom_boxplot(outlier.shape = NA, fill = NA, color = "#14213d", width = 0.5, linewidth = 0.7) +
+  stat_summary(fun = median, fun.min = median, fun.max = median, geom = "errorbar",
+               width = 0.5, color = "#eb6834", linewidth = 1.2) +
+  scale_y_continuous(labels = function(x) paste0(x, "%")) +
+  labs(x = NULL, y = "6-year bachelor's completion") +
+  theme_minimal(base_size = 13)
+```
+
+A boxplot flattens shape. When you want the shape of each group and there are more than three groups, stack the densities. This is what a ridgeline plot does, and a faceted density gets you there with no extra package.
+
+```{webr}
+#| autorun: true
+#| caption: Stacked densities by size
+size_order <- c("Under 1,000", "1,000-4,999", "5,000-9,999", "10,000-19,999", "20,000 and above")
+medians <- four |>
+  group_by(size) |>
+  summarise(median = median(grad_rate_bach_6yr), n = n())
+
+four |>
+  mutate(size = factor(size, size_order)) |>
+  ggplot(aes(grad_rate_bach_6yr)) +
+  geom_density(fill = "#2a78d6", alpha = 0.35, color = "#2a78d6", adjust = 1.2) +
+  geom_vline(data = mutate(medians, size = factor(size, size_order)), aes(xintercept = median), color = "#eb6834", linewidth = 0.8) +
+  geom_text(data = mutate(medians, size = factor(size, size_order)), aes(x = 2, y = 0.03, label = paste0("n = ", n)),
+            hjust = 0, size = 3.3, color = "#4a5158") +
+  facet_grid(size ~ ., switch = "y") +
+  scale_x_continuous(labels = function(x) paste0(x, "%"), limits = c(0, 100)) +
+  labs(x = "6-year bachelor's completion", y = NULL, title = "Orange line: group median") +
+  theme_minimal(base_size = 12) +
+  theme(strip.text.y.left = element_text(angle = 0, hjust = 1), axis.text.y = element_blank(),
+        panel.grid.minor = element_blank(), strip.placement = "outside")
+```
+
+Two groupings at once is where a single chart gives up and small multiples take over. Is the private advantage a size effect in disguise? Facet by size and compare control within each panel.
+
+```{webr}
+#| autorun: true
+#| caption: "Small multiples: control within each size band"
+four |>
+  filter(control != "Private for-profit") |>
+  mutate(size = factor(size, size_order), control = factor(control, control_order)) |>
+  ggplot(aes(control, grad_rate_bach_6yr)) +
+  geom_boxplot(outlier.size = 0.6, outlier.alpha = 0.4, fill = "#d9e3f2", color = "#14213d", width = 0.55) +
+  facet_wrap(~ size, nrow = 1) +
+  scale_y_continuous(labels = function(x) paste0(x, "%")) +
+  scale_x_discrete(labels = c("Public", "Private\nnonprofit")) +
+  labs(x = NULL, y = "6-year bachelor's completion") +
+  theme_minimal(base_size = 12) +
+  theme(panel.grid.major.x = element_blank())
+```
+
+The gap does not shrink inside the bands. It widens: private nonprofits lead publics by 13 to 26 points within every size band, against 8 points overall. The overall comparison understates the gap because 83% of private nonprofits have fewer than 5,000 students, where every institution's rate is lower, and only 37% of publics do. A sector comparison that ignores size is mostly comparing small privates with large publics. Finally, put a number on each grouping. The share of the total sum of squares that sits between groups, eta squared, is the honest answer to "how much does this variable explain?"
+
+```{webr}
+#| autorun: true
+#| caption: How much of the spread does each grouping explain?
+eta_squared <- function(y, g) {
+  keep <- !is.na(g)
+  y <- y[keep]; g <- g[keep]
+  within <- sum(tapply(y, g, function(v) sum((v - mean(v))^2)))
+  total <- sum((y - mean(y))^2)
+  1 - within / total
+}
+
+tibble(grouping = c("control", "size", "locale", "region", "carnegie")) |>
+  rowwise() |>
+  mutate(
+    groups = n_distinct(four[[grouping]], na.rm = TRUE),
+    spread_explained = round(eta_squared(four$grad_rate_bach_6yr, four[[grouping]]), 3)
+  ) |>
+  arrange(desc(spread_explained))
+```
+
+### Python
+
+```{pyodide}
+#| autorun: true
+#| caption: Load, filter, and summarise by control
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+
+inst = pd.read_csv("data/institutions.csv")
+
+four = inst[(inst["level"] == "4-year") & (inst["bach_cohort"] >= 30) & inst["grad_rate_bach_6yr"].notna()].copy()
+
+four.groupby("control")["grad_rate_bach_6yr"].agg(
+    n="size", mean="mean", median="median",
+    p25=lambda s: s.quantile(0.25), p75=lambda s: s.quantile(0.75), sd="std",
+).round(1)
+```
+
+```{pyodide}
+#| autorun: true
+#| caption: Boxplot by control, with the institutions behind it
+control_order = ["Public", "Private nonprofit", "Private for-profit"]
+rng = np.random.default_rng(1)
+
+fig, ax = plt.subplots(figsize=(8, 4.5))
+for i, c in enumerate(control_order, start=1):
+    y = four.loc[four["control"] == c, "grad_rate_bach_6yr"]
+    ax.scatter(i + rng.uniform(-0.25, 0.25, len(y)), y, s=6, alpha=0.25, color="#2a78d6")
+ax.boxplot([four.loc[four["control"] == c, "grad_rate_bach_6yr"] for c in control_order],
+           widths=0.5, showfliers=False,
+           medianprops={"color": "#eb6834", "linewidth": 2.5},
+           boxprops={"color": "#14213d"}, whiskerprops={"color": "#14213d"}, capprops={"color": "#14213d"})
+ax.set_xticks([1, 2, 3], control_order)
+ax.set_ylabel("6-year bachelor's completion (%)")
+ax.spines[["top", "right"]].set_visible(False)
+plt.tight_layout()
+plt.show()
+```
+
+```{pyodide}
+#| autorun: true
+#| caption: Stacked histograms by size
+size_order = ["Under 1,000", "1,000-4,999", "5,000-9,999", "10,000-19,999", "20,000 and above"]
+bins = np.arange(0, 101, 4)
+
+fig, axes = plt.subplots(len(size_order), 1, figsize=(8, 5.5), sharex=True)
+for ax, s in zip(axes, size_order):
+    y = four.loc[four["size"] == s, "grad_rate_bach_6yr"]
+    ax.hist(y, bins=bins, color="#2a78d6", alpha=0.45, density=True)
+    ax.axvline(y.median(), color="#eb6834", linewidth=1.8)
+    ax.set_ylabel(s, rotation=0, ha="right", va="center", fontsize=10)
+    ax.set_yticks([])
+    ax.text(1, ax.get_ylim()[1] * 0.75, f"n = {len(y)}", fontsize=9, color="#4a5158")
+    ax.spines[["top", "right", "left"]].set_visible(False)
+axes[-1].set_xlabel("6-year bachelor's completion (%)")
+axes[0].set_title("Orange line: group median", loc="left", fontsize=11)
+plt.tight_layout()
+plt.show()
+```
+
+```{pyodide}
+#| autorun: true
+#| caption: "Small multiples: control within each size band"
+two = four[four["control"] != "Private for-profit"]
+
+fig, axes = plt.subplots(1, len(size_order), figsize=(8, 4.5), sharey=True)
+for ax, s in zip(axes, size_order):
+    data = [two.loc[(two["size"] == s) & (two["control"] == c), "grad_rate_bach_6yr"] for c in control_order[:2]]
+    ax.boxplot(data, widths=0.55, flierprops={"markersize": 3, "alpha": 0.4},
+               patch_artist=True, boxprops={"facecolor": "#d9e3f2", "color": "#14213d"},
+               medianprops={"color": "#14213d"})
+    ax.set_xticks([1, 2], ["Public", "Private\nnonprofit"], fontsize=9)
+    ax.set_title(s, fontsize=10)
+    ax.spines[["top", "right"]].set_visible(False)
+axes[0].set_ylabel("6-year bachelor's completion (%)")
+plt.tight_layout()
+plt.show()
+```
+
+```{pyodide}
+#| autorun: true
+#| caption: How much of the spread does each grouping explain?
+def eta_squared(y, g):
+    keep = g.notna()
+    y, g = y[keep], g[keep]
+    within = y.groupby(g).apply(lambda v: ((v - v.mean()) ** 2).sum()).sum()
+    total = ((y - y.mean()) ** 2).sum()
+    return 1 - within / total
+
+pd.DataFrame({
+    "groups": {g: four[g].nunique() for g in ["control", "size", "locale", "region", "carnegie"]},
+    "spread_explained": {g: round(eta_squared(four["grad_rate_bach_6yr"], four[g]), 3)
+                         for g in ["control", "size", "locale", "region", "carnegie"]},
+}).sort_values("spread_explained", ascending=False)
+```
+
+:::
+
+## Practice {.beat data-beat="3 · Practice"}
+
+Fill in the blanks and press Run. The check reads the value your code returns, so make the last line the answer.
+
+```{webr}
+#| setup: true
+#| exercise:
+#|   - eda3_median
+#|   - eda3_gap
+inst <- read.csv("data/institutions.csv", na.strings = c("", "NA"))
+four <- dplyr::filter(inst, level == "4-year", bach_cohort >= 30, !is.na(grad_rate_bach_6yr))
+```
+
+::: {.lab-exercise data-exercise="eda3_median"}
+
+### Median by locale
+
+`four` holds the filtered four-year institutions. Return one row per `locale` with the number of institutions in a column named `n` and the median completion rate in a column named `median_rate`.
+
+```{webr}
+#| exercise: eda3_median
+four |>
+  group_by(______) |>
+  summarise(n = n(), median_rate = ______(grad_rate_bach_6yr))
+```
+
+::: {.hint exercise="eda3_median"}
+::: {.callout-note collapse="false"}
+## Hint
+Group by `locale`. The function that returns the middle value of a vector is `median()`.
+:::
+:::
+
+::: {.solution exercise="eda3_median"}
+::: {.callout-tip collapse="false"}
+## Solution
+```r
+four |>
+  group_by(locale) |>
+  summarise(n = n(), median_rate = median(grad_rate_bach_6yr))
+```
+City and suburb institutions share a median near 58%. Town drops to about 52% and rural to about 45%, on the smallest group of the four.
+:::
+:::
+
+```{webr}
+#| exercise: eda3_median
+#| check: true
+expected <- four |>
+  dplyr::group_by(locale) |>
+  dplyr::summarise(n = dplyr::n(), median_rate = median(grad_rate_bach_6yr))
+means <- four |>
+  dplyr::group_by(locale) |>
+  dplyr::summarise(median_rate = mean(grad_rate_bach_6yr))
+ok <- is.data.frame(.result) &&
+  all(c("locale", "n", "median_rate") %in% names(.result)) &&
+  nrow(.result) == 4 &&
+  isTRUE(all.equal(sort(.result$median_rate), sort(expected$median_rate))) &&
+  isTRUE(all.equal(sort(.result$n), sort(expected$n)))
+if (ok) {
+  list(correct = TRUE, message = "Correct. Rural institutions have the lowest median and the fewest rows; both facts belong in the sentence you write about it.")
+} else if (is.data.frame(.result) && "median_rate" %in% names(.result) && nrow(.result) == 4 &&
+           isTRUE(all.equal(sort(.result$median_rate), sort(means$median_rate)))) {
+  list(correct = FALSE, message = "Those are means. The exercise asks for the median: median(), not mean().")
+} else if (is.data.frame(.result) && nrow(.result) != 4 && "median_rate" %in% names(.result)) {
+  list(correct = FALSE, message = "Wrong number of rows. Group by locale, which has four values.")
+} else {
+  list(correct = FALSE, message = "Not yet. The result should be a data frame with columns locale, n, and median_rate.")
+}
+```
+
+:::
+
+::: {.lab-exercise data-exercise="eda3_gap"}
+
+### The gap in medians
+
+Return the difference between the median completion rate at private nonprofit institutions and the median at public institutions, as a single positive number. `tapply()` gives you one median per control, named.
+
+```{webr}
+#| exercise: eda3_gap
+medians <- tapply(four$grad_rate_bach_6yr, four$______, median)
+unname(medians["Private nonprofit"] - medians["______"])
+```
+
+::: {.hint exercise="eda3_gap"}
+::: {.callout-note collapse="false"}
+## Hint
+The grouping column is `control`, and the other group is `"Public"`. Index the named vector with the group names in quotes.
+:::
+:::
+
+::: {.solution exercise="eda3_gap"}
+::: {.callout-tip collapse="false"}
+## Solution
+```r
+medians <- tapply(four$grad_rate_bach_6yr, four$control, median)
+unname(medians["Private nonprofit"] - medians["Public"])
+```
+About 8 points between the medians, against a middle half about 25 points wide inside each group. That ratio is the whole lesson.
+:::
+:::
+
+```{webr}
+#| exercise: eda3_gap
+#| check: true
+medians <- tapply(four$grad_rate_bach_6yr, four$control, median)
+means <- tapply(four$grad_rate_bach_6yr, four$control, mean)
+expected <- unname(medians["Private nonprofit"] - medians["Public"])
+via_means <- unname(means["Private nonprofit"] - means["Public"])
+val <- suppressWarnings(as.numeric(.result))
+if (length(val) == 1 && isTRUE(abs(val - expected) < 0.05)) {
+  list(correct = TRUE, message = sprintf("Correct: %.1f points between the medians. The interquartile range within each group is about three times that.", expected))
+} else if (length(val) == 1 && isTRUE(abs(val + expected) < 0.05)) {
+  list(correct = FALSE, message = "Right size, wrong sign. Subtract the public median from the private nonprofit median.")
+} else if (length(val) == 1 && isTRUE(abs(val - via_means) < 0.05)) {
+  list(correct = FALSE, message = "That is the gap in means. Use median inside tapply().")
+} else {
+  list(correct = FALSE, message = "Not yet. The answer is a single number: the private nonprofit median minus the public median.")
+}
+```
+
+:::
+
+::: {.lab-exercise data-exercise="eda3_py_median"}
+
+### The same medians in Python
+
+Return a Series with the median completion rate by `locale`.
+
+```{pyodide}
+#| setup: true
+#| exercise: eda3_py_median
+import pandas as pd
+inst = pd.read_csv("data/institutions.csv")
+four = inst[(inst["level"] == "4-year") & (inst["bach_cohort"] >= 30) & inst["grad_rate_bach_6yr"].notna()].copy()
+```
+
+```{pyodide}
+#| exercise: eda3_py_median
+four.groupby("______")["grad_rate_bach_6yr"].______()
+```
+
+::: {.hint exercise="eda3_py_median"}
+::: {.callout-note collapse="false"}
+## Hint
+Group by `"locale"` and call `.median()` on the selected column.
+:::
+:::
+
+::: {.solution exercise="eda3_py_median"}
+::: {.callout-tip collapse="false"}
+## Solution
+```python
+four.groupby("locale")["grad_rate_bach_6yr"].median()
+```
+:::
+:::
+
+```{pyodide}
+#| exercise: eda3_py_median
+#| check: true
+import pandas as pd
+expected = four.groupby("locale")["grad_rate_bach_6yr"].median()
+means = four.groupby("locale")["grad_rate_bach_6yr"].mean()
+ok = isinstance(result, pd.Series) and len(result) == 4 and abs(result.sort_index().values - expected.sort_index().values).max() < 1e-6
+is_mean = isinstance(result, pd.Series) and len(result) == 4 and abs(result.sort_index().values - means.sort_index().values).max() < 1e-6
+if ok:
+    feedback = {"correct": True, "message": "Correct. Same four medians as the R version."}
+elif is_mean:
+    feedback = {"correct": False, "message": "Those are means. Call .median(), not .mean()."}
+else:
+    feedback = {"correct": False, "message": "Not yet. Expected a Series with one median per locale."}
+feedback
+```
+
+:::
+
+## In your stack {.beat data-beat="4 · In your stack"}
+
+The same comparison in the tools most IR offices report from. The workbook [ir-lab.xlsx](data/ir-lab.xlsx) has a `compare` sheet already built.
+
+::: {.panel-tabset group="stack"}
+
+### Excel
+
+The five-number summary per group is one row of conditional formulas. The `compare` sheet builds it for control and for size, then computes the between-group share of the spread underneath. The filter is the same everywhere: 4-year, cohort of at least 30, rate reported.
+
+| Statistic | Formula |
+|---|---|
+| Count | `=COUNTIFS(Institutions[level],"4-year",Institutions[bach_cohort],">=30",Institutions[grad_rate_bach_6yr],"<>",Institutions[control],"Public")` |
+| Mean | `=AVERAGEIFS(Institutions[grad_rate_bach_6yr],Institutions[level],"4-year",Institutions[bach_cohort],">=30",Institutions[control],"Public")` |
+| Median | `=MEDIAN(IF((Institutions[level]="4-year")*(Institutions[bach_cohort]>=30)*(Institutions[grad_rate_bach_6yr]<>"")*(Institutions[control]="Public"),Institutions[grad_rate_bach_6yr]))` |
+| 25th percentile | `=PERCENTILE.INC(IF((Institutions[level]="4-year")*(Institutions[bach_cohort]>=30)*(Institutions[grad_rate_bach_6yr]<>"")*(Institutions[control]="Public"),Institutions[grad_rate_bach_6yr]),0.25)` |
+| Maximum | `=MAXIFS(Institutions[grad_rate_bach_6yr],Institutions[level],"4-year",Institutions[bach_cohort],">=30",Institutions[control],"Public")` |
+
+The `<>""` test inside the array `IF` matters: a blank cell inside an array formula becomes a zero, and a zero completion rate would drag the median down. `AVERAGEIFS` and `MAXIFS` skip blanks on their own.
+
+For the chart, select the filtered rates with the control column and insert a **Box and Whisker** chart (Insert, Statistical charts). Excel draws quartiles with the same `PERCENTILE.INC` definition by default; the option under Format Data Series switches to the exclusive median. Small multiples do not exist in Excel charts; the sheet's answer is one PivotChart per size band, or a PivotTable with size on rows, control on columns, and Median missing from the value options, which is the point at which most offices export to R or Python.
+
+The between-group share of the spread is three cells: the total sum of squares `=DEVSQ(IF(filter,Institutions[grad_rate_bach_6yr]))`, the between-group sum `=SUMPRODUCT(n_column,(mean_column-grand_mean)^2)`, and their ratio.
+
+### Power BI
+
+::: {.ir-powerbi data-powerbi-page="distributions" data-powerbi-title="Completion distribution"}
+**Interactive report: not connected yet.** Download the [Power BI project](data/ir-lab-powerbi.zip) to explore this lesson in Power BI Desktop. The embedded report will appear here once it is connected.
+:::
+
+Power BI does small multiples natively: any column or bar chart has a **Small multiples** well, and dropping `size` in it gives you the faceted comparison from the R and Python cells. There is no built-in box-and-whisker visual; the usual route is a matrix of quantile measures, or the Box and Whisker custom visual from AppSource.
+
+The measures below share one filter so the numbers match the other tabs. Put `control` or `locale` on the rows of a matrix and these as values.
+
+```dax
+Completion Rows =
+FILTER (
+    institutions,
+    institutions[level] = "4-year"
+        && institutions[bach_cohort] >= 30
+        && NOT ISBLANK ( institutions[grad_rate_bach_6yr] )
+)
+
+Completion N = COUNTROWS ( [Completion Rows] )
+
+Completion Median = MEDIANX ( [Completion Rows], institutions[grad_rate_bach_6yr] )
+
+Completion P25 = PERCENTILEX.INC ( [Completion Rows], institutions[grad_rate_bach_6yr], 0.25 )
+
+Completion P75 = PERCENTILEX.INC ( [Completion Rows], institutions[grad_rate_bach_6yr], 0.75 )
+
+Completion IQR = [Completion P75] - [Completion P25]
+```
+
+The `Completion Rows` measure is a table expression, so define the four that use it as measures in the same table and Power BI evaluates the filter once per cell. The share of spread a grouping explains needs the grand mean held fixed while the group means vary:
+
+```dax
+Spread Explained by Control =
+VAR rows = CALCULATETABLE ( [Completion Rows], REMOVEFILTERS ( institutions[control] ) )
+VAR grand = AVERAGEX ( rows, institutions[grad_rate_bach_6yr] )
+VAR total = SUMX ( rows, ( institutions[grad_rate_bach_6yr] - grand ) ^ 2 )
+VAR between =
+    SUMX (
+        SUMMARIZE ( rows, institutions[control], "GroupMean", AVERAGE ( institutions[grad_rate_bach_6yr] ), "GroupN", COUNTROWS ( institutions ) ),
+        [GroupN] * ( [GroupMean] - grand ) ^ 2
+    )
+RETURN DIVIDE ( between, total )
+```
+
+Put it in a card. Swap `control` for `size` in a copy and the card should roughly double, which is the finding from the animation.
+
+:::
+
+## Before you leave
+
+::: {.takeaways}
+1. **A bar of means is the least you can show.** Draw the dots or the box first, and only then decide whether the mean is a fair summary.
+2. **Report the gap next to the spread.** "Medians 8 points apart, middle halves 25 points wide" is a comparison. "Privates outperform publics" is a headline.
+3. **Facet before you attribute.** Compare control within size before crediting either one. Here the sector gap is wider inside every size band than overall, because the two sectors have very different size mixes.
+4. **Put a number on the grouping.** The between-group share of the sum of squares tells you how much a variable explains. For completion, sector explains about 5%, size about 12%, and neither is a story on its own.
+:::
+
+Next in this track: **Relationships**, on scatterplots, correlation, and the difference between association and cause.

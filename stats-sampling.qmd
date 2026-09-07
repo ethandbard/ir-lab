@@ -1,0 +1,587 @@
+---
+title: "Sampling and uncertainty"
+subtitle: "Bootstrap a statistic, watch the interval form, and learn what a confidence interval promises"
+webr:
+  packages:
+    - dplyr
+    - ggplot2
+  resources:
+    - data/institutions.csv
+pyodide:
+  packages:
+    - pandas
+    - matplotlib
+  resources:
+    - data/institutions.csv
+---
+
+{{< include ./_extensions/r-wasm/live/_knitr.qmd >}}
+
+```{r}
+#| include: false
+source("_common.R")
+pop <- filter(institutions, level == "4-year", !is.na(grad_rate_bach_6yr), bach_cohort >= 30)
+n_pop <- nrow(pop)
+pop_mean <- round(mean(pop$grad_rate_bach_6yr), 1)
+pop_median <- median(pop$grad_rate_bach_6yr)
+pop_sd <- round(sd(pop$grad_rate_bach_6yr), 1)
+set.seed(1)
+samp <- sample(pop$grad_rate_bach_6yr, 50)
+samp_mean <- round(mean(samp), 1)
+samp_se <- round(sd(samp) / sqrt(50), 2)
+t_ci <- round(mean(samp) + c(-1, 1) * qt(0.975, 49) * sd(samp) / sqrt(50), 1)
+se_400 <- round(pop_sd / sqrt(400), 1)
+```
+
+::: {.lesson-eyebrow}
+Test · Lesson 1 of 6
+:::
+
+Every number in an IR report is computed from the rows you happened to have. A retention rate is one cohort out of the many that could have enrolled; a survey mean is one sample of the students who could have answered. The question this lesson asks is: if you could re-run the world and collect the data again, how much would the number move? The table gives us a rare chance to check, because for `r v("grad_rate_bach_6yr")` at four-year institutions we have the whole population: `r fmt(n_pop)` institutions with a bachelor's cohort of at least 30, with a mean of `r pop_mean` and a standard deviation of `r pop_sd`.
+
+**You will be able to:** bootstrap a statistic and read its standard error, build a confidence interval two ways, explain what "95%" promises and what it does not, and say when the formula interval fails and the bootstrap does not.
+
+## Watch it move {.beat data-beat="1 · Watch it move"}
+
+The dashed line is the population mean, the number you would normally never know. Each run draws one sample of institutions, then resamples that sample with replacement many times, computing the statistic each time. The bars are those bootstrap statistics piling up. The shaded band is the middle 95% of them: the percentile confidence interval.
+
+::: {.lab-anim}
+
+```{ojs}
+//| echo: false
+inst = FileAttachment("data/institutions.csv").csv({typed: true})
+popRates = inst.filter(d => d.level === "4-year" && d.grad_rate_bach_6yr != null && d.bach_cohort >= 30).map(d => d.grad_rate_bach_6yr)
+popStats = ({mean: d3.mean(popRates), median: d3.median(popRates), sd: d3.deviation(popRates)})
+```
+
+::: {.lab-controls}
+```{ojs}
+//| echo: false
+viewof statName = Inputs.radio(new Map([["Mean", "mean"], ["Median", "median"]]), {label: "Statistic", value: "mean"})
+viewof sampleN = Inputs.radio([25, 100, 400], {label: "Sample size", value: 100})
+viewof nBoot = Inputs.radio([50, 200, 1000], {label: "Bootstrap resamples", value: 200})
+viewof draw = Inputs.range([1, 12], {label: "Sample draw", step: 1, value: 1})
+```
+:::
+
+```{ojs}
+//| echo: false
+boot = {
+  const rng = d3.randomLcg(((draw * 7919 + sampleN * 131 + (statName === "mean" ? 0 : 17)) % 10007) / 10007);
+  const sample = d3.shuffler(rng)(popRates.slice()).slice(0, sampleN);
+  const stat = statName === "mean" ? (v => d3.mean(v)) : (v => d3.median(v));
+  const stats = new Float64Array(nBoot);
+  const pick = new Array(sampleN);
+  for (let b = 0; b < nBoot; b++) {
+    for (let i = 0; i < sampleN; i++) pick[i] = sample[Math.floor(rng() * sampleN)];
+    stats[b] = stat(pick);
+  }
+  const sorted = Float64Array.from(stats).sort();
+  return {
+    sample, stats, sorted,
+    observed: stat(sample),
+    se: d3.deviation(stats),
+    lo: d3.quantileSorted(sorted, 0.025),
+    hi: d3.quantileSorted(sorted, 0.975),
+    formulaSe: statName === "mean" ? d3.deviation(sample) / Math.sqrt(sampleN) : null
+  };
+}
+```
+
+```{ojs}
+//| echo: false
+bootNode = d3.create("svg").attr("class", "lab-svg").node()
+
+bootPlot = {
+  const width = 860, height = 400, margin = {top: 24, right: 20, bottom: 48, left: 52};
+  const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const dur = reduce ? 0 : 600;
+  const center = popStats[statName];
+  const x = d3.scaleLinear().domain([center - 16, center + 16]).range([margin.left, width - margin.right]);
+  const bins = d3.bin().domain(x.domain()).thresholds(d3.range(center - 16, center + 16.01, 0.8))(boot.stats);
+  const y = d3.scaleLinear().domain([0, Math.max(5, d3.max(bins, b => b.length))]).nice().range([height - margin.bottom, margin.top]);
+  const inBand = b => (b.x0 + b.x1) / 2 >= boot.lo && (b.x0 + b.x1) / 2 <= boot.hi;
+
+  const svg = d3.select(bootNode);
+  svg.attr("viewBox", [0, 0, width, height]);
+  const layer = name => { let g = svg.select(`g.${name}`); if (g.empty()) g = svg.append("g").attr("class", name); return g; };
+  const gband = layer("band"), gbars = layer("bars"), gx = layer("axis"), gy = layer("axisy"), gref = layer("ref"), glab = layer("labels");
+
+  gx.attr("transform", `translate(0,${height - margin.bottom})`).call(d3.axisBottom(x).ticks(8).tickSizeOuter(0));
+  gy.attr("transform", `translate(${margin.left},0)`).call(d3.axisLeft(y).ticks(6).tickSizeOuter(0));
+  glab.selectAll("text.axis-label").data([
+    {x: width - margin.right, y: height - 10, anchor: "end", rot: null, t: `Bootstrap ${statName} of 6-year completion (%)`},
+    {x: 0, y: 0, anchor: "end", rot: `translate(14,${margin.top}) rotate(-90)`, t: "Resamples"}
+  ]).join("text").attr("class", "axis-label")
+    .attr("x", d => d.rot ? null : d.x).attr("y", d => d.rot ? null : d.y)
+    .attr("transform", d => d.rot).attr("text-anchor", d => d.anchor).text(d => d.t);
+
+  const t = svg.transition().duration(dur).ease(d3.easeCubicOut);
+
+  gband.selectAll("rect").data([boot]).join("rect")
+    .attr("y", margin.top).attr("height", height - margin.top - margin.bottom)
+    .attr("fill", "var(--lab-primary)").attr("fill-opacity", 0.12)
+    .transition(t)
+    .attr("x", d => x(Math.max(d.lo, x.domain()[0]))).attr("width", d => Math.max(0, x(Math.min(d.hi, x.domain()[1])) - x(Math.max(d.lo, x.domain()[0]))));
+
+  gbars.selectAll("rect").data(bins, (b, i) => i)
+    .join(enter => enter.append("rect").attr("y", y(0)).attr("height", 0))
+    .attr("x", b => x(b.x0) + 1).attr("width", b => Math.max(0, x(b.x1) - x(b.x0) - 2))
+    .attr("fill", b => inBand(b) ? "var(--lab-primary)" : "#b0b7bf")
+    .transition(t).delay((b, i) => reduce ? 0 : Math.abs(x(b.x0) - x(center)) * 0.8)
+    .attr("y", b => y(b.length)).attr("height", b => y(0) - y(b.length));
+
+  const refs = [
+    {k: "pop", v: center, color: "var(--lab-ink)", dash: "6 4", label: `Population ${statName} ${d3.format(".1f")(center)}`, dy: 0},
+    {k: "obs", v: boot.observed, color: "var(--lab-accent)", dash: null, label: `Sample ${statName} ${d3.format(".1f")(boot.observed)}`, dy: 14}
+  ];
+  gref.selectAll("g.ref").data(refs, d => d.k)
+    .join(enter => {
+      const g = enter.append("g").attr("class", "ref");
+      g.append("line").attr("y1", margin.top - 4).attr("y2", height - margin.bottom).attr("stroke-width", 2);
+      g.append("text").attr("font-size", 12).attr("font-weight", 600);
+      return g;
+    })
+    .call(g => {
+      g.select("line").attr("stroke", d => d.color).attr("stroke-dasharray", d => d.dash)
+        .transition(t).attr("x1", d => x(d.v)).attr("x2", d => x(d.v));
+      g.select("text").attr("fill", d => d.color).attr("y", d => margin.top - 8 + d.dy)
+        .attr("text-anchor", d => d.v >= center ? "start" : "end").attr("dx", d => d.v >= center ? 6 : -6)
+        .text(d => d.label)
+        .transition(t).attr("x", d => x(d.v));
+    });
+
+  return svg.node();
+}
+```
+
+```{ojs}
+//| echo: false
+bootReadout = {
+  const f1 = d3.format(".1f"), f2 = d3.format(".2f");
+  const center = popStats[statName];
+  const covers = boot.lo <= center && center <= boot.hi;
+  return html`<div class="lab-readout">
+    <div><span class="k">Sample ${statName}</span><span class="val accent">${f1(boot.observed)}</span></div>
+    <div><span class="k">Bootstrap standard error</span><span class="val primary">${f2(boot.se)}</span></div>
+    <div><span class="k">Formula standard error</span><span class="val">${boot.formulaSe == null ? "–" : f2(boot.formulaSe)}</span></div>
+    <div><span class="k">95% percentile interval</span><span class="val">${f1(boot.lo)} to ${f1(boot.hi)}</span></div>
+    <div><span class="k">Interval width</span><span class="val">${f1(boot.hi - boot.lo)}</span></div>
+    <div><span class="k">Covers the population ${statName}?</span><span class="val ${covers ? "primary" : "accent"}">${covers ? "Yes" : "No"}</span></div>
+  </div>
+  <p class="lab-hint">${boot.formulaSe == null
+    ? "There is no simple formula for the standard error of a median. The bootstrap gives one anyway, which is the point of it."
+    : `The formula standard error is the sample standard deviation over the square root of ${sampleN}. With a few hundred resamples the bootstrap lands on nearly the same number without the formula.`}
+    Move the sample draw slider to take a different sample and watch the interval shift.</p>`;
+}
+```
+
+:::
+
+Three things to try:
+
+1. **Change the sample size.** At 25 the interval is about 15 points wide. At 400 it is about 4. Quadrupling the sample halves the width, because the standard error shrinks with the square root of n, not with n. That is why the second thousand survey responses buy you so much less than the first hundred did.
+2. **Move the sample draw slider at n = 25.** The interval jumps around, and every so often it misses the dashed line entirely. That miss is what "95% confidence" means: the procedure catches the truth in about 19 draws out of 20, and you never know which draw you are holding.
+3. **Switch to the median.** The formula readout goes blank. There is no textbook standard error for a median, a ratio, or a percentile gap, but the bootstrap does not care. Resample, recompute, read off the spread.
+
+## Do it {.beat data-beat="2 · Do it"}
+
+The cells below run in your browser. The population is the four-year institutions with a reported six-year rate and a cohort of at least 30. From it we draw one sample of 50, the situation you are usually in, and then check the answer against the population, which you usually cannot.
+
+::: {.panel-tabset group="language"}
+
+### R
+
+```{webr}
+#| autorun: true
+#| caption: The population and one sample from it
+library(dplyr)
+library(ggplot2)
+
+inst <- read.csv("data/institutions.csv", na.strings = c("", "NA"))
+pop <- inst |>
+  filter(level == "4-year", !is.na(grad_rate_bach_6yr), bach_cohort >= 30) |>
+  pull(grad_rate_bach_6yr)
+
+set.seed(1)
+samp <- sample(pop, 50)
+
+c(population_n = length(pop), population_mean = mean(pop), population_sd = sd(pop),
+  sample_mean = mean(samp), sample_sd = sd(samp))
+```
+
+The sample mean is off by a point or two. How far off should we expect it to be? The bootstrap answers by treating the sample as if it were the population: draw 50 values from it with replacement, take the mean, and repeat.
+
+```{webr}
+#| autorun: true
+#| caption: Bootstrap the mean
+set.seed(2)
+boot_means <- replicate(2000, mean(sample(samp, replace = TRUE)))
+
+c(bootstrap_se = sd(boot_means),
+  formula_se = sd(samp) / sqrt(50))
+```
+
+Two standard errors, one from resampling and one from the formula `s / sqrt(n)`, and they agree to the second decimal. The formula is a shortcut that happens to exist for the mean. The bootstrap is the general method.
+
+```{webr}
+#| autorun: true
+#| caption: The bootstrap distribution and two intervals
+pct_ci <- quantile(boot_means, c(0.025, 0.975))
+t_ci <- mean(samp) + c(-1, 1) * qt(0.975, df = 49) * sd(samp) / sqrt(50)
+
+ggplot(data.frame(m = boot_means), aes(m)) +
+  annotate("rect", xmin = pct_ci[1], xmax = pct_ci[2], ymin = -Inf, ymax = Inf, fill = "#2a78d6", alpha = 0.12) +
+  geom_histogram(binwidth = 0.5, fill = "#2a78d6", color = "white") +
+  geom_vline(xintercept = mean(pop), linetype = "dashed", color = "#14213d", linewidth = 0.8) +
+  geom_vline(xintercept = mean(samp), color = "#eb6834", linewidth = 0.8) +
+  labs(x = "Bootstrap mean of 6-year completion (%)", y = "Resamples",
+       title = "Dashed: population mean. Orange: sample mean. Band: 95% percentile interval.") +
+  theme_minimal(base_size = 13)
+
+rbind(percentile = pct_ci, t_formula = t_ci)
+```
+
+Now the promise. "95% confidence" is a statement about the procedure, not about this one interval. Draw 200 samples of 50, build the t interval for each, and count how many contain the population mean.
+
+```{webr}
+#| autorun: true
+#| caption: "What 95% means: coverage over 200 samples"
+set.seed(3)
+covers <- replicate(200, {
+  s <- sample(pop, 50)
+  ci <- mean(s) + c(-1, 1) * qt(0.975, df = 49) * sd(s) / sqrt(50)
+  ci[1] <= mean(pop) & mean(pop) <= ci[2]
+})
+
+c(intervals = 200, covering = sum(covers), coverage = mean(covers))
+```
+
+About one interval in twenty misses, and nothing in the sample tells you which. The bootstrap earns its keep where no formula exists. The median has no `s / sqrt(n)`; the code is the same.
+
+```{webr}
+#| autorun: true
+#| caption: The same thing for the median
+set.seed(4)
+boot_medians <- replicate(2000, median(sample(samp, replace = TRUE)))
+
+c(sample_median = median(samp), bootstrap_se = sd(boot_medians),
+  quantile(boot_medians, c(0.025, 0.975)), population_median = median(pop))
+```
+
+### Python
+
+```{pyodide}
+#| autorun: true
+#| caption: The population and one sample from it
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+
+inst = pd.read_csv("data/institutions.csv")
+pop = inst.loc[(inst["level"] == "4-year") & inst["grad_rate_bach_6yr"].notna() & (inst["bach_cohort"] >= 30),
+               "grad_rate_bach_6yr"].to_numpy()
+
+rng = np.random.default_rng(1)
+samp = rng.choice(pop, 50, replace=False)
+
+pd.Series({"population_n": len(pop), "population_mean": pop.mean(), "population_sd": pop.std(ddof=1),
+           "sample_mean": samp.mean(), "sample_sd": samp.std(ddof=1)}).round(2)
+```
+
+```{pyodide}
+#| autorun: true
+#| caption: Bootstrap the mean
+boot_means = np.array([rng.choice(samp, 50, replace=True).mean() for _ in range(2000)])
+
+pd.Series({"bootstrap_se": boot_means.std(ddof=1),
+           "formula_se": samp.std(ddof=1) / np.sqrt(50)}).round(3)
+```
+
+```{pyodide}
+#| autorun: true
+#| caption: The bootstrap distribution and two intervals
+pct_ci = np.quantile(boot_means, [0.025, 0.975])
+t_crit = 2.0096  # t with 49 degrees of freedom; scipy.stats.t.ppf(0.975, 49) gives it
+t_ci = samp.mean() + np.array([-1, 1]) * t_crit * samp.std(ddof=1) / np.sqrt(50)
+
+fig, ax = plt.subplots(figsize=(8, 4.5))
+ax.axvspan(pct_ci[0], pct_ci[1], color="#2a78d6", alpha=0.12)
+ax.hist(boot_means, bins=np.arange(boot_means.min(), boot_means.max() + 0.5, 0.5), color="#2a78d6", edgecolor="white")
+ax.axvline(pop.mean(), linestyle="--", color="#14213d")
+ax.axvline(samp.mean(), color="#eb6834")
+ax.set_xlabel("Bootstrap mean of 6-year completion (%)")
+ax.set_ylabel("Resamples")
+ax.set_title("Dashed: population mean. Orange: sample mean. Band: 95% percentile interval.", loc="left", fontsize=11)
+plt.tight_layout()
+plt.show()
+
+pd.DataFrame({"lower": [pct_ci[0], t_ci[0]], "upper": [pct_ci[1], t_ci[1]]}, index=["percentile", "t_formula"]).round(2)
+```
+
+```{pyodide}
+#| autorun: true
+#| caption: "What 95% means: coverage over 200 samples"
+rng = np.random.default_rng(3)
+hits = 0
+for _ in range(200):
+    s = rng.choice(pop, 50, replace=False)
+    half = t_crit * s.std(ddof=1) / np.sqrt(50)
+    hits += (s.mean() - half <= pop.mean() <= s.mean() + half)
+
+pd.Series({"intervals": 200, "covering": hits, "coverage": hits / 200})
+```
+
+```{pyodide}
+#| autorun: true
+#| caption: The same thing for the median
+rng = np.random.default_rng(4)
+boot_medians = np.array([np.median(rng.choice(samp, 50, replace=True)) for _ in range(2000)])
+
+pd.Series({"sample_median": np.median(samp), "bootstrap_se": boot_medians.std(ddof=1),
+           "lower": np.quantile(boot_medians, 0.025), "upper": np.quantile(boot_medians, 0.975),
+           "population_median": np.median(pop)}).round(2)
+```
+
+:::
+
+## Practice {.beat data-beat="3 · Practice"}
+
+Fill in the blanks and press Run. The check reads the value your code returns, so make the last line the answer. `samp` is the same sample of 50 rates as above.
+
+```{webr}
+#| setup: true
+#| exercise:
+#|   - stats3_boot
+#|   - stats3_ci
+inst <- read.csv("data/institutions.csv", na.strings = c("", "NA"))
+pop <- inst$grad_rate_bach_6yr[inst$level == "4-year" & !is.na(inst$grad_rate_bach_6yr) & !is.na(inst$bach_cohort) & inst$bach_cohort >= 30]
+set.seed(1)
+samp <- sample(pop, 50)
+```
+
+::: {.lab-exercise data-exercise="stats3_boot"}
+
+### Bootstrap a standard error
+
+Resample `samp` with replacement 2,000 times, take the mean each time, and return the standard deviation of those means. A single number: the bootstrap standard error.
+
+```{webr}
+#| exercise: stats3_boot
+boot_means <- replicate(2000, mean(sample(samp, replace = ______)))
+______(boot_means)
+```
+
+::: {.hint exercise="stats3_boot"}
+::: {.callout-note collapse="false"}
+## Hint
+A bootstrap resample is the same size as the sample and draws **with** replacement, so `replace = TRUE`. The standard error is the standard deviation, `sd()`, of the resampled means.
+:::
+:::
+
+::: {.solution exercise="stats3_boot"}
+::: {.callout-tip collapse="false"}
+## Solution
+```r
+boot_means <- replicate(2000, mean(sample(samp, replace = TRUE)))
+sd(boot_means)
+```
+Around 3.1, within a rounding error of `sd(samp) / sqrt(50)`. Your number will differ slightly from your neighbour's because the resamples are random; that is fine, and the check allows for it.
+:::
+:::
+
+```{webr}
+#| exercise: stats3_boot
+#| check: true
+formula_se <- sd(samp) / sqrt(length(samp))
+val <- suppressWarnings(as.numeric(unlist(.result))[1])
+if (is.numeric(val) && length(val) == 1 && !is.na(val) && abs(val - formula_se) < 0.4) {
+  list(correct = TRUE, message = sprintf("Correct: a bootstrap standard error of %.2f against %.2f from the formula.", val, formula_se))
+} else if (is.numeric(val) && length(val) == 1 && !is.na(val) && abs(val - sd(samp)) < 0.5) {
+  list(correct = FALSE, message = "That is the standard deviation of the sample itself, not of the resampled means. Did you forget replace = TRUE, or take sd(samp) instead of sd(boot_means)?")
+} else if (is.numeric(val) && length(val) == 1 && !is.na(val) && val < 0.5) {
+  list(correct = FALSE, message = "Too small. Without replace = TRUE every resample is the same 50 values in a different order, so the means never vary.")
+} else {
+  list(correct = FALSE, message = "Not yet. The answer is a single number, the standard deviation of 2,000 resampled means. It should be close to 3.")
+}
+```
+
+:::
+
+::: {.lab-exercise data-exercise="stats3_ci"}
+
+### The formula interval
+
+Build the 95% t interval for the mean of `samp` by formula. Return a vector of two numbers, lower then upper.
+
+```{webr}
+#| exercise: stats3_ci
+mean(samp) + c(-1, 1) * qt(0.975, df = ______) * sd(samp) / sqrt(______)
+```
+
+::: {.hint exercise="stats3_ci"}
+::: {.callout-note collapse="false"}
+## Hint
+The degrees of freedom are one less than the sample size, and the standard error divides by the square root of the sample size. Both blanks come from `length(samp)`, which is 50.
+:::
+:::
+
+::: {.solution exercise="stats3_ci"}
+::: {.callout-tip collapse="false"}
+## Solution
+```r
+mean(samp) + c(-1, 1) * qt(0.975, df = 49) * sd(samp) / sqrt(50)
+```
+About 50.0 to 62.5. The population mean, 54.8, is inside. `t.test(samp)$conf.int` gives the same two numbers.
+:::
+:::
+
+```{webr}
+#| exercise: stats3_ci
+#| check: true
+expected <- mean(samp) + c(-1, 1) * qt(0.975, df = 49) * sd(samp) / sqrt(50)
+z_version <- mean(samp) + c(-1, 1) * qnorm(0.975) * sd(samp) / sqrt(50)
+vals <- suppressWarnings(as.numeric(unlist(.result)))
+if (length(vals) == 2 && !anyNA(vals) && isTRUE(all(abs(sort(vals) - expected) < 0.05))) {
+  list(correct = TRUE, message = sprintf("Correct: %.1f to %.1f. The population mean of %.1f is inside this one.", expected[1], expected[2], mean(pop)))
+} else if (length(vals) == 2 && !anyNA(vals) && isTRUE(all(abs(sort(vals) - z_version) < 0.05))) {
+  list(correct = FALSE, message = "Close: that is the z interval with 1.96. With 50 observations use the t quantile with 49 degrees of freedom, which is a little wider.")
+} else if (length(vals) == 2 && !anyNA(vals)) {
+  list(correct = FALSE, message = "Two numbers, but not the right two. The degrees of freedom should be 49 and the divisor sqrt(50).")
+} else {
+  list(correct = FALSE, message = "Not yet. The result should be a vector of two numbers, the lower and upper limits.")
+}
+```
+
+:::
+
+::: {.lab-exercise data-exercise="stats3_py_boot"}
+
+### The same standard error in Python
+
+Bootstrap the mean of `samp` 2,000 times with numpy and return the standard deviation of the resampled means.
+
+```{pyodide}
+#| setup: true
+#| exercise: stats3_py_boot
+import numpy as np
+import pandas as pd
+inst = pd.read_csv("data/institutions.csv")
+pop = inst.loc[(inst["level"] == "4-year") & inst["grad_rate_bach_6yr"].notna() & (inst["bach_cohort"] >= 30), "grad_rate_bach_6yr"].to_numpy()
+rng = np.random.default_rng(1)
+samp = rng.choice(pop, 50, replace=False)
+```
+
+```{pyodide}
+#| exercise: stats3_py_boot
+boot_means = np.array([rng.choice(samp, 50, replace=______).mean() for _ in range(2000)])
+boot_means.______(ddof=1)
+```
+
+::: {.hint exercise="stats3_py_boot"}
+::: {.callout-note collapse="false"}
+## Hint
+`replace=True` for a bootstrap resample, and `.std(ddof=1)` for the sample standard deviation of the means.
+:::
+:::
+
+::: {.solution exercise="stats3_py_boot"}
+::: {.callout-tip collapse="false"}
+## Solution
+```python
+boot_means = np.array([rng.choice(samp, 50, replace=True).mean() for _ in range(2000)])
+boot_means.std(ddof=1)
+```
+:::
+:::
+
+```{pyodide}
+#| exercise: stats3_py_boot
+#| check: true
+import numpy as np
+formula_se = samp.std(ddof=1) / np.sqrt(len(samp))
+try:
+    val = float(np.asarray(result).ravel()[0])
+except Exception:
+    val = float("nan")
+if np.isfinite(val) and abs(val - formula_se) < 0.4:
+    feedback = {"correct": True, "message": f"Correct: {val:.2f} from the bootstrap against {formula_se:.2f} from the formula."}
+elif np.isfinite(val) and val < 0.5:
+    feedback = {"correct": False, "message": "Too small. Without replace=True every resample is the same 50 values, so the means never vary."}
+else:
+    feedback = {"correct": False, "message": "Not yet. Expected a single number close to 3, the standard deviation of 2,000 resampled means."}
+feedback
+```
+
+:::
+
+## In your stack {.beat data-beat="4 · In your stack"}
+
+The formula interval is a few cells in either tool. The bootstrap is not, and that is worth knowing before you promise one in a spreadsheet. The workbook [ir-lab.xlsx](data/ir-lab.xlsx) has a `sampling` sheet with the sample of 50, the formula interval, and one bootstrap resample built with `RANDBETWEEN`.
+
+::: {.panel-tabset group="stack"}
+
+### Excel
+
+The `sampling` sheet keeps the 50 sampled rates in column B. The interval is four formulas.
+
+| Quantity | Formula |
+|---|---|
+| Sample size | `=COUNT(B5:B54)` |
+| Mean | `=AVERAGE(B5:B54)` |
+| Standard error | `=STDEV.S(B5:B54)/SQRT(COUNT(B5:B54))` |
+| Half-width, 95% | `=CONFIDENCE.T(0.05, STDEV.S(B5:B54), COUNT(B5:B54))` |
+| Lower, upper | `=E6-E8` and `=E6+E8` |
+
+`CONFIDENCE.T` is `T.INV.2T(0.05, n-1)` times the standard error, so the two routes agree. `CONFIDENCE.NORM` uses 1.96 instead and is a little too narrow for small samples. The population column beside it applies `AVERAGE` and `STDEV.S` to the whole table, so you can see the interval catch the truth.
+
+**One bootstrap resample** is a column of `=INDEX($B$5:$B$54, RANDBETWEEN(1, 50))` and its mean. Press F9 and a new resample appears. Two thousand of them is where formulas stop being the right tool: a Data Table can do it, but it recalculates on every keystroke and the sheet crawls. For a real bootstrap, use the R or Python cells, or the Analysis ToolPak's Sampling tool to build the resamples once.
+
+Two things worth remembering:
+
+- **A PivotTable average has no standard error.** Add a `StDev` and a `Count` field beside it and compute `StDev / SQRT(Count)` in a column next to the pivot; that is the standard error for each group.
+- **Error bars on a chart are not confidence intervals unless you say so.** The default is a fixed value or a percentage. Choose Custom and point both directions at a range holding the half-width.
+
+### Power BI
+
+::: {.ir-powerbi data-powerbi-page="overview" data-powerbi-title="Institution overview"}
+**Interactive report: not connected yet.** Download the [Power BI project](data/ir-lab-powerbi.zip) to explore this lesson in Power BI Desktop. The embedded report will appear here once it is connected.
+:::
+
+A card that shows a mean with no interval is the most common overclaim in a dashboard. DAX can carry the interval as three measures, and they respond to slicers, so the interval for a sector or a state is computed on the fly.
+
+```dax
+Completion Mean = AVERAGE ( institutions[grad_rate_bach_6yr] )
+
+Completion N = COUNT ( institutions[grad_rate_bach_6yr] )
+
+Completion SE =
+DIVIDE ( STDEV.S ( institutions[grad_rate_bach_6yr] ), SQRT ( [Completion N] ) )
+```
+
+```dax
+Completion CI Half =
+VAR n = [Completion N]
+RETURN IF ( n > 1, T.INV.2T ( 0.05, n - 1 ) * [Completion SE] )
+
+Completion CI Lower = [Completion Mean] - [Completion CI Half]
+
+Completion CI Upper = [Completion Mean] + [Completion CI Half]
+```
+
+`T.INV.2T` is the t quantile, the same one `qt(0.975, n - 1)` gives in R. If your version of DAX lacks it, `NORM.S.INV ( 0.975 )` is 1.96, which is close enough for groups larger than about 30 and too narrow below that. Put the three measures on a clustered bar or a line chart with error bars from the Analytics pane, or show `Lower` and `Upper` as small text beside the mean on a card.
+
+There is no practical bootstrap in DAX. A measure has no loop and no random resampling, and the population it sees is whatever the slicers leave. The honest version of a small-group card is the formula interval plus a visible `Completion N`, so a reader can see when a mean rests on twelve institutions.
+
+:::
+
+## Before you leave
+
+::: {.takeaways}
+1. **Every statistic has a sampling distribution.** The bootstrap shows it to you: resample with replacement, recompute, look at the spread. The standard error is that spread.
+2. **Width shrinks with the square root of n.** Four times the data buys half the interval. Budget accordingly, and stop expecting a sample of 30 to give a tight answer.
+3. **"95%" describes the procedure, not the interval.** About one in twenty intervals misses, and the data never tells you which. Say "the interval runs from 50 to 62," not "there is a 95% chance the true mean is in here."
+4. **Use the formula where it exists, the bootstrap where it does not.** Means and proportions have formulas. Medians, ratios, percentile gaps, and anything you built yourself do not.
+:::
+
+Next in this track: **Two groups**, on t-tests, effect sizes, and why a significant difference can still be tiny.
