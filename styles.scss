@@ -667,6 +667,22 @@ table {
   padding: 0.35rem 0.6rem;
 }
 
+// Formula tables in the stack tabs hold unspaced structured references
+// (Institutions[level]) that cannot wrap at a space. Let inline code break
+// anywhere so a table never widens the page on a phone.
+td code,
+th code {
+  overflow-wrap: anywhere;
+}
+
+// Variable chips carry an absolutely positioned tooltip up to 320 px wide.
+// It is invisible until hover or focus but still counts as scrollable
+// overflow, so a chip near the right edge of a phone screen widens the page.
+// Clip sideways overflow at the page container, which never scrolls sideways.
+#quarto-content {
+  overflow-x: clip;
+}
+
 // ---- Responsive ------------------------------------------------------------
 
 @media (max-width: 900px) {
@@ -687,6 +703,23 @@ table {
 
   .lessons .lesson-status {
     grid-column: 2;
+  }
+
+  // Charts draw in an 860-unit viewBox; below about 560 px their labels
+  // shrink past legibility, so keep a minimum width and scroll sideways.
+  .lab-anim :has(> svg.lab-svg) {
+    overflow-x: auto;
+  }
+
+  .lab-anim svg.lab-svg {
+    min-width: 560px;
+  }
+
+  // The data dictionary on the home page is wider than a phone column;
+  // let it scroll sideways on its own instead of clipping the last column.
+  .index-page main table {
+    display: block;
+    overflow-x: auto;
   }
 }
 

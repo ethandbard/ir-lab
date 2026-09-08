@@ -281,8 +281,8 @@ variables <- tribble(
   "tribal", "HD2023", "TRIBAL", "Tribal college",
   "longitude", "HD2023", "LONGITUD", "Longitude location of institution",
   "latitude", "HD2023", "LATITUDE", "Latitude location of institution",
-  "headcount", "EFFY2023", "EFYTOTLT (EFFYALEV=1)", "12-month unduplicated headcount, all students",
-  "undergrad", "EFFY2023", "EFYTOTLT (EFFYALEV=2)", "12-month unduplicated headcount, undergraduate",
+  "headcount", "EFFY2023", "EFYTOTLT (EFFYALEV=1)", "12-month unduplicated headcount, all students, 2022-23",
+  "undergrad", "EFFY2023", "EFYTOTLT (EFFYALEV=2)", "12-month unduplicated headcount, undergraduate, 2022-23",
   "pct_women_ug", "EFFY2023", "EFYTOTLW / EFYTOTLT", "Percent of undergraduates who are women",
   "pct_white_ug", "EFFY2023", "EFYWHITT / EFYTOTLT", "Percent of undergraduates who are White",
   "pct_black_ug", "EFFY2023", "EFYBKAAT / EFYTOTLT", "Percent of undergraduates who are Black or African American",
@@ -306,10 +306,10 @@ variables <- tribble(
   "net_price_48_75k", "SFA2223", "NPT432 or NPIS432", "Average net price, family income $48,001-75,000",
   "net_price_75_110k", "SFA2223", "NPT442 or NPIS442", "Average net price, family income $75,001-110,000",
   "net_price_110k_plus", "SFA2223", "NPT452 or NPIS452", "Average net price, family income $110,001 or more",
-  "associates_awarded", "C2023_C", "CSTOTLT (AWLEVELC=3)", "Associate's degrees awarded, 2022-23",
-  "bachelors_awarded", "C2023_C", "CSTOTLT (AWLEVELC=5)", "Bachelor's degrees awarded, 2022-23",
-  "masters_awarded", "C2023_C", "CSTOTLT (AWLEVELC=7)", "Master's degrees awarded, 2022-23",
-  "doctorates_awarded", "C2023_C", "CSTOTLT (AWLEVELC=9)", "Doctor's degrees awarded, 2022-23"
+  "associates_awarded", "C2023_C", "CSTOTLT (AWLEVELC=3)", "Students receiving associate's degrees, 2022-23",
+  "bachelors_awarded", "C2023_C", "CSTOTLT (AWLEVELC=5)", "Students receiving bachelor's degrees, 2022-23",
+  "masters_awarded", "C2023_C", "CSTOTLT (AWLEVELC=7)", "Students receiving master's degrees, 2022-23",
+  "doctorates_awarded", "C2023_C", "CSTOTLT (AWLEVELC=9)", "Students receiving doctor's degrees, 2022-23"
 )
 
 stopifnot(setequal(variables$variable, names(institutions)))

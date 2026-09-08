@@ -879,28 +879,43 @@ Each pairwise test is the difference in two group means over `SQRT(MS_within * (
 **Interactive report: not connected yet.** Download the [Power BI project](data/ir-lab-powerbi.zip) to explore this lesson in Power BI Desktop. The embedded report will appear here once it is connected.
 :::
 
-The ANOVA is a handful of measures over the grouping column, and `SUMMARIZE` does the per-group arithmetic:
+The ANOVA is a handful of measures over the grouping column. A measure must return a scalar, not a table, so the frame is a calculated column, TRUE for the `r fmt(n_reg)` institutions the R and Python tabs keep, and every measure starts by applying it. `GROUPBY` with `CURRENTGROUP` does the per-group count, mean, and variance over those rows only, which is the arithmetic of the Excel sheet: between is n times the squared gap from the grand mean, within is n minus one times the variance. `k` is counted from the frame, `r k` regions here, rather than from the column, which also holds the two excluded regions.
 
 ```dax
-Completion Rows =
-FILTER ( ALL ( institutions ), institutions[level] = "4-year" && institutions[bach_cohort] >= 30
+In ANOVA Frame =
+institutions[level] = "4-year"
+    && institutions[bach_cohort] >= 30
     && NOT ISBLANK ( institutions[grad_rate_bach_6yr] )
-    && NOT ( institutions[region] IN { "US service schools", "Outlying areas" } ) )
+    && NOT ISBLANK ( institutions[region] )
+    && NOT ( institutions[region] IN { "US service schools", "Outlying areas" } )
 
 SS Between =
-VAR grand = AVERAGEX ( [Completion Rows], institutions[grad_rate_bach_6yr] )
-VAR groups = SUMMARIZE ( [Completion Rows], institutions[region],
-    "n", COUNTROWS ( [Completion Rows] ), "m", AVERAGE ( institutions[grad_rate_bach_6yr] ) )
+VAR t = CALCULATETABLE ( institutions, institutions[In ANOVA Frame] = TRUE () )
+VAR grand = AVERAGEX ( t, institutions[grad_rate_bach_6yr] )
+VAR groups =
+    GROUPBY (
+        t,
+        institutions[region],
+        "n", SUMX ( CURRENTGROUP (), 1 ),
+        "m", AVERAGEX ( CURRENTGROUP (), institutions[grad_rate_bach_6yr] )
+    )
 RETURN SUMX ( groups, [n] * ( [m] - grand ) ^ 2 )
 
 SS Within =
-SUMX ( [Completion Rows],
-    ( institutions[grad_rate_bach_6yr]
-        - CALCULATE ( AVERAGE ( institutions[grad_rate_bach_6yr] ), ALLEXCEPT ( institutions, institutions[region] ) ) ) ^ 2 )
+VAR t = CALCULATETABLE ( institutions, institutions[In ANOVA Frame] = TRUE () )
+VAR groups =
+    GROUPBY (
+        t,
+        institutions[region],
+        "n", SUMX ( CURRENTGROUP (), 1 ),
+        "v", VARX.S ( CURRENTGROUP (), institutions[grad_rate_bach_6yr] )
+    )
+RETURN SUMX ( groups, ( [n] - 1 ) * [v] )
 
 F Statistic =
-VAR k = DISTINCTCOUNT ( institutions[region] )
-VAR n = COUNTROWS ( [Completion Rows] )
+VAR t = CALCULATETABLE ( institutions, institutions[In ANOVA Frame] = TRUE () )
+VAR k = COUNTROWS ( SUMMARIZE ( t, institutions[region] ) )
+VAR n = COUNTROWS ( t )
 RETURN DIVIDE ( [SS Between] / ( k - 1 ), [SS Within] / ( n - k ) )
 
 Eta Squared = DIVIDE ( [SS Between], [SS Between] + [SS Within] )

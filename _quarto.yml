@@ -1,6 +1,7 @@
 project:
   type: website
   output-dir: _site
+  pre-render: powerbi/scripts/package_project.py
   resources:
     - data
     - lab.js

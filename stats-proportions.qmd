@@ -837,27 +837,33 @@ The observed table is a `COUNTIFS` grid on the Institutions table, and everythin
 **Interactive report: not connected yet.** Download the [Power BI project](data/ir-lab-powerbi.zip) to explore this lesson in Power BI Desktop. The embedded report will appear here once it is connected.
 :::
 
-A matrix visual with `control` on rows and `locale` on columns and a count of rows in the values is the observed table. The test is four measures that walk the same grid:
+A matrix visual with `control` on rows and `locale` on columns and a count of rows in the values is the observed table. The test is four measures that walk the same grid. `r n_no_locale` institutions have no locale, and the R and Python tabs drop them, so `Observed` drops them too; otherwise the grid grows a blank column and the degrees of freedom come out as 8 instead of `r df_chi`:
 
 ```dax
-Observed = COUNTROWS ( institutions )
+Observed =
+CALCULATE ( COUNTROWS ( institutions ), NOT ISBLANK ( institutions[locale] ) )
 
 Expected =
-VAR n = CALCULATE ( COUNTROWS ( institutions ), ALL ( institutions[control], institutions[locale] ) )
-VAR rowTotal = CALCULATE ( COUNTROWS ( institutions ), ALL ( institutions[locale] ) )
-VAR colTotal = CALCULATE ( COUNTROWS ( institutions ), ALL ( institutions[control] ) )
+VAR n = CALCULATE ( [Observed], ALL ( institutions[control], institutions[locale] ) )
+VAR rowTotal = CALCULATE ( [Observed], ALL ( institutions[locale] ) )
+VAR colTotal = CALCULATE ( [Observed], ALL ( institutions[control] ) )
 RETURN DIVIDE ( rowTotal * colTotal, n )
 
 Chi Square =
 SUMX (
-    CROSSJOIN ( VALUES ( institutions[control] ), VALUES ( institutions[locale] ) ),
+    CROSSJOIN (
+        VALUES ( institutions[control] ),
+        FILTER ( VALUES ( institutions[locale] ), NOT ISBLANK ( institutions[locale] ) )
+    ),
     VAR o = [Observed]
     VAR e = [Expected]
     RETURN DIVIDE ( ( o - e ) ^ 2, e )
 )
 
 Chi Square p =
-VAR df = ( DISTINCTCOUNT ( institutions[control] ) - 1 ) * ( DISTINCTCOUNT ( institutions[locale] ) - 1 )
+VAR df =
+    ( DISTINCTCOUNTNOBLANK ( institutions[control] ) - 1 )
+        * ( DISTINCTCOUNTNOBLANK ( institutions[locale] ) - 1 )
 RETURN CHISQ.DIST.RT ( [Chi Square], df )
 ```
 

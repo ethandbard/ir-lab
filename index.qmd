@@ -9,6 +9,14 @@ body-classes: index-page
 #| include: false
 source("_common.R")
 n_inst <- fmt(nrow(institutions))
+rated <- filter(institutions, level == "4-year", !is.na(grad_rate_bach_6yr))
+n_perfect_tiny <- sum(rated$grad_rate_bach_6yr == 100 & rated$bach_cohort <= 5)
+n_small_cohort <- sum(rated$bach_cohort < 30)
+n_neg_price <- sum(institutions$net_price < 0, na.rm = TRUE)
+n_neg_band <- sum(rowSums(select(institutions, starts_with("net_price_")) < 0, na.rm = TRUE) > 0)
+n_no_locale <- sum(is.na(institutions$locale))
+n_no_size <- sum(is.na(institutions$size))
+n_no_hc <- sum(is.na(institutions$headcount))
 ```
 
 ::: {.hero}
@@ -155,7 +163,7 @@ Progress is tracked in this browser only. Completed exercises are marked on the 
 
 ## The data
 
-One row per U.S. postsecondary institution active in the 2023-24 IPEDS collection, joined from six survey components on `r v("unitid")`. Institution attributes come from the directory file, headcount from 12-month enrollment, retention from fall enrollment, completion rates from the graduation-rate cohorts, Pell share and net price from student financial aid, and degrees awarded from completions.
+One row per U.S. postsecondary institution active in the 2023-24 IPEDS collection, joined from six survey components on `r v("unitid")`. Institution attributes come from the directory file, headcount from 12-month enrollment, retention from fall enrollment, completion rates from the graduation-rate cohorts, Pell share and net price from student financial aid, and students receiving degrees from completions.
 
 - [institutions.csv](data/institutions.csv): the table the lessons use. `r fmt(nrow(institutions))` rows, `r ncol(institutions)` columns, about 1.5 MB.
 - [variables.csv](data/variables.csv): every column with its source file and IPEDS variable.
@@ -172,9 +180,9 @@ vars |>
 
 ::: {.callout-note}
 ## Things to know before trusting a number
-- **Rates are ratios of small counts at small institutions.** A 100% completion rate on a cohort of four is not a signal. Check `r v("bach_cohort")` and `r v("grad_cohort")` before ranking.
-- **Net price is in-state for publics** and a single figure for privates, so cross-sector comparisons carry that asymmetry.
-- **Financial aid lags a year.** Aid variables describe 2022-23; enrollment and completions describe 2023-24.
-- **Missing is not zero.** Two-year institutions have no bachelor's cohort, and many institutions do not report a student-faculty ratio. Blank cells are left blank.
+- **Rates are ratios of small counts at small institutions.** A 100% completion rate on a cohort of four is not a signal: `r n_perfect_tiny` four-year institutions report a 100% six-year rate on a cohort of five or fewer, and `r n_small_cohort` rates rest on cohorts under 30. Check `r v("bach_cohort")` and `r v("grad_cohort")` before ranking.
+- **Net price is in-state for publics** and a single figure for privates, so cross-sector comparisons carry that asymmetry. It can also be negative: `r n_neg_price` institutions report a negative average net price and `r n_neg_band` report one in at least one income band, where grant aid exceeded the cost of attendance. IPEDS publishes those values and so does this table.
+- **The surveys describe different years.** Directory attributes, retention, and the student-faculty ratio describe 2023-24. Financial aid, the 12-month headcount, and completions describe 2022-23. Completion rates describe cohorts that entered six years earlier.
+- **Missing is not zero.** Two-year institutions have no bachelor's cohort, and many institutions do not report a student-faculty ratio. `r n_no_locale` institutions have no locale, `r n_no_size` no size, and `r n_no_hc` no headcount. Blank cells are left blank.
 - **The history is the survivors' history.** The enrollment history covers institutions in the 2023-24 directory, so campuses that closed or merged before 2023 are not in it.
 :::

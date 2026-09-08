@@ -231,7 +231,7 @@ Three things to try:
 
 1. **Control, bar to dots.** The bars say private nonprofits lead publics by about `r gap_mean` points. Switch to every institution. The two clouds sit almost on top of each other, and there are publics above nearly every private and privates below nearly every public. The grouping explains `r eta_control`% of the spread.
 2. **Size, boxplot.** Group by size and show the boxes. The medians climb from `r round(median(small$grad_rate_bach_6yr), 1)`% under 1,000 students to `r round(median(large$grad_rate_bach_6yr), 1)`% at 20,000 and above, and the spread explained more than doubles to `r eta_size`%. Size is a better first cut than sector for this outcome, and the boxes still overlap.
-3. **Region, every institution.** Ten rows, and two of them have so few institutions that a box would be misleading. The dots show the sample size for free. Watch the US service schools: five institutions, all above 85%.
+3. **Region, every institution.** Ten rows, and two of them have so few institutions that a box would be misleading. The dots show the sample size for free. Watch the US service schools: five institutions, all above 80%.
 
 ## Do it {.beat data-beat="2 · Do it"}
 
@@ -501,15 +501,19 @@ expected <- four |>
 means <- four |>
   dplyr::group_by(locale) |>
   dplyr::summarise(median_rate = mean(grad_rate_bach_6yr))
+same_by_group <- function(res, exp, key, col) {
+  idx <- match(as.character(res[[key]]), as.character(exp[[key]]))
+  !anyNA(idx) && isTRUE(all.equal(as.numeric(res[[col]]), as.numeric(exp[[col]])[idx]))
+}
 ok <- is.data.frame(.result) &&
   all(c("locale", "n", "median_rate") %in% names(.result)) &&
   nrow(.result) == 4 &&
-  isTRUE(all.equal(sort(.result$median_rate), sort(expected$median_rate))) &&
-  isTRUE(all.equal(sort(.result$n), sort(expected$n)))
+  same_by_group(.result, expected, "locale", "median_rate") &&
+  same_by_group(.result, expected, "locale", "n")
 if (ok) {
   list(correct = TRUE, message = "Correct. Rural institutions have the lowest median and the fewest rows; both facts belong in the sentence you write about it.")
-} else if (is.data.frame(.result) && "median_rate" %in% names(.result) && nrow(.result) == 4 &&
-           isTRUE(all.equal(sort(.result$median_rate), sort(means$median_rate)))) {
+} else if (is.data.frame(.result) && all(c("locale", "median_rate") %in% names(.result)) && nrow(.result) == 4 &&
+           same_by_group(.result, means, "locale", "median_rate")) {
   list(correct = FALSE, message = "Those are means. The exercise asks for the median: median(), not mean().")
 } else if (is.data.frame(.result) && nrow(.result) != 4 && "median_rate" %in% names(.result)) {
   list(correct = FALSE, message = "Wrong number of rows. Group by locale, which has four values.")
@@ -657,40 +661,49 @@ The between-group share of the spread is three cells: the total sum of squares `
 
 Power BI does small multiples natively: any column or bar chart has a **Small multiples** well, and dropping `size` in it gives you the faceted comparison from the R and Python cells. There is no built-in box-and-whisker visual; the usual route is a matrix of quantile measures, or the Box and Whisker custom visual from AppSource.
 
-The measures below share one filter so the numbers match the other tabs. Put `control` or `locale` on the rows of a matrix and these as values.
+The measures below share one filter so the numbers match the other tabs. A measure must return a scalar, not a table, so the filter lives in a calculated column that is TRUE or FALSE for every institution, and each measure applies it with `CALCULATE`. Put `control` or `locale` on the rows of a matrix and the measures as values.
 
 ```dax
-Completion Rows =
-FILTER (
-    institutions,
-    institutions[level] = "4-year"
-        && institutions[bach_cohort] >= 30
-        && NOT ISBLANK ( institutions[grad_rate_bach_6yr] )
-)
+Completion Eligible =
+institutions[level] = "4-year"
+    && institutions[bach_cohort] >= 30
+    && NOT ISBLANK ( institutions[grad_rate_bach_6yr] )
 
-Completion N = COUNTROWS ( [Completion Rows] )
+Completion N =
+CALCULATE ( COUNTROWS ( institutions ), institutions[Completion Eligible] = TRUE () )
 
-Completion Median = MEDIANX ( [Completion Rows], institutions[grad_rate_bach_6yr] )
+Completion Median =
+CALCULATE ( MEDIAN ( institutions[grad_rate_bach_6yr] ), institutions[Completion Eligible] = TRUE () )
 
-Completion P25 = PERCENTILEX.INC ( [Completion Rows], institutions[grad_rate_bach_6yr], 0.25 )
+Completion P25 =
+CALCULATE ( PERCENTILE.INC ( institutions[grad_rate_bach_6yr], 0.25 ), institutions[Completion Eligible] = TRUE () )
 
-Completion P75 = PERCENTILEX.INC ( [Completion Rows], institutions[grad_rate_bach_6yr], 0.75 )
+Completion P75 =
+CALCULATE ( PERCENTILE.INC ( institutions[grad_rate_bach_6yr], 0.75 ), institutions[Completion Eligible] = TRUE () )
 
 Completion IQR = [Completion P75] - [Completion P25]
 ```
 
-The `Completion Rows` measure is a table expression, so define the four that use it as measures in the same table and Power BI evaluates the filter once per cell. The share of spread a grouping explains needs the grand mean held fixed while the group means vary:
+The share of spread a grouping explains needs the grand mean held fixed while the group means vary, so it releases the filter on `control` and does the per-group arithmetic itself. `GROUPBY` with `CURRENTGROUP` counts and averages the eligible rows of each group and nothing else:
 
 ```dax
 Spread Explained by Control =
-VAR rows = CALCULATETABLE ( [Completion Rows], REMOVEFILTERS ( institutions[control] ) )
+VAR rows =
+    CALCULATETABLE (
+        institutions,
+        institutions[Completion Eligible] = TRUE (),
+        REMOVEFILTERS ( institutions[control] )
+    )
 VAR grand = AVERAGEX ( rows, institutions[grad_rate_bach_6yr] )
 VAR total = SUMX ( rows, ( institutions[grad_rate_bach_6yr] - grand ) ^ 2 )
-VAR between =
-    SUMX (
-        SUMMARIZE ( rows, institutions[control], "GroupMean", AVERAGE ( institutions[grad_rate_bach_6yr] ), "GroupN", COUNTROWS ( institutions ) ),
-        [GroupN] * ( [GroupMean] - grand ) ^ 2
+VAR groups =
+    GROUPBY (
+        rows,
+        institutions[control],
+        "GroupN", SUMX ( CURRENTGROUP (), 1 ),
+        "GroupMean", AVERAGEX ( CURRENTGROUP (), institutions[grad_rate_bach_6yr] )
     )
+VAR between = SUMX ( groups, [GroupN] * ( [GroupMean] - grand ) ^ 2 )
 RETURN DIVIDE ( between, total )
 ```
 

@@ -3,8 +3,9 @@
 For every exercise in a .qmd: run its setup chunk(s), then the solution
 from the .solution block (its last expression becomes .result in R or
 result in Python), then the #| check: true chunk, and print the feedback.
-R exercises run through Rscript in the project directory; Python ones run
-in this process. Usage: python grade.py lesson.qmd [lesson2.qmd ...]
+R exercises run through Rscript in the project directory with the page's
+`webr: packages:` attached first, as the browser does before any cell runs;
+Python ones run in this process. Usage: python grade.py lesson.qmd [...]
 """
 import ast
 import io
@@ -37,6 +38,18 @@ def parse_opts(body):
     return opts, "\n".join(code)
 
 
+def r_packages(qmd):
+    """Packages under webr: packages: in the front matter."""
+    m = re.match(r"---\n(.*?)\n---", qmd, re.S)
+    if not m:
+        return []
+    block = re.search(r"^webr:\n((?:[ \t]+\S.*\n?)+)", m.group(1) + "\n", re.M)
+    if not block:
+        return []
+    pk = re.search(r"^[ \t]+packages:\n((?:[ \t]+-[ \t]*\S+\n?)+)", block.group(1), re.M)
+    return re.findall(r"-[ \t]*(\S+)", pk.group(1)) if pk else []
+
+
 def collect(qmd):
     setups, checks, sols = {}, {}, {}
     for lang, body in re.findall(r"```\{(webr|pyodide)\}\n(.*?)\n```", qmd, re.S):
@@ -58,8 +71,9 @@ def collect(qmd):
     return setups, checks, sols
 
 
-def run_r(setup, solution, check):
-    script = "\n".join(setup) + "\n.result <- {\n" + solution + "\n}\n.__fb <- {\n" + check + "\n}\ncat(sprintf('correct=%s | %s\\n', .__fb$correct, .__fb$message))\n"
+def run_r(setup, solution, check, packages=()):
+    attach = "suppressPackageStartupMessages({" + "".join(f"library({p});" for p in packages) + "})\n"
+    script = attach + "\n".join(setup) + "\n.result <- {\n" + solution + "\n}\n.__fb <- {\n" + check + "\n}\ncat(sprintf('correct=%s | %s\\n', .__fb$correct, .__fb$message))\n"
     out = subprocess.run([RSCRIPT, "-e", "source(textConnection(readLines('stdin')))"], input=script, capture_output=True, text=True)
     text = (out.stdout + out.stderr).strip().split("\n")
     lines = [l for l in text if l.startswith("correct=")]
@@ -88,6 +102,7 @@ def run_py(setup, solution, check):
 def main(paths):
   for path in paths:
     qmd = open(path, encoding="utf-8").read()
+    packages = r_packages(qmd)
     setups, checks, sols = collect(qmd)
     print(f"=== {path}: {len(checks)} checks, {len(sols)} solutions")
     for (lang, i), check in checks.items():
@@ -97,7 +112,7 @@ def main(paths):
             continue
         setup = setups.get((lang, i), [])
         try:
-            res = run_r(setup, sol, check) if lang == "webr" else run_py(setup, sol, check)
+            res = run_r(setup, sol, check, packages) if lang == "webr" else run_py(setup, sol, check)
         except Exception as e:  # noqa: BLE001
             res = f"ERROR: {e!r}"
         print(f"  {i} [{lang}]: {res}")

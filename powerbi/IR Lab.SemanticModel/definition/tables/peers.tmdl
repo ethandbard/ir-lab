@@ -136,7 +136,7 @@ table peers
 		summarizeBy: none
 		sourceColumn: latitude
 
-	/// 12-month unduplicated headcount, all students | EFFY2023 | EFYTOTLT (EFFYALEV=1)
+	/// 12-month unduplicated headcount, all students, 2022-23 | EFFY2023 | EFYTOTLT (EFFYALEV=1)
 	column headcount
 		dataType: int64
 		formatString: #,0
@@ -144,7 +144,7 @@ table peers
 		summarizeBy: none
 		sourceColumn: headcount
 
-	/// 12-month unduplicated headcount, undergraduate | EFFY2023 | EFYTOTLT (EFFYALEV=2)
+	/// 12-month unduplicated headcount, undergraduate, 2022-23 | EFFY2023 | EFYTOTLT (EFFYALEV=2)
 	column undergrad
 		dataType: int64
 		formatString: #,0
@@ -336,7 +336,7 @@ table peers
 		summarizeBy: none
 		sourceColumn: net_price_110k_plus
 
-	/// Associate's degrees awarded, 2022-23 | C2023_C | CSTOTLT (AWLEVELC=3)
+	/// Students receiving associate's degrees, 2022-23 | C2023_C | CSTOTLT (AWLEVELC=3)
 	column associates_awarded
 		dataType: int64
 		formatString: #,0
@@ -344,7 +344,7 @@ table peers
 		summarizeBy: none
 		sourceColumn: associates_awarded
 
-	/// Bachelor's degrees awarded, 2022-23 | C2023_C | CSTOTLT (AWLEVELC=5)
+	/// Students receiving bachelor's degrees, 2022-23 | C2023_C | CSTOTLT (AWLEVELC=5)
 	column bachelors_awarded
 		dataType: int64
 		formatString: #,0
@@ -352,7 +352,7 @@ table peers
 		summarizeBy: none
 		sourceColumn: bachelors_awarded
 
-	/// Master's degrees awarded, 2022-23 | C2023_C | CSTOTLT (AWLEVELC=7)
+	/// Students receiving master's degrees, 2022-23 | C2023_C | CSTOTLT (AWLEVELC=7)
 	column masters_awarded
 		dataType: int64
 		formatString: #,0
@@ -360,7 +360,7 @@ table peers
 		summarizeBy: none
 		sourceColumn: masters_awarded
 
-	/// Doctor's degrees awarded, 2022-23 | C2023_C | CSTOTLT (AWLEVELC=9)
+	/// Students receiving doctor's degrees, 2022-23 | C2023_C | CSTOTLT (AWLEVELC=9)
 	column doctorates_awarded
 		dataType: int64
 		formatString: #,0

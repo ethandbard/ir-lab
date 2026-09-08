@@ -907,32 +907,63 @@ The cut with the smallest total is the root split, the same one the animation fi
 **Interactive report: not connected yet.** Download the [Power BI project](data/ir-lab-powerbi.zip) to explore this lesson in Power BI Desktop. The embedded report will appear here once it is connected.
 :::
 
-`LINESTX` takes as many predictors as you list, so the straight line with several numeric columns is one measure, fitted on the training rows and scored on the test rows exactly as in **Split before you fit**. Categorical predictors need 0/1 calculated columns first, one per level after the first:
+`LINESTX` takes as many predictors as you list, so the straight line with several numeric columns is one measure, fitted on the training rows and scored on the test rows exactly as in **Split before you fit**. Categorical predictors need 0/1 calculated columns first, one per level after the first. `LINESTX` returns a one-row table and a measure must return a scalar, so the fit lives in a `VAR` and `MAXX ( fit, [Slope1] )` through `[Slope5]` pull the coefficients out of it:
 
 ```dax
 Is Public = IF ( institutions[control] = "Public", 1, 0 )
 
-Line Fit =
-LINESTX (
-    FILTER (
-        institutions,
-        institutions[Split] = "train"
-            && institutions[level] = "4-year"
-            && institutions[bach_cohort] >= 30
-            && NOT ISBLANK ( institutions[retention_ft] )
-            && NOT ISBLANK ( institutions[net_price] )
-            && NOT ISBLANK ( institutions[grad_rate_bach_6yr] )
-    ),
-    institutions[grad_rate_bach_6yr],
-    institutions[pct_pell],
-    institutions[net_price],
-    institutions[retention_ft],
-    institutions[stu_fac_ratio],
-    institutions[Is Public]
-)
+Line Test RMSE =
+VAR fit =
+    LINESTX (
+        FILTER (
+            institutions,
+            institutions[Split] = "train"
+                && institutions[level] = "4-year"
+                && institutions[bach_cohort] >= 30
+                && NOT ISBLANK ( institutions[pct_pell] )
+                && NOT ISBLANK ( institutions[net_price] )
+                && NOT ISBLANK ( institutions[retention_ft] )
+                && NOT ISBLANK ( institutions[stu_fac_ratio] )
+                && NOT ISBLANK ( institutions[grad_rate_bach_6yr] )
+        ),
+        institutions[grad_rate_bach_6yr],
+        institutions[pct_pell],
+        institutions[net_price],
+        institutions[retention_ft],
+        institutions[stu_fac_ratio],
+        institutions[Is Public]
+    )
+VAR b0 = MAXX ( fit, [Intercept] )
+VAR b1 = MAXX ( fit, [Slope1] )
+VAR b2 = MAXX ( fit, [Slope2] )
+VAR b3 = MAXX ( fit, [Slope3] )
+VAR b4 = MAXX ( fit, [Slope4] )
+VAR b5 = MAXX ( fit, [Slope5] )
+RETURN
+    SQRT (
+        AVERAGEX (
+            FILTER (
+                institutions,
+                institutions[Split] = "test"
+                    && institutions[level] = "4-year"
+                    && institutions[bach_cohort] >= 30
+                    && NOT ISBLANK ( institutions[pct_pell] )
+                    && NOT ISBLANK ( institutions[net_price] )
+                    && NOT ISBLANK ( institutions[retention_ft] )
+                    && NOT ISBLANK ( institutions[stu_fac_ratio] )
+                    && NOT ISBLANK ( institutions[grad_rate_bach_6yr] )
+            ),
+            (
+                institutions[grad_rate_bach_6yr]
+                    - ( b0 + b1 * institutions[pct_pell] + b2 * institutions[net_price]
+                        + b3 * institutions[retention_ft] + b4 * institutions[stu_fac_ratio]
+                        + b5 * institutions[Is Public] )
+            ) ^ 2
+        )
+    )
 ```
 
-`Line Fit` is a table expression, so it lives inside a measure's `VAR`, and `MAXX ( fit, [Slope1] )` through `[Slope5]` pull out the coefficients for the prediction column and the RMSE measure.
+The same six variables score a prediction column, and swapping `"test"` for `"train"` in the second filter gives the training RMSE for the card beside it.
 
 Three visuals do the tree's job without code. The **Decomposition tree** with AI splits set to "High value" is a tree grown by hand: each expansion picks the field that separates the outcome most, which is the greedy rule `rpart` uses, minus the held-out scoring. The **Key influencers** visual with `grad_rate_bach_6yr` as the target reports which values of which fields move it, which is the importance chart with the direction attached. And a **Python visual** or **R visual** runs the forest from the `Do it` tab inside the report, at the cost of needing Python or R on every machine that refreshes it.
 

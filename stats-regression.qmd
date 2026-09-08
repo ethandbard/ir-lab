@@ -24,6 +24,7 @@ pyodide:
 source("_common.R")
 reg <- filter(institutions, level == "4-year", !is.na(pct_pell), !is.na(grad_rate_bach_6yr), bach_cohort >= 30)
 fit <- lm(grad_rate_bach_6yr ~ pct_pell, data = reg)
+reg_last <- nrow(reg) + 1
 slope <- round(coef(fit)[2], 2)
 r2 <- round(summary(fit)$r.squared, 2)
 ```
@@ -424,14 +425,14 @@ The `regression` sheet in [ir-lab.xlsx](data/ir-lab.xlsx) holds the filtered row
 
 ### Excel
 
-Four functions give you the whole simple regression. The ranges below match the sheet.
+Four functions give you the whole simple regression. The ranges below match the sheet, whose `r fmt(nrow(reg))` filtered rows end on row `r reg_last`.
 
 | Quantity | Formula |
 |---|---|
-| Slope | `=SLOPE(E2:E1800, D2:D1800)` |
-| Intercept | `=INTERCEPT(E2:E1800, D2:D1800)` |
-| R squared | `=RSQ(E2:E1800, D2:D1800)` |
-| Standard error of estimate | `=STEYX(E2:E1800, D2:D1800)` |
+| Slope | `=SLOPE(E2:E`r reg_last`, D2:D`r reg_last`)` |
+| Intercept | `=INTERCEPT(E2:E`r reg_last`, D2:D`r reg_last`)` |
+| R squared | `=RSQ(E2:E`r reg_last`, D2:D`r reg_last`)` |
+| Standard error of estimate | `=STEYX(E2:E`r reg_last`, D2:D`r reg_last`)` |
 
 `LINEST(y, x, TRUE, TRUE)` returns all of it at once as a 5 x 2 block: slope and intercept on row one, their standard errors on row two, R squared and the standard error on row three, then the F statistic and residual degrees of freedom, then the regression and residual sums of squares. `INDEX(LINEST(...), 2, 1)` picks out the slope's standard error, which is what you divide the slope by to get a t statistic.
 

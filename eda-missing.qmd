@@ -420,14 +420,19 @@ Four-year institutions are the most likely to be missing a retention rate, and t
 expected <- inst |>
   dplyr::group_by(level) |>
   dplyr::summarise(missing_share = mean(is.na(retention_ft)))
+flipped <- dplyr::mutate(expected, missing_share = 1 - missing_share)
+same_by_group <- function(res, exp, key, col) {
+  idx <- match(as.character(res[[key]]), as.character(exp[[key]]))
+  !anyNA(idx) && isTRUE(all.equal(as.numeric(res[[col]]), as.numeric(exp[[col]])[idx]))
+}
 ok <- is.data.frame(.result) &&
   all(c("level", "missing_share") %in% names(.result)) &&
   nrow(.result) == 3 &&
-  isTRUE(all.equal(sort(.result$missing_share), sort(expected$missing_share)))
+  same_by_group(.result, expected, "level", "missing_share")
 if (ok) {
   list(correct = TRUE, message = "Correct. Retention is blank at about a quarter of four-year institutions, and far fewer two-year ones.")
-} else if (is.data.frame(.result) && "missing_share" %in% names(.result) && nrow(.result) == 3 &&
-           isTRUE(all.equal(sort(.result$missing_share), sort(1 - expected$missing_share)))) {
+} else if (is.data.frame(.result) && all(c("level", "missing_share") %in% names(.result)) && nrow(.result) == 3 &&
+           same_by_group(.result, flipped, "level", "missing_share")) {
   list(correct = FALSE, message = "That is the share reported, not the share missing. Use is.na(), not !is.na().")
 } else if (is.data.frame(.result) && "missing_share" %in% names(.result)) {
   list(correct = FALSE, message = "The column is there but the values are off. Check that you grouped by level and took the mean of is.na(retention_ft).")
@@ -550,9 +555,9 @@ Blank cells are the one thing Excel handles well by default: `AVERAGE`, `MEDIAN`
 | Reported values | `=COUNT(Institutions[stu_fac_ratio])` |
 | Share missing | `=COUNTBLANK(Institutions[stu_fac_ratio])/ROWS(Institutions)` |
 | Share missing, 4-year only | `=COUNTIFS(Institutions[level],"4-year",Institutions[retention_ft],"")/COUNTIFS(Institutions[level],"4-year")` |
-| Median headcount of the blanks | `=MEDIAN(IF((Institutions[level]="4-year")*(Institutions[stu_fac_ratio]=""),Institutions[headcount]))` |
+| Median headcount of the blanks | `=MEDIAN(IF((Institutions[level]="4-year")*(Institutions[stu_fac_ratio]="")*(Institutions[headcount]<>""),Institutions[headcount]))` |
 
-An empty string as a `COUNTIFS` criterion matches blank cells, and comparing a column to `""` is `TRUE` on the blanks. The last formula needs Excel 365 or 2021 for the array `IF`.
+An empty string as a `COUNTIFS` criterion matches blank cells, and comparing a column to `""` is `TRUE` on the blanks. The last formula needs Excel 365 or 2021 for the array `IF`, and it tests `headcount` against `""` as well: a blank cell becomes a zero inside an array formula, and a dozen of these institutions report no headcount either.
 
 Three habits worth keeping:
 

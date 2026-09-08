@@ -68,11 +68,13 @@ build_workbook <- function(institutions, variables, path, lines = NULL, codes = 
   addStyle(wb, ws, title, rows = 1, cols = 1)
   writeData(wb, ws, paste(
     "Column B filters the table to 4-year institutions with a reported rate.",
+    "The array IF formulas also test the rate against \"\" because a blank cell becomes a zero inside an array;",
+    "COUNTIFS, AVERAGEIFS, MINIFS, and MAXIFS skip blanks on their own.",
     "The frequency table uses COUNTIFS on the same table, so it updates if the data does."
   ), startRow = 2)
   addStyle(wb, ws, note, rows = 2, cols = 1)
   mergeCells(wb, ws, cols = 1:4, rows = 2)
-  setRowHeights(wb, ws, rows = 2, heights = 36)
+  setRowHeights(wb, ws, rows = 2, heights = 64)
 
   stats <- data.frame(
     Statistic = c("Count", "Mean", "Median", "Standard deviation", "Skewness",
@@ -80,12 +82,12 @@ build_workbook <- function(institutions, variables, path, lines = NULL, codes = 
     Formula = c(
       "=COUNTIFS(Institutions[level],\"4-year\",Institutions[grad_rate_bach_6yr],\"<>\")",
       "=AVERAGEIFS(Institutions[grad_rate_bach_6yr],Institutions[level],\"4-year\")",
-      "=MEDIAN(IF(Institutions[level]=\"4-year\",Institutions[grad_rate_bach_6yr]))",
-      "=STDEV.S(IF(Institutions[level]=\"4-year\",Institutions[grad_rate_bach_6yr]))",
-      "=SKEW(IF(Institutions[level]=\"4-year\",Institutions[grad_rate_bach_6yr]))",
+      "=MEDIAN(IF((Institutions[level]=\"4-year\")*(Institutions[grad_rate_bach_6yr]<>\"\"),Institutions[grad_rate_bach_6yr]))",
+      "=STDEV.S(IF((Institutions[level]=\"4-year\")*(Institutions[grad_rate_bach_6yr]<>\"\"),Institutions[grad_rate_bach_6yr]))",
+      "=SKEW(IF((Institutions[level]=\"4-year\")*(Institutions[grad_rate_bach_6yr]<>\"\"),Institutions[grad_rate_bach_6yr]))",
       "=MINIFS(Institutions[grad_rate_bach_6yr],Institutions[level],\"4-year\")",
-      "=PERCENTILE.INC(IF(Institutions[level]=\"4-year\",Institutions[grad_rate_bach_6yr]),0.25)",
-      "=PERCENTILE.INC(IF(Institutions[level]=\"4-year\",Institutions[grad_rate_bach_6yr]),0.75)",
+      "=PERCENTILE.INC(IF((Institutions[level]=\"4-year\")*(Institutions[grad_rate_bach_6yr]<>\"\"),Institutions[grad_rate_bach_6yr]),0.25)",
+      "=PERCENTILE.INC(IF((Institutions[level]=\"4-year\")*(Institutions[grad_rate_bach_6yr]<>\"\"),Institutions[grad_rate_bach_6yr]),0.75)",
       "=MAXIFS(Institutions[grad_rate_bach_6yr],Institutions[level],\"4-year\")"
     )
   )
@@ -170,13 +172,13 @@ build_workbook <- function(institutions, variables, path, lines = NULL, codes = 
     label = c("Institutions", "Median headcount", "Share under 1,000 students", "Mean 6-year completion"),
     blank = c(
       "=COUNTIFS(Institutions[level],\"4-year\",Institutions[stu_fac_ratio],\"\")",
-      "=MEDIAN(IF((Institutions[level]=\"4-year\")*(Institutions[stu_fac_ratio]=\"\"),Institutions[headcount]))",
+      "=MEDIAN(IF((Institutions[level]=\"4-year\")*(Institutions[stu_fac_ratio]=\"\")*(Institutions[headcount]<>\"\"),Institutions[headcount]))",
       "=COUNTIFS(Institutions[level],\"4-year\",Institutions[stu_fac_ratio],\"\",Institutions[size],\"Under 1,000\")/I6",
       "=AVERAGEIFS(Institutions[grad_rate_bach_6yr],Institutions[level],\"4-year\",Institutions[stu_fac_ratio],\"\")"
     ),
     reported = c(
       "=COUNTIFS(Institutions[level],\"4-year\",Institutions[stu_fac_ratio],\"<>\")",
-      "=MEDIAN(IF((Institutions[level]=\"4-year\")*(Institutions[stu_fac_ratio]<>\"\"),Institutions[headcount]))",
+      "=MEDIAN(IF((Institutions[level]=\"4-year\")*(Institutions[stu_fac_ratio]<>\"\")*(Institutions[headcount]<>\"\"),Institutions[headcount]))",
       "=COUNTIFS(Institutions[level],\"4-year\",Institutions[stu_fac_ratio],\"<>\",Institutions[size],\"Under 1,000\")/J6",
       "=AVERAGEIFS(Institutions[grad_rate_bach_6yr],Institutions[level],\"4-year\",Institutions[stu_fac_ratio],\"<>\")"
     )
@@ -192,13 +194,14 @@ build_workbook <- function(institutions, variables, path, lines = NULL, codes = 
   addStyle(wb, ws, createStyle(numFmt = "0.0%"), rows = 8, cols = 9:10)
   addStyle(wb, ws, num1, rows = 9, cols = 9:10)
   writeData(wb, ws, paste(
-    "The array IF formulas need Excel 365 or 2021.",
+    "The array IF formulas need Excel 365 or 2021, and they test headcount against \"\" because a blank cell",
+    "becomes a zero inside an array.",
     "For a PivotTable version, put level on rows, then Count of unitid and Count Numbers of the column side by side;",
     "the difference is the blanks."
   ), startRow = 11, startCol = 8)
   addStyle(wb, ws, note, rows = 11, cols = 8)
   mergeCells(wb, ws, cols = 8:11, rows = 11)
-  setRowHeights(wb, ws, rows = 11, heights = 60)
+  setRowHeights(wb, ws, rows = 11, heights = 76)
   setColWidths(wb, ws, cols = 1:11, widths = c(22, 10, 14, 18, 18, 22, 3, 30, 14, 16, 3))
   freezePane(wb, ws, firstActiveRow = 5)
 

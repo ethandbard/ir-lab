@@ -560,10 +560,14 @@ Positive in all three sectors, strongest among private nonprofits. The relations
 expected <- four |>
   dplyr::group_by(control) |>
   dplyr::summarise(n = dplyr::n(), r = cor(net_price, grad_rate_bach_6yr, use = "complete.obs"))
+same_by_group <- function(res, exp, key, col) {
+  idx <- match(as.character(res[[key]]), as.character(exp[[key]]))
+  !anyNA(idx) && isTRUE(all.equal(as.numeric(res[[col]]), as.numeric(exp[[col]])[idx], tolerance = 1e-6))
+}
 ok <- is.data.frame(.result) &&
   all(c("control", "n", "r") %in% names(.result)) &&
   nrow(.result) == 3 &&
-  isTRUE(all.equal(sort(.result$r), sort(expected$r), tolerance = 1e-6))
+  same_by_group(.result, expected, "control", "r")
 if (ok) {
   list(correct = TRUE, message = "Correct. Three positive correlations: within publics, within nonprofits, within for-profits. Whatever produces the association is not the sector mix.")
 } else if (is.data.frame(.result) && "r" %in% names(.result) && any(is.na(.result$r))) {

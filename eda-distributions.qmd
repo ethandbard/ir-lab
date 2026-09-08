@@ -22,6 +22,9 @@ pyodide:
 #| include: false
 source("_common.R")
 four <- filter(institutions, level == "4-year", !is.na(grad_rate_bach_6yr))
+n_blank <- sum(institutions$level == "4-year") - nrow(four)
+median_four <- median(four$grad_rate_bach_6yr)
+median_with_zeros <- median(c(four$grad_rate_bach_6yr, rep(0, n_blank)))
 ```
 
 ::: {.lesson-eyebrow}
@@ -365,10 +368,14 @@ Private nonprofits have the highest median, and for-profits the lowest, with the
 expected <- four |>
   dplyr::group_by(control) |>
   dplyr::summarise(median_rate = median(grad_rate_bach_6yr))
+same_by_group <- function(res, exp, key, col) {
+  idx <- match(as.character(res[[key]]), as.character(exp[[key]]))
+  !anyNA(idx) && isTRUE(all.equal(as.numeric(res[[col]]), as.numeric(exp[[col]])[idx]))
+}
 ok <- is.data.frame(.result) &&
   all(c("control", "median_rate") %in% names(.result)) &&
   nrow(.result) == 3 &&
-  isTRUE(all.equal(sort(.result$median_rate), sort(expected$median_rate)))
+  same_by_group(.result, expected, "control", "median_rate")
 if (ok) {
   list(correct = TRUE, message = "Correct. Three sectors, three different medians. Compare them with the overall median from the summary cell above.")
 } else if (is.data.frame(.result) && "median_rate" %in% names(.result)) {
@@ -404,7 +411,7 @@ A logical vector's mean is the share of `TRUE` values. You need the comparison o
 ```r
 mean(four$bach_cohort < 50, na.rm = TRUE)
 ```
-Roughly one in four four-year institutions computes its headline completion rate on fewer than 50 students. Any histogram of rates is partly a histogram of cohort sizes.
+Roughly one in six four-year institutions computes its headline completion rate on fewer than 50 students. Any histogram of rates is partly a histogram of cohort sizes.
 :::
 :::
 
@@ -489,10 +496,12 @@ The `distributions` sheet computes every statistic from the summary cell above w
 |---|---|
 | Count | `=COUNTIFS(Institutions[level],"4-year",Institutions[grad_rate_bach_6yr],"<>")` |
 | Mean | `=AVERAGEIFS(Institutions[grad_rate_bach_6yr],Institutions[level],"4-year")` |
-| Median | `=MEDIAN(IF(Institutions[level]="4-year",Institutions[grad_rate_bach_6yr]))` |
-| Standard deviation | `=STDEV.S(IF(Institutions[level]="4-year",Institutions[grad_rate_bach_6yr]))` |
-| Skewness | `=SKEW(IF(Institutions[level]="4-year",Institutions[grad_rate_bach_6yr]))` |
-| 25th percentile | `=PERCENTILE.INC(IF(Institutions[level]="4-year",Institutions[grad_rate_bach_6yr]),0.25)` |
+| Median | `=MEDIAN(IF((Institutions[level]="4-year")*(Institutions[grad_rate_bach_6yr]<>""),Institutions[grad_rate_bach_6yr]))` |
+| Standard deviation | `=STDEV.S(IF((Institutions[level]="4-year")*(Institutions[grad_rate_bach_6yr]<>""),Institutions[grad_rate_bach_6yr]))` |
+| Skewness | `=SKEW(IF((Institutions[level]="4-year")*(Institutions[grad_rate_bach_6yr]<>""),Institutions[grad_rate_bach_6yr]))` |
+| 25th percentile | `=PERCENTILE.INC(IF((Institutions[level]="4-year")*(Institutions[grad_rate_bach_6yr]<>""),Institutions[grad_rate_bach_6yr]),0.25)` |
+
+The `<>""` test inside each array `IF` is not decoration. A blank cell becomes a zero inside an array formula, and `r fmt(n_blank)` four-year institutions have no six-year rate, so without it the median reads `r median_with_zeros` instead of `r median_four` and the 25th percentile reads 0. `COUNTIFS`, `AVERAGEIFS`, `MINIFS`, and `MAXIFS` skip blanks on their own.
 
 The frequency table uses one `COUNTIFS` per bin, with the bin edges in cells so you can change the width by editing two numbers:
 

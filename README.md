@@ -15,7 +15,7 @@ A practice site for exploratory data analysis, statistics, and machine learning 
 | --- | --- |
 | `_quarto.yml` | Site config. Format is `live-html`; per-page `webr:` and `pyodide:` blocks list packages and data files. |
 | `index.qmd` | Home: institution swarm, track cards, data dictionary. |
-| `eda.qmd`, `stats.qmd`, `ml.qmd` | Track pages listing lessons. Live lessons link; planned ones are placeholders. |
+| `eda.qmd`, `stats.qmd`, `ml.qmd` | Track pages listing the six lessons of each track with a completion count. |
 | `eda-distributions.qmd` | Explore, lesson 1: histograms and skew. |
 | `eda-missing.qmd` | Explore, lesson 2: missingness patterns and complete-case bias. |
 | `eda-compare.qmd` | Explore, lesson 3: boxplots, small multiples, and variance explained by a grouping. |
@@ -60,15 +60,16 @@ The pre-rendered numbers in `ml-predict-rate.qmd` and `ml-classify.qmd` need rpa
 Rscript setup.R          # once: installs build packages
 Rscript fetch_history.R  # once: downloads EF2013A to EF2022A
 Rscript build_data.R     # rebuild data/ from the raw IPEDS files
-quarto render            # builds _site/
+quarto render            # builds _site/ (runs powerbi/scripts/package_project.py first, so Python is needed)
 quarto preview           # local preview with live reload
+python grade.py *.qmd    # grade every exercise's solution through its own check
 ```
 
 The first visit to a lesson downloads webR or Pyodide plus packages, which takes several seconds. Later visits are cached by the browser.
 
 ## Adding a lesson
 
-1. Copy one of the three lesson files and keep the four `## ... {.beat data-beat="..."}` headings.
+1. Copy an existing lesson file and keep the four `## ... {.beat data-beat="..."}` headings.
 2. Give every exercise a unique id used in three places: `#| exercise:`, the `.hint`/`.solution` divs, and the `.lab-exercise` wrapper's `data-exercise`.
 3. Add the exercise ids to the track card on `index.qmd` and the track page's `.lab-progress` element so completion counts include them.
 4. Link the lesson from its track page and change its status to Live.
@@ -78,7 +79,8 @@ The first visit to a lesson downloads webR or Pyodide plus packages, which takes
 
 - Rates at institutions with small cohorts are noisy. `bach_cohort` and `grad_cohort` are in the table so lessons can filter.
 - Net price is in-state for public institutions and a single figure for privates.
-- Financial aid variables describe 2022-23; everything else describes 2023-24.
+- The surveys describe different years. Directory attributes, retention, and the student-faculty ratio describe 2023-24; financial aid, the 12-month headcount, and completions describe 2022-23; completion rates describe cohorts that entered six years earlier.
+- The four `*_awarded` columns count students receiving an award at that level (IPEDS `CSTOTLT`), not awards. A student who earns two bachelor's degrees counts once.
 - Missing values are blank, never zero.
 - `fall_enrollment_2023.csv` keeps every subtotal row on purpose; the codes file marks the ten detail lines that add to the reported total.
 - `enrollment_history.csv` covers institutions in the 2023-24 directory only, so it is the survivors' history; 5,064 institutions have a headcount in all eleven years.
@@ -90,7 +92,9 @@ completion distribution, Pell regression, and peer-group pages based on the same
 See [powerbi/README.md](powerbi/README.md) for import, refresh, publication, and embed setup;
 see [powerbi/REVIEW.md](powerbi/REVIEW.md) for the project review and metric contracts.
 
-The three lesson tabs use `powerbi-embed.json` and `powerbi-embed.js`. An empty embed URL
-shows a download link. After publication, paste the **Website or portal** URL into
-`embedUrl` and render the site. Each lesson opens its mapped report page. Report loading
-is opt-in; Microsoft handles sign-in and report access.
+Every lesson's Power BI tab uses `powerbi-embed.json` and `powerbi-embed.js`. An empty embed URL
+shows a download link to `data/ir-lab-powerbi.zip`, which `powerbi/scripts/package_project.py`
+builds from the tracked project as a Quarto pre-render step (the zip itself is not tracked).
+After publication, paste the **Website or portal** URL into `embedUrl` and render the site.
+Each lesson opens its mapped report page; the report has four pages, so several lessons
+share one. Report loading is opt-in; Microsoft handles sign-in and report access.

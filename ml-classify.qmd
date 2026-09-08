@@ -559,14 +559,14 @@ pd.DataFrame({"n": [len(y_train), len(y_test)], "low": [y_train.sum(), y_test.su
 ```{pyodide}
 #| autorun: true
 #| caption: Logistic regression and the confusion matrix at 0.5
-logit = make_pipeline(StandardScaler(), LogisticRegression(penalty=None, max_iter=1000)).fit(X_train, y_train)
+logit = make_pipeline(StandardScaler(), LogisticRegression(C=np.inf, max_iter=1000)).fit(X_train, y_train)
 p_test = logit.predict_proba(X_test)[:, 1]
 
 pd.DataFrame(confusion_matrix(y_test, (p_test >= 0.5).astype(int)),
              index=["actual 0", "actual 1"], columns=["flagged 0", "flagged 1"])
 ```
 
-`penalty=None` asks for the same unpenalized fit R's `glm()` produces; scikit-learn's default adds a ridge penalty, which is a reasonable choice but a different model. `predict_proba` returns two columns, and the second is the probability of the outcome being one. `.predict()` would apply a threshold of 0.5 silently, which is the thing this lesson asks you never to let a library do for you.
+`C=np.inf` switches the regularization off and asks for the same unpenalized fit R's `glm()` produces; scikit-learn's default adds a ridge penalty, which is a reasonable choice but a different model. Older code writes `penalty=None` for the same thing, a spelling scikit-learn deprecated in version 1.8. `predict_proba` returns two columns, and the second is the probability of the outcome being one. `.predict()` would apply a threshold of 0.5 silently, which is the thing this lesson asks you never to let a library do for you.
 
 ```{pyodide}
 #| autorun: true
@@ -667,7 +667,7 @@ plt.show()
 #| caption: The model without retention
 X_noret_train = X_train.drop(columns="retention_ft")
 X_noret_test = X_test.drop(columns="retention_ft")
-noret = make_pipeline(StandardScaler(), LogisticRegression(penalty=None, max_iter=1000)).fit(X_noret_train, y_train)
+noret = make_pipeline(StandardScaler(), LogisticRegression(C=np.inf, max_iter=1000)).fit(X_noret_train, y_train)
 
 pd.Series({"auc_with_retention": roc_auc_score(y_test, p_test),
            "auc_without": roc_auc_score(y_test, noret.predict_proba(X_noret_test)[:, 1])}).round(3)
@@ -843,7 +843,7 @@ X = pd.concat([frame[num], pd.get_dummies(frame[cat], drop_first=True, dtype=flo
 y = (frame["grad_rate_bach_6yr"] < 50).astype(int)
 is_train = frame["unitid"] % 10 < 7
 X_train, X_test, y_train, y_test = X[is_train], X[~is_train], y[is_train], y[~is_train]
-logit = make_pipeline(StandardScaler(), LogisticRegression(penalty=None, max_iter=1000)).fit(X_train, y_train)
+logit = make_pipeline(StandardScaler(), LogisticRegression(C=np.inf, max_iter=1000)).fit(X_train, y_train)
 p_test = logit.predict_proba(X_test)[:, 1]
 ```
 
@@ -916,23 +916,51 @@ What Excel cannot do is fit the model without Solver, or grow the tree at all, w
 **Interactive report: not connected yet.** Download the [Power BI project](data/ir-lab-powerbi.zip) to explore this lesson in Power BI Desktop. The embedded report will appear here once it is connected.
 :::
 
-A **what-if parameter** is the threshold slider. Modeling, New parameter, Numeric range from 0.05 to 0.95 in steps of 0.05 creates a `Threshold` table, a slicer, and a measure `[Threshold Value]`, and the confusion matrix is four measures that read it. The probability is a calculated column using the coefficients the R tab fits for Pell share and retention alone (`r round(coef(m2)[1], 3)`, `r round(coef(m2)[2], 4)`, and `r round(coef(m2)[3], 4)`), with the `Split` column from **Split before you fit**:
+A **what-if parameter** is the threshold slider. Modeling, New parameter, Numeric range from 0.05 to 0.95 in steps of 0.05 creates a `Threshold` table, a slicer, and a measure `[Threshold Value]`, and the confusion matrix is four measures that read it. The probability is a calculated column using the coefficients the R tab fits for Pell share and retention alone (`r round(coef(m2)[1], 3)`, `r round(coef(m2)[2], 4)`, and `r round(coef(m2)[3], 4)`), with the `Split` column from **Split before you fit**. The test rows are a second calculated column, TRUE or FALSE, because a measure must return a scalar and cannot hand a table to other measures. Each count reads the threshold into a variable first, since a measure cannot sit inside a `CALCULATE` filter directly:
 
 ```dax
 Low Probability =
-1 / ( 1 + EXP ( - ( 7.111 + 0.0633 * institutions[pct_pell] - 0.1343 * institutions[retention_ft] ) ) )
+IF (
+    NOT ISBLANK ( institutions[pct_pell] ) && NOT ISBLANK ( institutions[retention_ft] ),
+    1 / ( 1 + EXP ( - ( 7.111 + 0.0633 * institutions[pct_pell] - 0.1343 * institutions[retention_ft] ) ) )
+)
 
-Test Rows =
-FILTER ( institutions, institutions[Split] = "test" && NOT ISBLANK ( institutions[Low Probability] ) )
+Is Test Row =
+institutions[Split] = "test"
+    && institutions[level] = "4-year"
+    && institutions[bach_cohort] >= 30
+    && NOT ISBLANK ( institutions[Low Probability] )
+    && NOT ISBLANK ( institutions[grad_rate_bach_6yr] )
 
 True Positives =
-COUNTROWS ( FILTER ( [Test Rows], institutions[Low Probability] >= [Threshold Value] && institutions[grad_rate_bach_6yr] < 50 ) )
+VAR th = [Threshold Value]
+RETURN
+    CALCULATE (
+        COUNTROWS ( institutions ),
+        institutions[Is Test Row] = TRUE (),
+        institutions[Low Probability] >= th,
+        institutions[grad_rate_bach_6yr] < 50
+    )
 
 False Positives =
-COUNTROWS ( FILTER ( [Test Rows], institutions[Low Probability] >= [Threshold Value] && institutions[grad_rate_bach_6yr] >= 50 ) )
+VAR th = [Threshold Value]
+RETURN
+    CALCULATE (
+        COUNTROWS ( institutions ),
+        institutions[Is Test Row] = TRUE (),
+        institutions[Low Probability] >= th,
+        institutions[grad_rate_bach_6yr] >= 50
+    )
 
 False Negatives =
-COUNTROWS ( FILTER ( [Test Rows], institutions[Low Probability] < [Threshold Value] && institutions[grad_rate_bach_6yr] < 50 ) )
+VAR th = [Threshold Value]
+RETURN
+    CALCULATE (
+        COUNTROWS ( institutions ),
+        institutions[Is Test Row] = TRUE (),
+        institutions[Low Probability] < th,
+        institutions[grad_rate_bach_6yr] < 50
+    )
 
 Precision = DIVIDE ( [True Positives], [True Positives] + [False Positives] )
 Recall = DIVIDE ( [True Positives], [True Positives] + [False Negatives] )
@@ -944,11 +972,11 @@ The AUC does not need the threshold. `RANKX` over the test rows gives each proba
 
 ```dax
 AUC =
-VAR t = [Test Rows]
-VAR n1 = COUNTROWS ( FILTER ( t, institutions[grad_rate_bach_6yr] < 50 ) )
+VAR t = CALCULATETABLE ( institutions, institutions[Is Test Row] = TRUE () )
+VAR low = FILTER ( t, institutions[grad_rate_bach_6yr] < 50 )
+VAR n1 = COUNTROWS ( low )
 VAR n0 = COUNTROWS ( t ) - n1
-VAR rankSum =
-    SUMX ( FILTER ( t, institutions[grad_rate_bach_6yr] < 50 ), RANKX ( t, institutions[Low Probability], , ASC ) )
+VAR rankSum = SUMX ( low, RANKX ( t, institutions[Low Probability], , ASC ) )
 RETURN DIVIDE ( rankSum - n1 * ( n1 + 1 ) / 2, n1 * n0 )
 ```
 

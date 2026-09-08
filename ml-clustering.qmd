@@ -357,17 +357,17 @@ set.seed(2023)
 
 ### Standardize a different profile
 
-Build a standardized matrix from three columns of `km`: `net_price`, `pct_pell`, and `stu_fac_ratio`. Return the matrix.
+Build a standardized matrix from three columns of `km`: `net_price`, `pct_pell`, and `stu_fac_ratio`. Return its first six rows with `head()`, so the page does not print every row.
 
 ```{webr}
 #| exercise: ml1_scale
-______(dplyr::select(km, ______, ______, ______))
+head(______(dplyr::select(km, ______, ______, ______)))
 ```
 
 ::: {.hint exercise="ml1_scale"}
 ::: {.callout-note collapse="false"}
 ## Hint
-`scale()` centers and divides each column by its standard deviation. Select the three columns by name inside `select()`.
+`scale()` centers and divides each column by its standard deviation. Select the three columns by name inside `select()`, scale the whole selection, and take `head()` of the result.
 :::
 :::
 
@@ -375,7 +375,7 @@ ______(dplyr::select(km, ______, ______, ______))
 ::: {.callout-tip collapse="false"}
 ## Solution
 ```r
-scale(dplyr::select(km, net_price, pct_pell, stu_fac_ratio))
+head(scale(dplyr::select(km, net_price, pct_pell, stu_fac_ratio)))
 ```
 :::
 :::
@@ -383,17 +383,22 @@ scale(dplyr::select(km, net_price, pct_pell, stu_fac_ratio))
 ```{webr}
 #| exercise: ml1_scale
 #| check: true
-ok <- is.matrix(.result) &&
-  ncol(.result) == 3 &&
-  setequal(colnames(.result), c("net_price", "pct_pell", "stu_fac_ratio")) &&
+cols <- c("net_price", "pct_pell", "stu_fac_ratio")
+expected <- scale(dplyr::select(km, net_price, pct_pell, stu_fac_ratio))
+shape_ok <- is.matrix(.result) && ncol(.result) == 3 && setequal(colnames(.result), cols)
+is_head <- shape_ok && nrow(.result) == 6 &&
+  isTRUE(all.equal(unname(.result[, cols]), unname(expected[1:6, cols])))
+is_full <- shape_ok && nrow(.result) == nrow(km) &&
   isTRUE(all(abs(colMeans(.result)) < 1e-8)) &&
   isTRUE(all(abs(apply(.result, 2, sd) - 1) < 1e-8))
-if (ok) {
+if (is_head || is_full) {
   list(correct = TRUE, message = "Correct. Every column now has mean 0 and standard deviation 1, so a dollar and a percentage point count the same.")
+} else if (shape_ok && nrow(.result) == 6) {
+  list(correct = FALSE, message = "Six rows of the right columns, but not standardized against the whole table. Call scale() on the full selection first, then head() on the result.")
 } else if (is.matrix(.result) || is.data.frame(.result)) {
   list(correct = FALSE, message = "Right shape, but the columns are not standardized or are not the three asked for. Wrap the selection in scale().")
 } else {
-  list(correct = FALSE, message = "Not yet. The result should be the matrix that scale() returns.")
+  list(correct = FALSE, message = "Not yet. The result should be the first six rows of the matrix that scale() returns.")
 }
 ```
 
@@ -487,9 +492,15 @@ KMeans(n_clusters=3, n_init=10, random_state=2023).fit(z).labels_
 #| exercise: ml1_py_fit
 #| check: true
 import numpy as np
-ok = isinstance(result, np.ndarray) and len(result) == len(z) and set(np.unique(result)) == {0, 1, 2}
-if ok:
+from sklearn.metrics import adjusted_rand_score
+reference = KMeans(n_clusters=3, n_init=10, random_state=2023).fit(z).labels_
+shape_ok = isinstance(result, np.ndarray) and len(result) == len(z)
+if shape_ok and set(np.unique(result)) == {0, 1, 2} and adjusted_rand_score(reference, result) > 0.999:
     feedback = {"correct": True, "message": "Correct. One label per institution, three distinct groups. Profile them with groupby before you trust them."}
+elif shape_ok and len(np.unique(result)) == 3:
+    feedback = {"correct": False, "message": "Three groups, but not the grouping the reference fit finds. Use n_clusters=3 with n_init=10 and random_state=2023 so the result is reproducible."}
+elif shape_ok:
+    feedback = {"correct": False, "message": f"That is {len(np.unique(result))} groups. The exercise asks for three: n_clusters=3."}
 else:
     feedback = {"correct": False, "message": "Not yet. Expected a labels array with one entry per row of z and values 0, 1, 2."}
 feedback
