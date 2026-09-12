@@ -95,6 +95,9 @@ see [powerbi/REVIEW.md](powerbi/REVIEW.md) for the project review and metric con
 Every lesson's Power BI tab uses `powerbi-embed.json` and `powerbi-embed.js`. An empty embed URL
 shows a download link to `data/ir-lab-powerbi.zip`, which `powerbi/scripts/package_project.py`
 builds from the tracked project as a Quarto pre-render step (the zip itself is not tracked).
+The script skips the rebuild when the zip is newer than every input. That matters in `quarto preview`:
+rewriting a file under `data/` on every on-demand render made the preview server reload the open
+page and cancel the navigation you had just clicked.
 After publication, paste the **Website or portal** URL into `embedUrl` and render the site.
 Each lesson opens its mapped report page; the report has four pages, so several lessons
 share one. Report loading is opt-in; Microsoft handles sign-in and report access.
